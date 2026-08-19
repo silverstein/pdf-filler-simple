@@ -29,8 +29,9 @@ import {
 } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { execFileSync, spawn } from "child_process";
+import { spawn } from "child_process";
 import { prepareCleanStage } from "./build-mcpb.mjs";
+import { derivePluginVersion } from "./plugin-version.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -56,34 +57,18 @@ const PACKAGE_JSON = JSON.parse(
 // default walk. `rev-list --count` and `--first-parent` answer different
 // questions and give different numbers for the same pair, so the measure is
 // named here rather than left for someone to guess.
-function derivePluginVersion(packageVersion) {
-  let described;
-  try {
-    described = execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    // No git, or a checkout with no tags. A depth-1 CI clone does exactly this,
-    // which would silently restore the old behaviour, so it is announced rather
-    // than swallowed.
+//
+// The grammar itself lives in ./plugin-version.mjs, because the publisher has to
+// read these strings back and decide whether a build belongs to the tree it is
+// about to stamp. Two independent readings of one grammar is how they drift.
+const PLUGIN_VERSION = derivePluginVersion(PACKAGE_JSON.version, {
+  cwd: REPO_ROOT,
+  onUnavailable: () =>
     console.error(
       "[plugin] git describe unavailable, version falls back to package.json. "
         + "In CI this usually means the checkout needs fetch-depth: 0.",
-    );
-    return packageVersion;
-  }
-  const match = /-(\d+)-g([0-9a-f]+)(-dirty)?$/.exec(described);
-  if (!match) {
-    // Sitting exactly on a tag. A dirty tree still deserves a marker.
-    return described.endsWith("-dirty") ? `${packageVersion}+dirty` : packageVersion;
-  }
-  const [, commitsSinceTag, sha, dirty] = match;
-  return `${packageVersion}+${commitsSinceTag}.g${sha}${dirty ? ".dirty" : ""}`;
-}
-
-const PLUGIN_VERSION = derivePluginVersion(PACKAGE_JSON.version);
+    ),
+}).version;
 
 const PLUGIN_MANIFEST_NAME = "pdf-tools";
 // Leads with the words a person actually types. A user asking to "open a PDF"

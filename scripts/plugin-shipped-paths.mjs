@@ -47,6 +47,7 @@ export const SHIPPED_PATHS = Object.freeze([
   "scripts/build-mcpb.mjs",
   "scripts/build-toolchain.mjs",
   "scripts/mcpb-packaging-policy.mjs",
+  "scripts/plugin-version.mjs",
   "scripts/qpdf-wasm-runtime.mjs",
   "package-for-friend.js",
 ]);

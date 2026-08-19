@@ -17,6 +17,7 @@ import { cpSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
+import { derivePluginVersion } from "./plugin-version.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -52,38 +53,61 @@ if (!existsSync(BUILT_PLUGIN)) {
 const sourceVersion = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).version;
 const builtVersion = JSON.parse(readFileSync(path.join(BUILT_PLUGIN, "plugin.json"), "utf8")).version;
 
-// The plugin version now carries build metadata identifying the commit it was
-// built from (0.11.0+99.g1fcd8da), so between releases it deliberately differs
-// from package.json. Comparing the two for equality made this refuse every
-// publish, which it did hourly until it was noticed.
+// Derive the version the builder would write *right now*, from this tree, and
+// require the built plugin to carry exactly that.
 //
-// Compare the release component instead, and then check the embedded commit
-// against this tree's HEAD. That is a stricter staleness check than the equality
-// it replaces: the old test could not tell a fresh build from one made twenty
-// commits ago under the same version number, which is the drift the build
-// metadata was introduced to end.
-const releaseOf = value => String(value).split("+")[0];
-if (releaseOf(sourceVersion) !== releaseOf(builtVersion)) {
+// Checking the parts separately looks stricter and is not. Comparing only the
+// release component and then the embedded commit leaves every version that
+// carries no embedded commit unchecked, and three different trees produce one:
+// a build made at a tag, a build in a checkout with no tags, and a build where
+// `git describe` could not run. Measured on 2026-08-15 against this script at
+// dc90e75: a `dist-plugin` built at v0.11.0 and published from master two
+// commits later was accepted, and PROVENANCE.md recorded those tag-built bytes
+// as "Built from dc90e753…". That record is the only thing identifying what the
+// distribution repo serves, and check-plugin-freshness.mjs reads the same
+// commit back to decide whether the publish is current — so one unchecked shape
+// makes both of them confidently wrong.
+//
+// Equality against the derived version subsumes both old checks: a release
+// mismatch, a foreign commit, a truncated commit and a bare version all differ
+// from what this tree would produce. It does not reintroduce the equality bug
+// that made this refuse every publish hourly, because the comparison is against
+// the derived version and not against package.json: a freshly built plugin
+// matches by construction.
+const expected = derivePluginVersion(sourceVersion, { cwd: REPO_ROOT });
+
+// Fail closed where the version cannot identify a commit at all. Publishing
+// under one of these writes a PROVENANCE.md that claims a commit the bytes are
+// not known to come from.
+if (expected.shape === "unavailable") {
   console.error(
-    `[publish] built plugin is ${builtVersion} but this tree is ${sourceVersion}. ` +
-      `Rebuild with: npm run build:plugin`,
+    `[publish] cannot verify what this tree is: git describe did not run here. ` +
+      `A depth-1 clone needs fetch-depth: 0.`,
+  );
+  process.exit(1);
+}
+if (expected.shape === "untagged") {
+  console.error(
+    `[publish] no tag is reachable from HEAD (git describe says ${expected.described}), so a ` +
+      `plugin version cannot identify the build. Fetch tags with: git fetch --tags`,
+  );
+  process.exit(1);
+}
+if (expected.dirty) {
+  console.error(
+    `[publish] this tree has uncommitted changes (git describe says ${expected.described}), so ` +
+      `the published bytes would belong to no commit while PROVENANCE.md names one. ` +
+      `Commit or stash first.`,
   );
   process.exit(1);
 }
 
-const embeddedCommit = /\+\d+\.g([0-9a-f]+)/.exec(builtVersion)?.[1];
-if (embeddedCommit) {
-  const headCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  }).trim();
-  if (!headCommit.startsWith(embeddedCommit)) {
-    console.error(
-      `[publish] built plugin came from ${embeddedCommit} but this tree is at ` +
-        `${headCommit.slice(0, 12)}. Rebuild with: npm run build:plugin`,
-    );
-    process.exit(1);
-  }
+if (builtVersion !== expected.version) {
+  console.error(
+    `[publish] built plugin is ${builtVersion} but this tree builds ${expected.version}. ` +
+      `Rebuild with: npm run build:plugin`,
+  );
+  process.exit(1);
 }
 
 const dirty = git(["status", "--porcelain"]);
