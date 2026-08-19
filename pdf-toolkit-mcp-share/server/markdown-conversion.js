@@ -67,6 +67,7 @@ const GAP_CODES = new Set([
   "INVALID_TEXT_GEOMETRY",
   "LINK_ANNOTATIONS_UNAVAILABLE",
   "LINK_MAPPING_AMBIGUOUS",
+  "MATH_NOT_RECONSTRUCTED",
   "OCR_NOT_PERFORMED",
   "PAGE_RANGE_INCOMPLETE",
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
@@ -1140,6 +1141,111 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
     || rowHasSpecificMathOperator(row)
     || (row.cells.some(item => /^[()]$/u.test(item.text.trim()))
       && nearbyEquationEvidence(rows, rowIndex));
+}
+
+/**
+ * MATH_NOT_RECONSTRUCTED evidence.
+ *
+ * The renderer never reconstructs mathematics: an equation reaches the Markdown
+ * as the source's own reading-order text, which the `## Conversion limitations`
+ * section has always said in prose. This rule adds nothing to that behaviour.
+ * It only decides, per page, whether the renderer can *prove* from source
+ * evidence that mathematical content was on the page, so a consumer can route
+ * those pages rather than re-read a global paragraph. A page that cannot be
+ * proven mathematical emits nothing: a missing declaration is preferable to a
+ * fabricated one.
+ *
+ * A page qualifies when at least one line the renderer emitted as flat
+ * reading-order text carries all three of:
+ *
+ *   S1 — run shape. The line is upright left-to-right, at most
+ *        MATH_RUN_MAX_LINE_CHARACTERS long, holds at least two structural
+ *        source items, and *every* one of them is a compact math token
+ *        (`compactMathItemText`: one letter, one digit, math punctuation, or
+ *        the operator `log`) or a named operator word. This is the same "short
+ *        compact left-to-right math run" shape the bounded `log`-spacing repair
+ *        already uses to recognise a nearby equation, reused verbatim rather
+ *        than reinvented.
+ *   S2 — an independent mathematical marker on that same line: either a
+ *        dedicated mathematical operator (`rowHasSpecificMathOperator`), or a
+ *        relation `=` in a run of at least three items that also switches
+ *        source font resource across an adjacent same-baseline pair including a
+ *        single letter — the roman-operator / italic-variable alternation that
+ *        mathematical typesetting produces and running prose does not.
+ *   S3 — the line really was left flat: it is not inside a reconstructed table
+ *        segment, and the stacked-fraction projection neither consumed nor
+ *        rewrote it. Where a construct *was* reconstructed, nothing is claimed
+ *        lost.
+ *
+ * S1 alone is not enough, which is the whole point of the conjunction: a line
+ * of single-character items can be a column of initials or a run of separated
+ * digits. S2 alone is not enough either, because a stray `=` or `∞` appears in
+ * ordinary prose.
+ *
+ * Deliberately rejected as triggers:
+ *
+ *   - A raised or lowered run on its own. The renderer's own limitation prose
+ *     states that a page sets a mathematical exponent and a footnote reference
+ *     identically, so a raised run cannot distinguish the two and would emit
+ *     this gap over every footnoted page.
+ *   - `glyph_recoveries` / legacy Computer-Modern Type-3 evidence on its own.
+ *     A recovery record marks a glyph the version-pinned registry *did*
+ *     recover, so it evidences a repair rather than a loss, and the same
+ *     Computer Modern families also set accents and symbols in ordinary prose.
+ *     It proves neither that content was mathematical nor that anything was
+ *     dropped.
+ *   - `text_integrity.status === "suspect"` on its own. Damaged text is not
+ *     mathematics, and it already has its own typed gap
+ *     (TEXT_INTEGRITY_SUSPECT) which this one must not duplicate or weaken.
+ *   - Character-class scoring over the rendered line text ("this looks mathy").
+ *     That is a heuristic guess, not source evidence, and would put a numeric
+ *     judgement where this vocabulary allows none.
+ */
+const NAMED_MATH_OPERATOR = /^(?:Lim|Max|Min)$/u;
+const MATH_RUN_MAX_LINE_CHARACTERS = 80;
+const MATH_RUN_MIN_ITEMS = 2;
+const MATH_RELATION_MIN_ITEMS = 3;
+
+function isMathRunItemText(value) {
+  const text = String(value).trim();
+  return compactMathItemText(text) || NAMED_MATH_OPERATOR.test(text);
+}
+
+function mathRunStructuralItems(row) {
+  return row.cells.filter(item => !isCollapsedWhitespaceRecovery(item)
+    && typeof item.text === "string"
+    && item.text.trim().length > 0);
+}
+
+function hasCrossFontRelationEvidence(items) {
+  if (items.length < MATH_RELATION_MIN_ITEMS) return false;
+  if (!items.some(item => item.text.trim() === "=")) return false;
+  for (let index = 0; index < items.length - 1; index += 1) {
+    const left = items[index];
+    const right = items[index + 1];
+    if (typeof left.font_name !== "string" || typeof right.font_name !== "string"
+      || left.font_name === right.font_name) continue;
+    if (!/^\p{L}$/u.test(left.text.trim()) && !/^\p{L}$/u.test(right.text.trim())) continue;
+    if (sameMathBaseline(left, right)) return true;
+  }
+  return false;
+}
+
+function isUnreconstructedMathRow(row) {
+  const { line } = row;
+  if (line.direction !== "ltr" || line.text.length > MATH_RUN_MAX_LINE_CHARACTERS) return false;
+  const items = mathRunStructuralItems(row);
+  if (items.length < MATH_RUN_MIN_ITEMS
+    || !items.every(item => isMathRunItemText(item.text))
+    || items.some(item => containsUnsafeText(item.text))) return false;
+  return rowHasSpecificMathOperator(row) || hasCrossFontRelationEvidence(items);
+}
+
+function pageMathNotReconstructed(analysis, fractionPlan) {
+  return analysis.segments.some(segment => segment.kind !== "table"
+    && segment.rows.some(row => !fractionPlan.skipped.has(row.line.id)
+      && !fractionPlan.replacements.has(row.line.id)
+      && isUnreconstructedMathRow(row)));
 }
 
 /**
@@ -2584,7 +2690,7 @@ function analyzePageLinks(page, analysis, headings) {
   };
 }
 
-function pageGaps(page, analysis, linkState) {
+function pageGaps(page, analysis, linkState, { mathNotReconstructed = false } = {}) {
   const gaps = [];
   const add = (code, message) => gaps.push({ code, page: page.page, message });
   if (linkState?.unavailable) {
@@ -2632,6 +2738,9 @@ function pageGaps(page, analysis, linkState) {
   } else if (page.modality_hint === "mixed-content-candidate" && page.has_image_operations) {
     add("OCR_NOT_PERFORMED", "Images may contain text that is absent because OCR was not performed.");
     add("IMAGE_CONTENT_NOT_RENDERED", "Image content was not rendered into Markdown.");
+  }
+  if (mathNotReconstructed) {
+    add("MATH_NOT_RECONSTRUCTED", "Source-evidenced mathematical content was present on this page and was not reconstructed as mathematics; it remains source reading-order text.");
   }
   if (page.has_vector_paint_operations) {
     add("VECTOR_CONTENT_NOT_INTERPRETED", "Vector-painted content beyond reconstructed ruled or bounded solid-mask table grids was not interpreted as text or table structure.");
@@ -2814,7 +2923,9 @@ function renderPage(page, {
   const markdown = lines.length > 0
     ? lines.join("\n")
     : "[No source-backed text was available on this page.]";
-  const gaps = pageGaps(page, analysis, linkState);
+  const gaps = pageGaps(page, analysis, linkState, {
+    mathNotReconstructed: pageMathNotReconstructed(analysis, fractionPlan),
+  });
   const rendered = {
     page: page.page,
     conversion_status: pageStatus(page, gaps),

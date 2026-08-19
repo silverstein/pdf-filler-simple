@@ -785,6 +785,7 @@ const markdownGapCode = enumString([
   "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
   "TEXT_INTEGRITY_SUSPECT",
+  "MATH_NOT_RECONSTRUCTED",
   "CONTROL_CHARACTERS_SANITIZED",
 ]);
 const markdownGap = object({
