@@ -31,6 +31,12 @@ node scripts/eval-generate-extraction-layout-oracle.mjs --write
 node scripts/eval-capture-tool-contracts.mjs
 ```
 
+Run the external olmOCR-bench regression gate when qualifying extraction or
+Markdown-rendering changes. Follow `docs/EVALUATION.md`; retain the exact
+manifest, corpus-inventory, evaluator, candidate, run, and score bindings. This
+gate is deliberately separate from `npm test`. Its results are directional
+internal regression evidence and never authorize a public benchmark claim.
+
 - The layout occurrence oracle binds `package.json` and `package-lock.json` by
   digest. A bump alone fails ten `extraction-phase1-scorer` tests.
 - The pinned tool contract is regenerated from real MCP discovery and compared

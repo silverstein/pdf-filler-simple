@@ -1,0 +1,138 @@
+{
+  "suite_id": "pdf-tools.olmocr-bench.directional.v1",
+  "suite_version": 1,
+  "benchmark_claim_ready": false,
+  "source": {
+    "repository": "https://huggingface.co/datasets/allenai/olmOCR-bench",
+    "revision": "54a96a6fb6a2bd3b297e59869491db4d3625b711",
+    "license": "ODC-BY-1.0",
+    "redistribution": "external_only",
+    "corpus_directory": "bench_data",
+    "metadata": {
+      ".gitattributes": {
+        "size_bytes": 2548,
+        "sha256": "ed678d24bcecb5b8773a85ccea8aaec911a817e3f06d9ec09f3c91c14d796481"
+      },
+      "README.md": {
+        "size_bytes": 5780,
+        "sha256": "92ce373a5e384628dc2fa8ef30918d3450c44ca89e89dfaea55c9b80e71fbf44"
+      },
+      "eval.yaml": {
+        "size_bytes": 791,
+        "sha256": "e8438c6c3d2b014e6be5313eb8444a223d26be45d74c3baf33ffab3aa45572ff"
+      }
+    },
+    "pdf_inventory": {
+      "count": 1403,
+      "total_size_bytes": 354384964,
+      "canonical_inventory_sha256": "9777899ba083c63b3a9a301b376143934c36ee948c03b0208a73fe42515e5080"
+    },
+    "categories": [
+      {
+        "id": "arxiv_math",
+        "file": "bench_data/arxiv_math.jsonl",
+        "sha256": "5c1ba4770168a2312bf248c8b0125ed2279ec9f664ce64ba7cb52e3c41e4987c",
+        "size_bytes": 720212,
+        "test_count": 2927,
+        "unique_pdf_count": 522
+      },
+      {
+        "id": "headers_footers",
+        "file": "bench_data/headers_footers.jsonl",
+        "sha256": "315822b0fcd684eab7099bfb162ea45dc2384b23874be9529d60cd85b7e9c274",
+        "size_bytes": 325565,
+        "test_count": 760,
+        "unique_pdf_count": 266
+      },
+      {
+        "id": "long_tiny_text",
+        "file": "bench_data/long_tiny_text.jsonl",
+        "sha256": "9ebe6a5fa690e78098e088b9eb677c4bb4212ed9b946be80b2d79a1a6c2a0e1a",
+        "size_bytes": 167783,
+        "test_count": 442,
+        "unique_pdf_count": 62
+      },
+      {
+        "id": "multi_column",
+        "file": "bench_data/multi_column.jsonl",
+        "sha256": "50192fd72f18434f3303b501bc9347763fb4b865238b7636604d3f6ebdf01595",
+        "size_bytes": 503239,
+        "test_count": 884,
+        "unique_pdf_count": 231
+      },
+      {
+        "id": "old_scans",
+        "file": "bench_data/old_scans.jsonl",
+        "sha256": "0cb14b2a5c3a08383f256931f79d1deea737e2635e0f1766b0fe0377f9416a0d",
+        "size_bytes": 194580,
+        "test_count": 526,
+        "unique_pdf_count": 98
+      },
+      {
+        "id": "old_scans_math",
+        "file": "bench_data/old_scans_math.jsonl",
+        "sha256": "aa514fb0c4c06aa077cadf316c2aede9716f62088ea1011683e059f7be67a8bd",
+        "size_bytes": 122403,
+        "test_count": 458,
+        "unique_pdf_count": 36
+      },
+      {
+        "id": "table_tests",
+        "file": "bench_data/table_tests.jsonl",
+        "sha256": "e37a99bd60de56c62cd3f4c1b7910b603641901c15ae119f849ffefa86cde120",
+        "size_bytes": 442926,
+        "test_count": 1022,
+        "unique_pdf_count": 188
+      }
+    ]
+  },
+  "execution": {
+    "tool": "convert_pdf_to_markdown",
+    "page": 1,
+    "options": {
+      "start_page": 1,
+      "end_page": 1
+    },
+    "required_pdf_count": 1403,
+    "required_test_count": 7019,
+    "output_mode": "atomic_json",
+    "output_permissions": "0600"
+  },
+  "scorer": {
+    "profile": "retained-first-run-js-v1",
+    "math": "normalized_string_containment_proxy",
+    "table": "markdown_adjacency_approximation",
+    "typed_gap_attribution": "v1"
+  },
+  "claim_boundary": {
+    "comparability": "directional_only",
+    "release_gate_role": "internal_regression_tracking",
+    "public_benchmark_claim": "prohibited",
+    "required_caveats": [
+      "Math is a normalized-string containment proxy, not the upstream rendered-bbox symbol-layout test.",
+      "The JavaScript scorer preserves the retained first-run profile and is not certified by the upstream benchmark authors.",
+      "Failed-but-flagged measures typed-gap coverage; it is not a correctness pass."
+    ]
+  },
+  "reference_run": {
+    "candidate_revision": "dc90e7536e16e5b58c332f9f1dc7fe1d7e00e8a4",
+    "run_sha256": "eca355a6165a25d1259ff0365191d7c6faa6b4eff5e77bc377a12a6646eb9894",
+    "run_size_bytes": 12202601,
+    "score_sha256": "8299fca484460b8f10b402681f8407c5723b17ddc1c419b97907ebb0bd150eec",
+    "expected": {
+      "tests_total": 7019,
+      "pdfs_converted": 1403,
+      "overall": {
+        "pass": 921,
+        "failed_flagged": 2922,
+        "failed_silent": 3176
+      },
+      "excluding_math_proxy": {
+        "n": 3634,
+        "pass": 900,
+        "failed_flagged": 1988,
+        "failed_silent": 746
+      }
+    }
+  }
+}

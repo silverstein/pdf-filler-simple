@@ -64,6 +64,41 @@ Public fixtures belong in the repository only when redistribution is clearly
 allowed. Confidential or user-supplied documents stay outside Git; derived
 synthetic fixtures should reproduce the failure without retaining private data.
 
+### External olmOCR-bench regression gate
+
+The tracked olmOCR-bench gate measures page-1 Markdown extraction and typed-gap
+coverage across an external 1,403-PDF corpus. The corpus is not vendored. Its
+upstream revision, seven JSONL inputs, metadata, and canonical PDF inventory are
+pinned in `test/fixtures/eval/olmocr/manifest.v1.json`. Download the ODC-BY
+dataset separately and verify all bytes before executing product code:
+
+```bash
+npm run eval:olmocr -- verify --bench-root /absolute/path/to/olmOCR-bench
+```
+
+A full release-candidate run and score use exclusive, atomic, mode-`0600` JSON
+outputs. Existing outputs are never overwritten:
+
+```bash
+npm run eval:olmocr -- run \
+  --bench-root /absolute/path/to/olmOCR-bench \
+  --output /private/evidence/run.json
+npm run eval:olmocr -- score \
+  --bench-root /absolute/path/to/olmOCR-bench \
+  --run /private/evidence/run.json \
+  --output /private/evidence/score.json
+```
+
+The headline is the three-bucket decomposition excluding math: `pass`,
+`failed_flagged`, and `failed_silent`. Math is shown separately because it uses
+a normalized-string containment proxy rather than the upstream rendered-bbox
+symbol-layout test. `failed_flagged` means a relevant typed gap covered the
+failure; it is not a correctness pass. The retained JavaScript scorer and table
+approximation are useful for internal directional regression tracking only.
+Every report therefore sets `benchmark_claim_ready` to false and prohibits a
+public benchmark claim. A limited run, dirty candidate, conversion failure,
+corpus mismatch, or binding mismatch is non-qualifying.
+
 ### Executable corpus v0
 
 The first executable slice lives at `test/fixtures/eval/manifest.v1.json` and is
