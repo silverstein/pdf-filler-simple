@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.17.0",
+  version: "1.18.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.6.0";
 
@@ -1166,12 +1166,12 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
  *        compact left-to-right math run" shape the bounded `log`-spacing repair
  *        already uses to recognise a nearby equation, reused verbatim rather
  *        than reinvented.
- *   S2 — an independent mathematical marker on that same line: either a
- *        dedicated mathematical operator (`rowHasSpecificMathOperator`), or a
- *        relation `=` in a run of at least three items that also switches
- *        source font resource across an adjacent same-baseline pair including a
- *        single letter — the roman-operator / italic-variable alternation that
- *        mathematical typesetting produces and running prose does not.
+ *   S2 — an independent mathematical marker on that same line: either an
+ *        unambiguous mathematical glyph (`∑`, `∫`, or `∞`), or a relation `=`
+ *        in a run of at least three items that switches source font resource
+ *        across an adjacent same-baseline pair including a single letter — the
+ *        roman-operator / italic-variable alternation that mathematical
+ *        typesetting produces and running prose does not.
  *   S3 — the line really was left flat: it is not inside a reconstructed table
  *        segment, and the stacked-fraction projection neither consumed nor
  *        rewrote it. Where a construct *was* reconstructed, nothing is claimed
@@ -1179,8 +1179,11 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
  *
  * S1 alone is not enough, which is the whole point of the conjunction: a line
  * of single-character items can be a column of initials or a run of separated
- * digits. S2 alone is not enough either, because a stray `=` or `∞` appears in
- * ordinary prose.
+ * digits. The words `Lim`, `Max`, and `Min` are admitted by S1 so a relation
+ * can corroborate them, but they are not S2 evidence by themselves: `Max 5`
+ * may be prose, a header, or a label. A mathematical symbol or the independent
+ * relation-plus-font evidence is required rather than fabricating a loss
+ * declaration from an ambiguous word.
  *
  * Deliberately rejected as triggers:
  *
@@ -1231,6 +1234,10 @@ function hasCrossFontRelationEvidence(items) {
   return false;
 }
 
+function rowHasSymbolicMathOperator(row) {
+  return row.cells.some(item => /^[∑∫∞]$/u.test(item.text.trim()));
+}
+
 function isUnreconstructedMathRow(row) {
   const { line } = row;
   if (line.direction !== "ltr" || line.text.length > MATH_RUN_MAX_LINE_CHARACTERS) return false;
@@ -1238,7 +1245,7 @@ function isUnreconstructedMathRow(row) {
   if (items.length < MATH_RUN_MIN_ITEMS
     || !items.every(item => isMathRunItemText(item.text))
     || items.some(item => containsUnsafeText(item.text))) return false;
-  return rowHasSpecificMathOperator(row) || hasCrossFontRelationEvidence(items);
+  return rowHasSymbolicMathOperator(row) || hasCrossFontRelationEvidence(items);
 }
 
 function pageMathNotReconstructed(analysis, fractionPlan) {

@@ -196,9 +196,14 @@ internal destinations, actions, other URL schemes, and ambiguous or partially
 covered labels stays escaped and is reported as a typed gap. Cell artwork is
 omitted and reported as a vector-content gap. It does not
 run OCR, render image content, or use an external model. Raster, mixed,
-vector, failed, caller-limit-truncated, invalid-geometry, and output-omission
-cases are represented as typed gaps and
-cannot receive a complete conversion status. With `emit_table_proposals: true`,
+vector, failed, caller-limit-truncated, invalid-geometry, output-omission, and
+source-evidenced unreconstructed-mathematics cases are represented as typed
+gaps and cannot receive a complete conversion status. The
+`MATH_NOT_RECONSTRUCTED` code is emitted per page only when an unambiguous
+mathematical glyph occurs, or when a relation and independent cross-font
+evidence occur in the same compact source-item run; ambiguous operator words
+remain undeclared rather than guessed.
+With `emit_table_proposals: true`,
 each abandoned table region also carries one bounded packet containing source
 text items, ruled and painted geometry, header hints, typed truncation, and a
 token bound to the source hash, extraction-IR version, and region identity.

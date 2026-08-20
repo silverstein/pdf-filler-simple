@@ -153,13 +153,15 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // lowered smaller glyph run and writes it as Unicode subscript characters. No
 // tool name, description, input schema, or read-only annotation changes.
 // Previously cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d.
-// 2026-08-19: the convert and verify output schemas gain the typed gap code
+// 2026-08-20: the convert and verify output schemas gain the typed gap code
 // MATH_NOT_RECONSTRUCTED, which declares per page that source-evidenced
-// mathematical content was left as reading-order text. Purely additive to one
-// enum: no tool name, description, input schema, or read-only annotation
-// changes, and no rendered Markdown body changes. Previously
+// mathematical content was left as reading-order text. The renderer identity
+// becomes 1.18.0 because a qualifying input now gains a declaration section,
+// partial status, byte count, and digest even though its source-derived body is
+// unchanged. No tool name, description, input schema, or read-only annotation
+// changes. Previously
 // e5328f44d1f1f01a2f015d756cb13c1980b84c8042cdd1d8470699b9931b67ad.
-const TOOL_CONTRACT_SHA256 = "f1aa87ac16ed090a22ed7ba332d32f726740e382033e537948a216f04ee9f8e6";
+const TOOL_CONTRACT_SHA256 = "cb7b1b0e77df7bbab2b01dfa940f15cb2eaacb089b25d888c48900e3f071c6d6";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

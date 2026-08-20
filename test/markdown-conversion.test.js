@@ -375,8 +375,11 @@ describe("layout Markdown renderer", () => {
     // Then bc025b37042e9ede92e02bf050998faa5fe9c3306f5f8b251f6fe497dabe0ba2, before renderer 1.17.0 extended the same
     // rule to lowered runs and Unicode subscripts. This fixture paints nothing
     // displaced in either direction, so again only the envelope moved.
+    // Then c5f8738869464d87e3add9d8e6907f83537485d8abea97da12cce9de4baa1489,
+    // before renderer 1.18.0 added the typed unreconstructed-math declaration.
+    // This non-math fixture keeps its body and gaps; the renderer identity moves.
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("c5f8738869464d87e3add9d8e6907f83537485d8abea97da12cce9de4baa1489");
+      .toBe("5dc0052f60e5c33f413e0b961519a070c1ae714d5888a716f863a992c5397d8b");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -384,7 +387,7 @@ describe("layout Markdown renderer", () => {
     })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.17.0",
+      version: "1.18.0",
     });
     expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);

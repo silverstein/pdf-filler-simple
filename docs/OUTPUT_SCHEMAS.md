@@ -26,7 +26,7 @@ an `isError` result is never forced through a success schema.
 | `bulk_fill_from_csv` | row results and bounded record preview |
 | `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
 | `create_signature` | saved signature metadata |
-| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets plus document-level region truncation for abandoned table regions |
+| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `MATH_NOT_RECONSTRUCTED`, `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), gap-derived page/document conversion status, `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets plus document-level region truncation for abandoned table regions |
 | `verify_table_proposal` | deterministic accepted/rejected result bound to a fresh source parse, typed B2 coverage/order/header and B3 grid/ruling/ambiguity checks, source/IR/region identity, and source-derived cells plus deterministic GFM only on acceptance; consistency is not proof of unique topology |
 
 | `detect_signature_zones` | detected coordinate zones |

@@ -24,7 +24,7 @@ Add a `MATH_NOT_RECONSTRUCTED` gap code and emit it **per page**, on evidence, w
 ## Hard constraints
 
 1. **Evidence-backed, never speculative.** Emit only on positive source evidence of mathematical content that was not reconstructed. No heuristic "this looks mathy" guess. If evidence is absent or ambiguous, emit nothing — a missing gap is better than a fabricated one.
-2. **Zero behavior change to the Markdown body.** This lane DECLARES; it does not reconstruct, remove, or reorder anything. The rendered Markdown body must be **byte-identical** to current output for every fixture; only the gaps section (and structured `gaps[]`) may change.
+2. **Zero behavior change to the document body.** This lane DECLARES; it does not reconstruct, remove, or reorder source content. Everything before the trailing declaration sections must be **byte-identical** to the pre-change frozen corpus. The trailing gaps section, structured `gaps[]`, page/document `conversion_status`, Markdown byte count and digest, and renderer identity are expected to change together when the new gap fires.
 3. **Fail-closed discipline preserved.** Consistent with the existing gap vocabulary; typed code, page-scoped, no numeric confidence.
 4. **Pinned pdfjs 5.4.624 stays pinned.** Do not touch `vendor/qpdf-wasm/runtime/`, `.beads/`, or unrelated tools.
 5. **Share-mirror parity** — mirror `server/*` changes into `pdf-toolkit-mcp-share/` and pass `npm run test:contract:share`.
@@ -50,7 +50,7 @@ Prefer a conjunction (e.g. damaged/legacy math glyph evidence, or a detected mat
 Add `test/math-not-reconstructed-gap.test.js`:
 1. **Positive**: a fixture with clear unreconstructed mathematical content emits `MATH_NOT_RECONSTRUCTED` scoped to the right page.
 2. **Negative (critical)**: a plain-prose fixture with no mathematical content emits **no** such gap. A fixture with only a raised footnote marker also emits none (raised ≠ math).
-3. **Body invariance**: for all existing conversion fixtures, the Markdown **body** is byte-identical to pre-change output (only the gaps section may differ). Assert this explicitly — it is the safety property of this lane.
+3. **Body invariance**: the lane's explicit positive, negative, and adversarial corpus is pinned to Markdown **body** bytes captured from `dd2d922`, in default and compact modes. The existing conversion suites remain the broader regression gate. Do not claim those suites are pre-change byte pins when they are not.
 4. **Schema**: structured results validate; the new code is in the output-schema enum; the semantic validator accepts it.
 5. **Determinism**: two runs byte-identical.
 
@@ -65,4 +65,4 @@ No release/tag/push. Do not edit `.beads/`. No npm install. No reconstruction of
 
 ## Definition of done
 
-New typed gap registered, schema-wired, emitted only on documented evidence, Markdown body provably unchanged, negatives pass, share parity green. Hand back for review; a codex diff review runs before integration.
+New typed gap registered, schema-wired, emitted only on documented evidence, Markdown body provably unchanged for the frozen lane corpus, derived partial status and renderer `1.18.0` provenance bound consistently, adversarial negatives pass, share parity green. Hand back for review; a codex diff review runs before integration.

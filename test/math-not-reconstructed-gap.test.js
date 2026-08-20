@@ -208,6 +208,32 @@ const CORPUS = {
       positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, eol: true }),
     ],
   }],
+  namedOperatorWithoutRelation: [{
+    items: [
+      positionedTextItem("Max", { top: 100, left: 100, width: 18 }),
+      positionedTextItem("5", { top: 100, left: 119, width: 5, eol: true }),
+    ],
+  }],
+  sameFontNamedRelation: [{
+    items: [
+      positionedTextItem("Max", { top: 100, left: 100, width: 18 }),
+      positionedTextItem("=", { top: 100, left: 119, width: 7 }),
+      positionedTextItem("5", { top: 100, left: 127, width: 5, eol: true }),
+    ],
+  }],
+  genericCrossFontRelation: [{
+    items: [
+      positionedTextItem("A", { top: 100, left: 100, width: 6, fontName: "f2" }),
+      positionedTextItem("=", { top: 100, left: 107, width: 7 }),
+      positionedTextItem("B", { top: 100, left: 115, width: 6, eol: true }),
+    ],
+  }],
+  symbolicOperatorEquation: [{
+    items: [
+      positionedTextItem("κ", { top: 100, left: 100, width: 6, fontName: "f2" }),
+      positionedTextItem("∑", { top: 100, left: 107, width: 12, eol: true }),
+    ],
+  }],
   proseThenEquation: [
     {
       items: [
@@ -253,6 +279,14 @@ const PRE_CHANGE_BODIES = {
   "relationEquation:compact": "<!-- PDF page 1 -->\n\nlogN=5",
   compactRunWithoutMarker: "<!-- PDF page 1 -->\n\nlogN",
   "compactRunWithoutMarker:compact": "<!-- PDF page 1 -->\n\nlogN",
+  namedOperatorWithoutRelation: "<!-- PDF page 1 -->\n\nMax5",
+  "namedOperatorWithoutRelation:compact": "<!-- PDF page 1 -->\n\nMax5",
+  sameFontNamedRelation: "<!-- PDF page 1 -->\n\nMax=5",
+  "sameFontNamedRelation:compact": "<!-- PDF page 1 -->\n\nMax=5",
+  genericCrossFontRelation: "<!-- PDF page 1 -->\n\nA=B",
+  "genericCrossFontRelation:compact": "<!-- PDF page 1 -->\n\nA=B",
+  symbolicOperatorEquation: "<!-- PDF page 1 -->\n\nκ∑",
+  "symbolicOperatorEquation:compact": "<!-- PDF page 1 -->\n\nκ∑",
   proseThenEquation: "<!-- PDF page 1 -->\n\nChannel capacity\nThe capacity of a discrete noiseless channel is defined below.\n\n---\n\n<!-- PDF page 2 -->\n\nC= Lim\n\n---\n\n<!-- PDF page 3 -->\n\nThe remainder of the paper discusses the practical consequences.",
   "proseThenEquation:compact": "<!-- PDF page 1 -->\n\nChannel capacity\nThe capacity of a discrete noiseless channel is defined below.\n\n---\n\n<!-- PDF page 2 -->\n\nC= Lim\n\n---\n\n<!-- PDF page 3 -->\n\nThe remainder of the paper discusses the practical consequences.",
   ruledTable: "<!-- PDF page 1 -->\n\n| Region | Q1 | Q2 |\n| --- | --- | --- |\n| North | 1200 | 1450 |\n| South | 980 | 1020 |\n| West | 1500 | 1380 |",
@@ -310,15 +344,27 @@ describe("MATH_NOT_RECONSTRUCTED typed gap", () => {
     expect(result.markdown).toContain(`## Conversion gaps\n\n- Page 2: Source-evidenced mathematical content`);
   });
 
-  it("declares a compact run proven by a named operator and by a cross-font relation", async () => {
-    for (const name of ["namedOperatorEquation", "relationEquation"]) {
+  it("declares compact runs proven by a math symbol or a cross-font relation", async () => {
+    for (const name of [
+      "namedOperatorEquation",
+      "relationEquation",
+      "genericCrossFontRelation",
+      "symbolicOperatorEquation",
+    ]) {
       const result = renderPdfLayoutToMarkdown(await layoutFor(name));
       expect(codesByPage(result), name).toEqual([`1:${CODE}`]);
     }
   });
 
   it("declares nothing without positive evidence of mathematics", async () => {
-    for (const name of ["prose", "footnoteMarker", "compactRunWithoutMarker", "ruledTable"]) {
+    for (const name of [
+      "prose",
+      "footnoteMarker",
+      "compactRunWithoutMarker",
+      "namedOperatorWithoutRelation",
+      "sameFontNamedRelation",
+      "ruledTable",
+    ]) {
       const result = renderPdfLayoutToMarkdown(await layoutFor(name));
       expect(result.gaps.map(gap => gap.code), name).not.toContain(CODE);
       // `footnoteMarker` really did raise its marker; a raised run is not math.
