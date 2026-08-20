@@ -113,12 +113,13 @@
     "gate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "reference_run_sha256", "reference_scorer_profile", "reference_scorer_sha256", "reference"],
+      "required": ["id", "reference_run_sha256", "reference_scorer_profile", "reference_scorer_sha256", "reference_verification", "reference"],
       "properties": {
         "id": { "const": "pdf-tools.olmocr-bench.no-regression.v1" },
         "reference_run_sha256": { "$ref": "#/$defs/sha256" },
         "reference_scorer_profile": { "const": "directional-js-v2" },
         "reference_scorer_sha256": { "$ref": "#/$defs/sha256" },
+        "reference_verification": { "const": "exact-run-replay-required" },
         "reference": {
           "type": "object",
           "additionalProperties": false,
@@ -150,7 +151,26 @@
         "run_sha256": { "$ref": "#/$defs/sha256" },
         "run_size_bytes": { "type": "integer", "minimum": 1 },
         "score_sha256": { "$ref": "#/$defs/sha256" },
-        "historical_compatibility_expected": { "type": "object" }
+        "historical_compatibility_expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tests_total", "pdfs_converted", "overall", "excluding_math_proxy"],
+          "properties": {
+            "tests_total": { "const": 7019 },
+            "pdfs_converted": { "const": 1403 },
+            "overall": { "$ref": "#/$defs/three_bucket_counts" },
+            "excluding_math_proxy": {
+              "allOf": [
+                { "$ref": "#/$defs/three_bucket_counts" },
+                {
+                  "type": "object",
+                  "required": ["n"],
+                  "properties": { "n": { "const": 3634 } }
+                }
+              ]
+            }
+          }
+        }
       }
     }
   },
@@ -172,6 +192,17 @@
       "required": ["pass", "failed_silent"],
       "properties": {
         "pass": { "type": "integer", "minimum": 0 },
+        "failed_silent": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "three_bucket_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "failed_flagged", "failed_silent"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 0 },
+        "pass": { "type": "integer", "minimum": 0 },
+        "failed_flagged": { "type": "integer", "minimum": 0 },
         "failed_silent": { "type": "integer", "minimum": 0 }
       }
     }

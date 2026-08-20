@@ -30,19 +30,69 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
     const runtimeSources = [
       { path: "package.json", size_bytes: 1, sha256: "a".repeat(64) },
       { path: "server/index.js", size_bytes: 1, sha256: "b".repeat(64) },
-    ];
+    ].sort((left, right) => left.path.localeCompare(right.path));
+    const runtime = {
+      node: "v22.0.0",
+      v8: "12.0",
+      icu: "75.1",
+      unicode: "15.1",
+      modules: "127",
+      napi: "9",
+      platform: "linux",
+      architecture: "x64",
+      locale: "en-US",
+      time_zone: "UTC",
+      node_executable_size_bytes: 1,
+      node_executable_sha256: "e".repeat(64),
+    };
+    const packages = [{
+      name: "@modelcontextprotocol/sdk",
+      version: "1.30.0",
+      package_json_size_bytes: 1,
+      package_json_sha256: "f".repeat(64),
+    }];
+    const dependencies = {
+      package_lock_sha256: "1".repeat(64),
+      packages,
+      installed_tree: { entry_count: 1, file_bytes: 1, sha256: "2".repeat(64) },
+      sha256: createHash("sha256").update(Buffer.from(canonicalJson(packages))).digest("hex"),
+    };
+    const evaluatorFiles = [
+      "package-lock.json",
+      "package.json",
+      "scripts/eval-no-network.cjs",
+      "scripts/eval-olmocr-bench.mjs",
+      "test/eval/olmocr-bench-scorer.js",
+      "test/fixtures/eval/olmocr/manifest.schema.json",
+    ].sort().map((file, index) => ({
+      path: file,
+      size_bytes: 1,
+      sha256: String(index + 2).repeat(64),
+    }));
+    const evaluatorIdentity = { files: evaluatorFiles, runtime, dependencies };
     return {
       schema: "pdf-tools.olmocr-bench-run.v1",
       manifest_sha256: "c".repeat(64),
       manifest_size_bytes: 1,
       corpus: {},
-      evaluator: {},
+      evaluator: {
+        ...evaluatorIdentity,
+        sha256: createHash("sha256").update(Buffer.from(canonicalJson(evaluatorIdentity))).digest("hex"),
+        candidate_network_policy: {
+          mode: "node-preload-deny-network-v1",
+          environment: "minimal-allowlist-v1",
+          preload_sha256: evaluatorFiles.find(file => file.path === "scripts/eval-no-network.cjs").sha256,
+        },
+      },
       candidate: {
         git_revision: "d".repeat(40),
         git_clean: true,
+        git_tree_verified: true,
         runtime_source_sha256: createHash("sha256")
           .update(Buffer.from(canonicalJson(runtimeSources))).digest("hex"),
         runtime_sources: runtimeSources,
+        runtime,
+        dependencies,
       },
       selection: { full: true, pdf_count: 1 },
       qualifying: true,
@@ -83,6 +133,7 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
     expect(fuzzyIncludes("fidelity", "high fidel1ty output", 1)).toBe(true);
     expect(fuzzyIncludes("fidelity", "high facility output", 1)).toBe(false);
     expect(fuzzyIncludes("𝑥=1", "we set 𝑥=2 here", 1)).toBe(true);
+    expect(fuzzyIncludes("𝑥=1", "we set 𝑦=1 here", 1)).toBe(true);
   });
 
   it("rejects self-asserted qualification and failed structured conversions", () => {
@@ -100,6 +151,14 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
     contradictory.records[0].status = "failed";
     contradictory.records[0].pages[0].conversion_status = "failed";
     expect(() => validateRunReport(contradictory)).toThrow(/contradictory conversion state/u);
+    const inventedGap = runReport();
+    inventedGap.records[0].status = "partial";
+    inventedGap.records[0].pages[0].conversion_status = "partial";
+    inventedGap.records[0].gaps = [{ code: "NOT_A_REAL_GAP" }];
+    expect(() => validateRunReport(inventedGap)).toThrow(/invalid typed-gap evidence/u);
+    const impossibleGap = runReport();
+    impossibleGap.records[0].gaps = [{ code: "TEXT_LAYER_FAILED" }];
+    expect(() => validateRunReport(impossibleGap)).toThrow(/contradictory conversion state/u);
   });
 
   it("honors explicit case sensitivity for both presence and absence", () => {
@@ -134,6 +193,10 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
       { type: "order", before: "Alpha", after: "Omega", max_diffs: 0 },
       { markdown: "Omega then Alpha then Omega", gaps: [] },
     )).toBe("pass");
+    expect(scoreOlmocrTest(
+      { type: "order", before: "abc", after: "bc", max_diffs: 1 },
+      { markdown: "bc", gaps: [] },
+    )).toBe("failed_silent");
   });
 
   it("scores retained Markdown table adjacency and headings", () => {

@@ -50,55 +50,90 @@ export function benchmarkMarkdownBody(markdown) {
   return body;
 }
 
-function sellersWithin(pattern, text, maximumEdits) {
-  let previous = Array.from({ length: pattern.length + 1 }, (_, index) => index);
-  if (previous[pattern.length] <= maximumEdits) return true;
-  for (let textIndex = 0; textIndex < text.length; textIndex += 1) {
-    const character = text[textIndex];
-    const current = Array(pattern.length + 1).fill(0);
-    for (let index = 1; index <= pattern.length; index += 1) {
-      current[index] = Math.min(
-        previous[index] + 1,
-        current[index - 1] + 1,
-        previous[index - 1] + (pattern[index - 1] === character ? 0 : 1),
+function editDistanceWithin(pattern, text, maximumEdits) {
+  if (Math.abs(pattern.length - text.length) > maximumEdits) return false;
+  let previous = Array.from({ length: text.length + 1 }, (_, index) => index);
+  for (let patternIndex = 1; patternIndex <= pattern.length; patternIndex += 1) {
+    const current = [patternIndex];
+    for (let textIndex = 1; textIndex <= text.length; textIndex += 1) {
+      current[textIndex] = Math.min(
+        previous[textIndex] + 1,
+        current[textIndex - 1] + 1,
+        previous[textIndex - 1] + (pattern[patternIndex - 1] === text[textIndex - 1] ? 0 : 1),
       );
     }
-    if (current[pattern.length] <= maximumEdits) return true;
     previous = current;
   }
-  return false;
+  return previous[text.length] <= maximumEdits;
 }
 
-function fuzzyCandidates(needle, haystack, maximumEdits) {
+function fuzzyCandidateStarts(needle, haystack, maximumEdits) {
+  const pattern = [...needle];
+  const text = [...haystack];
   const chunks = maximumEdits + 1;
-  const chunkLength = Math.max(1, Math.floor(needle.length / chunks));
+  const chunkLength = Math.max(1, Math.floor(pattern.length / chunks));
+  const codeUnitToPoint = new Map();
+  let codeUnitOffset = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    codeUnitToPoint.set(codeUnitOffset, index);
+    codeUnitOffset += text[index].length;
+  }
   const candidates = new Set();
+  if (maximumEdits >= pattern.length) {
+    for (let index = 0; index <= text.length; index += 1) candidates.add(index);
+  }
   for (let index = 0; index < chunks; index += 1) {
     const offset = index * chunkLength;
     const piece = index < chunks - 1
-      ? needle.slice(offset, offset + chunkLength)
-      : needle.slice(offset);
+      ? pattern.slice(offset, offset + chunkLength).join("")
+      : pattern.slice(offset).join("");
     if (!piece) continue;
     let cursor = 0;
     while (cursor <= haystack.length) {
       const found = haystack.indexOf(piece, cursor);
       if (found < 0) break;
-      candidates.add(found - offset);
+      const pointIndex = codeUnitToPoint.get(found);
+      if (pointIndex !== undefined) candidates.add(pointIndex - offset);
       cursor = found + 1;
     }
   }
-  return [...candidates].sort((left, right) => left - right);
+  return { candidates: [...candidates].sort((left, right) => left - right), pattern, text };
+}
+
+function fuzzyMatchSpans(needle, haystack, maximumEdits = 0) {
+  if (!needle) return [{ start: 0, end: 0 }];
+  if (maximumEdits <= 0) {
+    const text = [...haystack];
+    const pattern = [...needle];
+    const spans = [];
+    for (let start = 0; start + pattern.length <= text.length; start += 1) {
+      if (text.slice(start, start + pattern.length).join("") === needle) {
+        spans.push({ start, end: start + pattern.length });
+      }
+    }
+    return spans;
+  }
+  const { candidates, pattern, text } = fuzzyCandidateStarts(needle, haystack, maximumEdits);
+  const spans = new Map();
+  const minimumLength = Math.max(0, pattern.length - maximumEdits);
+  const maximumLength = pattern.length + maximumEdits;
+  for (const candidate of candidates) {
+    const firstStart = Math.max(0, candidate - maximumEdits - 1);
+    const lastStart = Math.min(text.length, candidate + maximumEdits + 1);
+    for (let start = firstStart; start <= lastStart; start += 1) {
+      for (let length = minimumLength; length <= maximumLength && start + length <= text.length; length += 1) {
+        const end = start + length;
+        if (editDistanceWithin(pattern, text.slice(start, end), maximumEdits)) {
+          spans.set(`${start}:${end}`, { start, end });
+        }
+      }
+    }
+  }
+  return [...spans.values()].sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
 export function fuzzyIncludes(needle, haystack, maximumEdits = 0) {
-  if (!needle) return true;
-  if (maximumEdits <= 0 || haystack.includes(needle)) return haystack.includes(needle);
-  const span = needle.length + maximumEdits + 2;
-  return fuzzyCandidates(needle, haystack, maximumEdits).some(candidate => {
-    const start = Math.max(0, candidate - maximumEdits - 1);
-    const end = Math.min(haystack.length, candidate + span);
-    return sellersWithin(needle, haystack.slice(start, end), maximumEdits);
-  });
+  return fuzzyMatchSpans(needle, haystack, maximumEdits).length > 0;
 }
 
 function historicalSellersWithin(pattern, text, maximumEdits) {
@@ -172,26 +207,6 @@ function historicalFuzzyPosition(needle, haystack, maximumEdits = 0) {
     if (historicalSellersWithin(needle, haystack.slice(start, end), maximumEdits)) return candidate;
   }
   return -1;
-}
-
-function fuzzyPositions(needle, haystack, maximumEdits = 0) {
-  if (!needle) return [0];
-  if (maximumEdits <= 0) {
-    const positions = [];
-    let cursor = 0;
-    while (cursor <= haystack.length) {
-      const found = haystack.indexOf(needle, cursor);
-      if (found < 0) break;
-      positions.push(found);
-      cursor = found + 1;
-    }
-    return positions;
-  }
-  return fuzzyCandidates(needle, haystack, maximumEdits).filter(candidate => {
-    const start = Math.max(0, candidate - maximumEdits - 1);
-    const end = Math.min(haystack.length, candidate + needle.length + maximumEdits + 2);
-    return sellersWithin(needle, haystack.slice(start, end), maximumEdits);
-  });
 }
 
 function parseMarkdownTables(markdown) {
@@ -302,9 +317,9 @@ export function scoreOlmocrTest(test, record) {
     const found = fuzzyIncludes(needle, haystack, maximumEdits);
     passed = test.type === "present" ? found : !found;
   } else if (test.type === "order") {
-    const before = fuzzyPositions(normalizeBenchmarkText(test.before), normalized, maximumEdits);
-    const after = fuzzyPositions(normalizeBenchmarkText(test.after), normalized, maximumEdits);
-    passed = before.some(beforePosition => after.some(afterPosition => beforePosition < afterPosition));
+    const before = fuzzyMatchSpans(normalizeBenchmarkText(test.before), normalized, maximumEdits);
+    const after = fuzzyMatchSpans(normalizeBenchmarkText(test.after), normalized, maximumEdits);
+    passed = before.some(beforeMatch => after.some(afterMatch => beforeMatch.end <= afterMatch.start));
   } else if (test.type === "table") {
     passed = scoreTable(test, parseMarkdownTables(markdown));
   } else if (test.type === "math") {
@@ -515,7 +530,7 @@ export function scoreOlmocrBench({
     overall_including_math_proxy: result.overall,
     by_category: result.categories,
     by_type: result.types,
-    historical_compatibility: scoreOlmocrBenchHistorical({ tests, records }),
+    deprecated_candidate_profile: scoreOlmocrBenchHistorical({ tests, records }),
   };
   report.release_regression_gate = gatePolicy
     ? evaluateOlmocrRegressionGate(report, gatePolicy)

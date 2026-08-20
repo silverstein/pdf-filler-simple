@@ -84,11 +84,21 @@ Existing outputs are never overwritten:
 npm run eval:olmocr -- run \
   --bench-root /absolute/path/to/olmOCR-bench \
   --output /private/evidence/run.json
+# Retain the printed run SHA-256 independently before scoring.
 npm run eval:olmocr -- score \
   --bench-root /absolute/path/to/olmOCR-bench \
   --run /private/evidence/run.json \
+  --run-sha256 PRINTED_RUN_SHA256 \
   --output /private/evidence/score.json
 ```
+
+The runner starts the candidate with a minimal environment and a pinned Node
+preload that denies network APIs. The report binds the Node executable, Node,
+V8, ICU/Unicode, platform, architecture, the exact installed dependency tree, evaluator,
+candidate source tree, and network preload. Provider credentials and proxy
+variables are not inherited. `score` accepts only a mode-`0600`, current-user
+owned run whose independently retained digest is supplied explicitly, and it
+re-verifies the exact clean Git candidate and installed runtime before scoring.
 
 The headline is the three-bucket decomposition excluding math: `pass`,
 `failed_flagged`, and `failed_silent`. Percentages use attempted tests only;
@@ -115,11 +125,22 @@ The manifest binds the reference run, scorer digest, and exact reference
 counts. Changing scorer semantics requires an explicit baseline review and
 re-pin.
 
-For continuity, each score also reproduces the original 2026-08-19 report in a
-`historical_compatibility` section. That profile is deprecated and non-gating:
-its page-wide typed-gap attribution was too broad. It exists only to prove the
-retained 921 / 2,922 / 3,176 first-run decomposition can still be reproduced,
-not to legitimize that decomposition as a current quality metric.
+Ordinary candidate scores include a `deprecated_candidate_profile` section to
+show how that candidate would look under the discarded first-run rules. It is
+not a historical-compatibility assertion and is never gating. Reproducing the
+original 2026-08-19 result is a separate exact-byte operation: use the retained
+run whose digest is pinned in the manifest.
+
+```bash
+npm run eval:olmocr -- verify-reference \
+  --bench-root /absolute/path/to/olmOCR-bench \
+  --run /private/evidence/pinned-first-run.jsonl \
+  --output /private/evidence/reference-verification.json
+```
+
+That command refuses any other run bytes and succeeds only when the deprecated
+profile reproduces 921 / 2,922 / 3,176 and the primary scorer reproduces every
+threshold used by the tracked regression gate.
 
 ### Executable corpus v0
 

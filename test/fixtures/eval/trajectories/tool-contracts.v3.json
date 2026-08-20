@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.11.0"
   },
-  "tools_sha256": "988b3b85c04f65bb25a1fc2f60a7c231afd587cfe4ace70847bc01317c3dee68",
+  "tools_sha256": "02eba26394ab0aa5ebd2ac7961bd1dbadf6174a4d92a760fa2095f4783b6e5c7",
   "tools": [
     {
       "name": "add_signature_field",
@@ -561,6 +561,10 @@
           "compact": {
             "type": "boolean",
             "description": "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false."
+          },
+          "remove_page_furniture": {
+            "type": "boolean",
+            "description": "Remove only source-evidenced extreme-margin page furniture and report every removed line by typed gap and counts. Set false to preserve all source lines. Default: true."
           },
           "emit_table_proposals": {
             "type": "boolean",

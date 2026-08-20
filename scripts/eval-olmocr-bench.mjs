@@ -33,6 +33,28 @@ const MANIFEST_SCHEMA = path.join(
 );
 const SHA256 = /^[a-f0-9]{64}$/u;
 const GIT_SHA1 = /^[a-f0-9]{40}$/u;
+const NETWORK_PRELOAD = path.join(REPO_ROOT, "scripts", "eval-no-network.cjs");
+const GAP_CODES = new Set([
+  "CONTROL_CHARACTERS_SANITIZED",
+  "IMAGE_CONTENT_NOT_RENDERED",
+  "INVALID_TEXT_GEOMETRY",
+  "LINK_ANNOTATIONS_UNAVAILABLE",
+  "LINK_MAPPING_AMBIGUOUS",
+  "MATH_NOT_RECONSTRUCTED",
+  "OCR_NOT_PERFORMED",
+  "PAGE_FURNITURE_REMOVED",
+  "PAGE_RANGE_INCOMPLETE",
+  "RAW_PAGE_GEOMETRY_UNAVAILABLE",
+  "SOURCE_CHARACTER_LIMIT_REACHED",
+  "SOURCE_ITEM_LIMIT_REACHED",
+  "TABLE_RULING_UNSUPPORTED",
+  "TABLE_TOPOLOGY_UNKNOWN",
+  "TEXT_INTEGRITY_SUSPECT",
+  "TEXT_LAYER_EMPTY",
+  "TEXT_LAYER_FAILED",
+  "UNSUPPORTED_LINK_TARGET",
+  "VECTOR_CONTENT_NOT_INTERPRETED",
+]);
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -51,14 +73,15 @@ function usage() {
     "Usage:",
     "  node scripts/eval-olmocr-bench.mjs verify --bench-root ABSOLUTE_PATH [--manifest PATH]",
     "  node scripts/eval-olmocr-bench.mjs run --bench-root ABSOLUTE_PATH --output ABSOLUTE_PATH [--manifest PATH] [--limit N]",
-    "  node scripts/eval-olmocr-bench.mjs score --bench-root ABSOLUTE_PATH --run ABSOLUTE_PATH --output ABSOLUTE_PATH [--manifest PATH]",
+    "  node scripts/eval-olmocr-bench.mjs score --bench-root ABSOLUTE_PATH --run ABSOLUTE_PATH --run-sha256 SHA256 --output ABSOLUTE_PATH [--manifest PATH]",
+    "  node scripts/eval-olmocr-bench.mjs verify-reference --bench-root ABSOLUTE_PATH --run ABSOLUTE_PATH --output ABSOLUTE_PATH [--manifest PATH]",
   ].join("\n");
 }
 
 function parseArguments(argv) {
   const [command, ...rest] = argv;
-  if (!["verify", "run", "score"].includes(command)) throw new Error(usage());
-  const allowed = new Set(["--bench-root", "--manifest", "--output", "--run", "--limit"]);
+  if (!["verify", "run", "score", "verify-reference"].includes(command)) throw new Error(usage());
+  const allowed = new Set(["--bench-root", "--manifest", "--output", "--run", "--run-sha256", "--limit"]);
   if (rest.length % 2 !== 0) throw new Error(usage());
   const options = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -70,12 +93,20 @@ function parseArguments(argv) {
     options[key] = value;
   }
   if (!options["--bench-root"]) throw new Error("--bench-root is required");
-  if ((command === "run" || command === "score") && !options["--output"]) {
+  if (["run", "score", "verify-reference"].includes(command) && !options["--output"]) {
     throw new Error("--output is required");
   }
-  if (command === "score" && !options["--run"]) throw new Error("--run is required");
+  if (["score", "verify-reference"].includes(command) && !options["--run"]) throw new Error("--run is required");
+  if (command === "score" && !SHA256.test(options["--run-sha256"] ?? "")) {
+    throw new Error("--run-sha256 is required for score and must be a lowercase SHA-256 digest");
+  }
   if (command !== "run" && options["--limit"]) throw new Error("--limit is valid only for run");
-  if (command !== "score" && options["--run"]) throw new Error("--run is valid only for score");
+  if (!["score", "verify-reference"].includes(command) && options["--run"]) {
+    throw new Error("--run is valid only for score or verify-reference");
+  }
+  if (command !== "score" && options["--run-sha256"]) {
+    throw new Error("--run-sha256 is valid only for score");
+  }
   const limit = options["--limit"] === undefined ? null : Number(options["--limit"]);
   if (limit !== null && (!Number.isSafeInteger(limit) || limit < 1)) {
     throw new Error("--limit must be a positive integer");
@@ -86,6 +117,7 @@ function parseArguments(argv) {
     manifestPath: path.resolve(options["--manifest"] ?? DEFAULT_MANIFEST),
     outputPath: options["--output"] ? path.resolve(options["--output"]) : null,
     runPath: options["--run"] ? path.resolve(options["--run"]) : null,
+    runSha256: options["--run-sha256"] ?? null,
     limit,
   };
 }
@@ -102,7 +134,7 @@ async function canonicalDirectory(filename, label) {
   return filename;
 }
 
-async function boundedRegularFile(filename, maximumBytes, label) {
+async function boundedRegularFile(filename, maximumBytes, label, requirements = {}) {
   if (!path.isAbsolute(filename) || path.resolve(filename) !== filename
     || typeof fsConstants.O_NOFOLLOW !== "number") {
     throw new Error(`${label} must be an absolute normalized regular-file path`);
@@ -112,6 +144,10 @@ async function boundedRegularFile(filename, maximumBytes, label) {
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n
     || before.size < 1n || before.size > BigInt(maximumBytes)) {
     throw new Error(`${label} violates its bounded single-link regular-file contract`);
+  }
+  if ((requirements.mode !== undefined && Number(before.mode & 0o777n) !== requirements.mode)
+    || (requirements.uid !== undefined && before.uid !== BigInt(requirements.uid))) {
+    throw new Error(`${label} violates its owner/mode evidence contract`);
   }
   const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
@@ -164,6 +200,7 @@ function validateManifest(manifest) {
     || !SHA256.test(manifest.gate?.reference_scorer_sha256 ?? "")
     || manifest.gate?.reference_run_sha256 !== manifest.reference_run?.run_sha256
     || manifest.gate?.reference_scorer_profile !== manifest.scorer?.profile
+    || manifest.gate?.reference_verification !== "exact-run-replay-required"
     || !manifest.gate?.reference?.headline_excluding_math_proxy
     || !manifest.gate?.reference?.math_proxy
     || !manifest.gate?.reference?.by_category
@@ -284,6 +321,81 @@ async function verifyCorpus(benchRoot, manifest) {
   };
 }
 
+async function runtimeBinding() {
+  const executable = await boundedRegularFile(process.execPath, 256 * 1024 * 1024, "Node executable");
+  return {
+    node: process.version,
+    v8: process.versions.v8,
+    icu: process.versions.icu,
+    unicode: process.versions.unicode,
+    modules: process.versions.modules,
+    napi: process.versions.napi,
+    platform: process.platform,
+    architecture: process.arch,
+    locale: Intl.DateTimeFormat().resolvedOptions().locale,
+    time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    node_executable_size_bytes: executable.size_bytes,
+    node_executable_sha256: executable.sha256,
+  };
+}
+
+async function installedDependencyBinding() {
+  const [packageBytes, lockBytes] = await Promise.all([
+    fs.readFile(path.join(REPO_ROOT, "package.json")),
+    fs.readFile(path.join(REPO_ROOT, "package-lock.json")),
+  ]);
+  const packageJson = JSON.parse(packageBytes.toString("utf8"));
+  const lock = JSON.parse(lockBytes.toString("utf8"));
+  const packages = [];
+  for (const name of Object.keys(packageJson.dependencies ?? {}).sort()) {
+    const relativePath = path.posix.join("node_modules", ...name.split("/"), "package.json");
+    const installedBytes = await fs.readFile(path.join(REPO_ROOT, relativePath));
+    const installed = JSON.parse(installedBytes.toString("utf8"));
+    const locked = lock.packages?.[path.posix.dirname(relativePath)]?.version;
+    if (typeof installed.version !== "string" || installed.version !== locked) {
+      throw new Error(`Installed dependency ${name}@${String(installed.version)} does not match package-lock ${String(locked)}`);
+    }
+    packages.push({
+      name,
+      version: installed.version,
+      package_json_size_bytes: installedBytes.length,
+      package_json_sha256: sha256(installedBytes),
+    });
+  }
+  const tree = [];
+  const visit = async (directory, relativeDirectory) => {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name === ".cache" || entry.name === ".vite") continue;
+      const relativePath = path.posix.join(relativeDirectory, entry.name);
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath, relativePath);
+      } else if (entry.isFile()) {
+        const bytes = await fs.readFile(absolutePath);
+        tree.push({ path: relativePath, kind: "file", size_bytes: bytes.length, sha256: sha256(bytes) });
+      } else if (entry.isSymbolicLink()) {
+        const target = await fs.readlink(absolutePath);
+        tree.push({ path: relativePath, kind: "symlink", target });
+      } else {
+        throw new Error(`Installed dependency tree contains unsupported entry ${relativePath}`);
+      }
+    }
+  };
+  await visit(path.join(REPO_ROOT, "node_modules"), "node_modules");
+  const installedTree = {
+    entry_count: tree.length,
+    file_bytes: tree.reduce((total, item) => total + (item.size_bytes ?? 0), 0),
+    sha256: sha256(Buffer.from(canonicalJson(tree))),
+  };
+  return {
+    package_lock_sha256: sha256(lockBytes),
+    packages,
+    installed_tree: installedTree,
+    sha256: sha256(Buffer.from(canonicalJson(packages))),
+  };
+}
+
 async function candidateBinding() {
   const [{ stdout: revision }, { stdout: status }] = await Promise.all([
     execFileAsync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT }),
@@ -304,31 +416,56 @@ async function candidateBinding() {
   };
   await visit(path.join(REPO_ROOT, "server"), "server");
   const files = [];
-  for (const relativePath of ["package.json", "package-lock.json", ...serverFiles]) {
+  let gitTreeVerified = status.trim().length === 0;
+  for (const relativePath of ["package.json", "package-lock.json", ...serverFiles].sort()) {
     const bytes = await fs.readFile(path.join(REPO_ROOT, relativePath));
     files.push({ path: relativePath, size_bytes: bytes.length, sha256: sha256(bytes) });
+    if (gitTreeVerified) {
+      const { stdout: gitBytes } = await execFileAsync(
+        "git",
+        ["show", `${revision.trim()}:${relativePath}`],
+        { cwd: REPO_ROOT, encoding: "buffer", maxBuffer: Math.max(bytes.length * 2, 1024 * 1024) },
+      );
+      if (!Buffer.from(gitBytes).equals(bytes)) gitTreeVerified = false;
+    }
   }
+  const [runtime, dependencies] = await Promise.all([runtimeBinding(), installedDependencyBinding()]);
   return {
     git_revision: revision.trim(),
     git_clean: status.trim().length === 0,
+    git_tree_verified: gitTreeVerified,
     runtime_source_sha256: sha256(Buffer.from(canonicalJson(files))),
     runtime_sources: files,
+    runtime,
+    dependencies,
   };
 }
 
 async function evaluatorBinding() {
   const files = [];
   for (const relativePath of [
+    "package.json",
+    "package-lock.json",
     "scripts/eval-olmocr-bench.mjs",
+    "scripts/eval-no-network.cjs",
     "test/eval/olmocr-bench-scorer.js",
     "test/fixtures/eval/olmocr/manifest.schema.json",
-  ]) {
+  ].sort()) {
     const bytes = await fs.readFile(path.join(REPO_ROOT, relativePath));
     files.push({ path: relativePath, size_bytes: bytes.length, sha256: sha256(bytes) });
   }
+  const [runtime, dependencies] = await Promise.all([runtimeBinding(), installedDependencyBinding()]);
+  const identity = { files, runtime, dependencies };
   return {
-    sha256: sha256(Buffer.from(canonicalJson(files))),
+    sha256: sha256(Buffer.from(canonicalJson(identity))),
     files,
+    runtime,
+    dependencies,
+    candidate_network_policy: {
+      mode: "node-preload-deny-network-v1",
+      environment: "minimal-allowlist-v1",
+      preload_sha256: files.find(file => file.path === "scripts/eval-no-network.cjs").sha256,
+    },
   };
 }
 
@@ -373,8 +510,23 @@ async function writeAtomicExclusive(filename, value) {
 }
 
 function safeEnvironment(overrides) {
-  return Object.fromEntries(Object.entries({ ...process.env, ...overrides })
-    .filter(([, value]) => typeof value === "string"));
+  const environment = {
+    HOME: overrides.HOME,
+    XDG_CONFIG_HOME: overrides.XDG_CONFIG_HOME,
+    XDG_CACHE_HOME: overrides.XDG_CACHE_HOME,
+    TMPDIR: overrides.TMPDIR,
+    ALLOWED_DIRECTORIES: overrides.ALLOWED_DIRECTORIES,
+    PDF_TOOLS_ALLOWED_DIRECTORIES: overrides.PDF_TOOLS_ALLOWED_DIRECTORIES,
+    LANG: "en_US.UTF-8",
+    LC_ALL: "en_US.UTF-8",
+    TZ: "UTC",
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    NODE_OPTIONS: `--require=${NETWORK_PRELOAD}`,
+  };
+  if (Object.values(environment).some(value => typeof value !== "string" || !value)) {
+    throw new Error("Candidate environment allowlist is incomplete");
+  }
+  return environment;
 }
 
 async function runConversions({ benchRoot, pdfs, limit, manifest }) {
@@ -389,6 +541,7 @@ async function runConversions({ benchRoot, pdfs, limit, manifest }) {
       HOME: isolatedHome,
       XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
       XDG_CACHE_HOME: path.join(isolatedHome, ".cache"),
+      TMPDIR: isolatedHome,
       ALLOWED_DIRECTORIES: pdfRoot,
       PDF_TOOLS_ALLOWED_DIRECTORIES: pdfRoot,
     }),
@@ -469,6 +622,97 @@ function exactKeys(value, required, optional, label) {
   }
 }
 
+function validateFileBindings(files, label, minimum = 1) {
+  if (!Array.isArray(files) || files.length < minimum) throw new Error(`${label} files are invalid`);
+  const paths = [];
+  for (const [index, file] of files.entries()) {
+    exactKeys(file, ["path", "size_bytes", "sha256"], [], `${label} file ${index}`);
+    if (typeof file.path !== "string" || !file.path
+      || path.posix.normalize(file.path) !== file.path
+      || file.path.startsWith("../") || path.posix.isAbsolute(file.path)
+      || !Number.isSafeInteger(file.size_bytes) || file.size_bytes < 1
+      || !SHA256.test(file.sha256)) {
+      throw new Error(`${label} file ${index} is invalid`);
+    }
+    paths.push(file.path);
+  }
+  if (new Set(paths).size !== paths.length || canonicalJson(paths) !== canonicalJson([...paths].sort())) {
+    throw new Error(`${label} files must be unique and sorted`);
+  }
+}
+
+function validateRuntimeBinding(runtime, label) {
+  exactKeys(runtime, [
+    "node", "v8", "icu", "unicode", "modules", "napi", "platform", "architecture",
+    "locale", "time_zone", "node_executable_size_bytes", "node_executable_sha256",
+  ], [], label);
+  const strings = [
+    runtime.node, runtime.v8, runtime.icu, runtime.unicode, runtime.modules, runtime.napi,
+    runtime.locale, runtime.time_zone,
+  ];
+  if (strings.some(value => typeof value !== "string" || !value || value.length > 200)
+    || !["linux", "darwin"].includes(runtime.platform)
+    || !["x64", "arm64"].includes(runtime.architecture)
+    || !Number.isSafeInteger(runtime.node_executable_size_bytes)
+    || runtime.node_executable_size_bytes < 1
+    || !SHA256.test(runtime.node_executable_sha256)) {
+    throw new Error(`${label} is invalid`);
+  }
+}
+
+function validateDependencyBinding(binding, label) {
+  exactKeys(binding, ["package_lock_sha256", "packages", "installed_tree", "sha256"], [], label);
+  if (!SHA256.test(binding.package_lock_sha256) || !SHA256.test(binding.sha256)
+    || !Array.isArray(binding.packages) || binding.packages.length < 1) {
+    throw new Error(`${label} is invalid`);
+  }
+  const names = [];
+  for (const [index, dependency] of binding.packages.entries()) {
+    exactKeys(dependency, [
+      "name", "version", "package_json_size_bytes", "package_json_sha256",
+    ], [], `${label} package ${index}`);
+    if (typeof dependency.name !== "string" || !dependency.name
+      || typeof dependency.version !== "string" || !dependency.version
+      || !Number.isSafeInteger(dependency.package_json_size_bytes)
+      || dependency.package_json_size_bytes < 1
+      || !SHA256.test(dependency.package_json_sha256)) {
+      throw new Error(`${label} package ${index} is invalid`);
+    }
+    names.push(dependency.name);
+  }
+  if (new Set(names).size !== names.length
+    || canonicalJson(names) !== canonicalJson([...names].sort())
+    || sha256(Buffer.from(canonicalJson(binding.packages))) !== binding.sha256) {
+    throw new Error(`${label} packages are not uniquely and deterministically bound`);
+  }
+  exactKeys(binding.installed_tree, ["entry_count", "file_bytes", "sha256"], [], `${label} installed tree`);
+  if (!Number.isSafeInteger(binding.installed_tree.entry_count) || binding.installed_tree.entry_count < 1
+    || !Number.isSafeInteger(binding.installed_tree.file_bytes) || binding.installed_tree.file_bytes < 1
+    || !SHA256.test(binding.installed_tree.sha256)) {
+    throw new Error(`${label} installed tree is invalid`);
+  }
+}
+
+function validateEvaluatorBinding(binding) {
+  exactKeys(binding, [
+    "sha256", "files", "runtime", "dependencies", "candidate_network_policy",
+  ], [], "evaluator binding");
+  validateFileBindings(binding.files, "evaluator binding", 6);
+  validateRuntimeBinding(binding.runtime, "evaluator runtime");
+  validateDependencyBinding(binding.dependencies, "evaluator dependencies");
+  exactKeys(binding.candidate_network_policy, [
+    "mode", "environment", "preload_sha256",
+  ], [], "candidate network policy");
+  const preload = binding.files.find(file => file.path === "scripts/eval-no-network.cjs");
+  const identity = { files: binding.files, runtime: binding.runtime, dependencies: binding.dependencies };
+  if (binding.candidate_network_policy.mode !== "node-preload-deny-network-v1"
+    || binding.candidate_network_policy.environment !== "minimal-allowlist-v1"
+    || binding.candidate_network_policy.preload_sha256 !== preload?.sha256
+    || sha256(Buffer.from(canonicalJson(identity))) !== binding.sha256) {
+    throw new Error("Evaluator network or identity binding is invalid");
+  }
+}
+
 export function validateRunReport(report) {
   exactKeys(report, [
     "schema", "manifest_sha256", "manifest_size_bytes", "corpus", "evaluator",
@@ -488,22 +732,23 @@ export function validateRunReport(report) {
     throw new Error("Run selection does not match its records");
   }
   exactKeys(report.candidate, [
-    "git_revision", "git_clean", "runtime_source_sha256", "runtime_sources",
+    "git_revision", "git_clean", "git_tree_verified", "runtime_source_sha256", "runtime_sources",
+    "runtime", "dependencies",
   ], [], "candidate binding");
   if (!GIT_SHA1.test(report.candidate.git_revision)
     || typeof report.candidate.git_clean !== "boolean"
+    || typeof report.candidate.git_tree_verified !== "boolean"
     || !SHA256.test(report.candidate.runtime_source_sha256)
     || !Array.isArray(report.candidate.runtime_sources)
     || report.candidate.runtime_sources.length < 2
-    || report.candidate.runtime_sources.some(source => (
-      typeof source?.path !== "string" || !source.path
-      || !Number.isSafeInteger(source.size_bytes) || source.size_bytes < 1
-      || !SHA256.test(source.sha256 ?? "")
-    ))
     || sha256(Buffer.from(canonicalJson(report.candidate.runtime_sources)))
       !== report.candidate.runtime_source_sha256) {
     throw new Error("Candidate binding is invalid");
   }
+  validateFileBindings(report.candidate.runtime_sources, "candidate binding", 2);
+  validateRuntimeBinding(report.candidate.runtime, "candidate runtime");
+  validateDependencyBinding(report.candidate.dependencies, "candidate dependencies");
+  validateEvaluatorBinding(report.evaluator);
   const pdfs = [];
   for (const [index, record] of report.records.entries()) {
     exactKeys(record, ["pdf", "ok", "outcome", "markdown", "gaps", "status", "pages"], ["error"], `record ${index}`);
@@ -512,19 +757,33 @@ export function validateRunReport(report) {
       || !["converted", "product_failure", "harness_failure"].includes(record.outcome)
       || typeof record.markdown !== "string"
       || !Array.isArray(record.gaps)
-      || !Array.isArray(record.pages)
-      || record.gaps.some(gap => typeof gap?.code !== "string" || !gap.code)) {
+      || !Array.isArray(record.pages)) {
       throw new Error(`Run record ${index} has an invalid shape`);
+    }
+    for (const [gapIndex, gap] of record.gaps.entries()) {
+      exactKeys(gap, ["code"], ["message", "page"], `record ${index} gap ${gapIndex}`);
+      if (!GAP_CODES.has(gap.code)
+        || (gap.message !== undefined && (typeof gap.message !== "string" || gap.message.length > 1000))
+        || (gap.page !== undefined && gap.page !== 1)) {
+        throw new Error(`Run record ${index} contains invalid typed-gap evidence`);
+      }
+    }
+    for (const [pageIndex, page] of record.pages.entries()) {
+      exactKeys(page, ["page", "conversion_status", "line_count", "rendered_line_count"], [], `record ${index} page ${pageIndex}`);
+      if (page.page !== 1
+        || !["complete", "partial", "failed"].includes(page.conversion_status)
+        || !Number.isSafeInteger(page.line_count) || page.line_count < 0
+        || !Number.isSafeInteger(page.rendered_line_count) || page.rendered_line_count < 0) {
+        throw new Error(`Run record ${index} contains invalid page evidence`);
+      }
     }
     if (record.ok !== (record.outcome === "converted")
       || (record.ok && !["complete", "partial"].includes(record.status))
       || (record.ok && (record.pages.length !== 1
-        || record.pages.some(page => (
-          page?.page !== 1
-          || !["complete", "partial"].includes(page.conversion_status)
-          || !Number.isSafeInteger(page.line_count) || page.line_count < 0
-          || !Number.isSafeInteger(page.rendered_line_count) || page.rendered_line_count < 0
-        ))))) {
+        || record.pages[0].conversion_status !== record.status
+        || (record.status === "complete") !== (record.gaps.length === 0)))
+      || (record.ok && Object.hasOwn(record, "error"))
+      || (!record.ok && (typeof record.error !== "string" || !record.error || record.error.length > 500))) {
       throw new Error(`Run record ${index} has contradictory conversion state`);
     }
     pdfs.push(record.pdf);
@@ -535,6 +794,7 @@ export function validateRunReport(report) {
   }
   const expectedQualifying = report.selection.full
     && report.candidate.git_clean
+    && report.candidate.git_tree_verified
     && report.records.every(record => record.ok);
   if (report.qualifying !== expectedQualifying) {
     throw new Error("Run report qualifying flag contradicts its evidence");
@@ -542,8 +802,9 @@ export function validateRunReport(report) {
   return report;
 }
 
-async function loadRun(filename) {
-  const source = await boundedRegularFile(filename, 1024 * 1024 * 1024, "run report");
+async function loadRun(filename, { requirePrivate = false } = {}) {
+  const requirements = requirePrivate ? { mode: 0o600, uid: process.getuid() } : {};
+  const source = await boundedRegularFile(filename, 1024 * 1024 * 1024, "run report", requirements);
   let parsed = null;
   if (source.bytes[0] === 0x7b) {
     try {
@@ -561,6 +822,58 @@ async function loadRun(filename) {
   }
   const records = parseJsonLines(source.bytes, "legacy run report");
   return { records, qualifying: false, binding: source, report: null };
+}
+
+function assertReferenceReplay(report, run, manifest) {
+  if (run.binding.sha256 !== manifest.reference_run.run_sha256
+    || run.binding.size_bytes !== manifest.reference_run.run_size_bytes) {
+    throw new Error("Reference input does not match the pinned historical run bytes");
+  }
+  const expected = manifest.reference_run.historical_compatibility_expected;
+  const historical = report.deprecated_candidate_profile;
+  const pick = (bucket, fields) => Object.fromEntries(fields.map(field => [field, bucket?.[field]]));
+  const bucketFields = ["pass", "failed_flagged", "failed_silent"];
+  if (historical.tests_total !== expected.tests_total
+    || historical.pdfs_observed !== expected.pdfs_converted
+    || canonicalJson(pick(historical.overall_including_math_proxy, bucketFields))
+      !== canonicalJson(expected.overall)
+    || canonicalJson(pick(historical.headline_excluding_math_proxy, ["n", ...bucketFields]))
+      !== canonicalJson(expected.excluding_math_proxy)) {
+    throw new Error("Deprecated scorer did not reproduce the pinned historical decomposition");
+  }
+  const primary = report;
+  const policy = manifest.gate.reference;
+  const primaryMatches = primary.headline_excluding_math_proxy.pass
+      === policy.headline_excluding_math_proxy.pass
+    && primary.headline_excluding_math_proxy.failed_silent
+      === policy.headline_excluding_math_proxy.failed_silent
+    && primary.math_proxy.failed_silent === policy.math_proxy.failed_silent
+    && Object.entries(policy.by_category).every(([category, categoryExpected]) => (
+      primary.by_category[category]?.pass === categoryExpected.pass
+      && primary.by_category[category]?.failed_silent === categoryExpected.failed_silent
+    ));
+  if (!primaryMatches) {
+    throw new Error("Primary scorer did not reproduce the thresholds pinned to the reference run");
+  }
+  return {
+    schema: "pdf-tools.olmocr-bench-reference-verification.v1",
+    verified: true,
+    benchmark_claim_ready: false,
+    public_benchmark_claim: "prohibited",
+    reference_run: {
+      candidate_revision: manifest.reference_run.candidate_revision,
+      run_sha256: run.binding.sha256,
+      run_size_bytes: run.binding.size_bytes,
+    },
+    scorer_profile: manifest.scorer.profile,
+    historical_profile: manifest.scorer.historical_compatibility_profile,
+    historical_result: historical,
+    primary_reference: {
+      headline_excluding_math_proxy: primary.headline_excluding_math_proxy,
+      math_proxy: primary.math_proxy,
+      by_category: primary.by_category,
+    },
+  };
 }
 
 async function main() {
@@ -614,7 +927,8 @@ async function main() {
       ...common,
       candidate,
       selection: { full: fullSelection, pdf_count: selected.length },
-      qualifying: fullSelection && candidate.git_clean && records.every(record => record.ok),
+      qualifying: fullSelection && candidate.git_clean && candidate.git_tree_verified
+        && records.every(record => record.ok),
       records,
     };
     const output = await writeAtomicExclusive(options.outputPath, report);
@@ -622,13 +936,39 @@ async function main() {
     if (!report.qualifying) process.exitCode = 2;
     return;
   }
-  const run = await loadRun(options.runPath);
+  const run = await loadRun(options.runPath, { requirePrivate: options.command === "score" });
+  if (options.command === "verify-reference") {
+    const referenceReport = scoreOlmocrBench({
+      tests: corpus.tests,
+      records: run.records,
+      runQualifying: false,
+      claimBoundary: manifest.claim_boundary,
+      gatePolicy: manifest.gate,
+      bindings: {
+        ...common,
+        run_sha256: run.binding.sha256,
+        run_size_bytes: run.binding.size_bytes,
+        candidate: null,
+        scorer_profile: manifest.scorer.profile,
+      },
+    });
+    const verification = assertReferenceReplay(referenceReport, run, manifest);
+    const output = await writeAtomicExclusive(options.outputPath, verification);
+    process.stdout.write(`${JSON.stringify({ written: output, verified: true, reference_run_sha256: run.binding.sha256 }, null, 2)}\n`);
+    return;
+  }
+  if (!run.report) throw new Error("score accepts only a versioned candidate run report");
+  if (run.binding.sha256 !== options.runSha256) {
+    throw new Error("Run report does not match the independently supplied --run-sha256");
+  }
+  const currentCandidate = await candidateBinding();
   if (run.report && (
     run.report.manifest_sha256 !== common.manifest_sha256
     || canonicalJson(run.report.corpus) !== canonicalJson(common.corpus)
     || canonicalJson(run.report.evaluator) !== canonicalJson(common.evaluator)
+    || canonicalJson(run.report.candidate) !== canonicalJson(currentCandidate)
   )) {
-    throw new Error("Run report does not bind the current manifest, corpus, and evaluator");
+    throw new Error("Run report does not bind the current manifest, corpus, evaluator, and exact Git candidate");
   }
   if (run.report) {
     const observedPdfs = run.records.map(record => record.pdf);
