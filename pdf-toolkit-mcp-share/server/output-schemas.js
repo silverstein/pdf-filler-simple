@@ -736,8 +736,8 @@ const layoutBlock = object({
   line_ids: stringArray,
 });
 const layoutRuledRect = object({
-  x: { type: "number", minimum: 0 },
-  y: { type: "number", minimum: 0 },
+  x: number,
+  y: number,
   width: { type: "number", minimum: 0 },
   height: { type: "number", minimum: 0 },
   verb: enumString(["fill", "stroke", "clip", "none"]),

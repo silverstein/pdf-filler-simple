@@ -3917,7 +3917,7 @@ export function validatePdfLayoutSemantics(payload, {
     for (const rect of ruledRects.items) {
       semanticAssertion(Number.isFinite(rect.x) && Number.isFinite(rect.y)
         && Number.isFinite(rect.width) && Number.isFinite(rect.height)
-        && rect.x >= 0 && rect.y >= 0 && rect.width >= 0 && rect.height >= 0
+        && rect.width >= 0 && rect.height >= 0
         && ["fill", "stroke", "clip", "none"].includes(rect.verb),
       `page ${page.page} ruled rectangle geometry or verb is invalid`);
     }

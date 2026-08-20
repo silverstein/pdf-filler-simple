@@ -159,7 +159,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // identity, and derived Markdown/status/digest can therefore change together.
 // Tool name and annotations remain unchanged. Previously
 // cb7b1b0e77df7bbab2b01dfa940f15cb2eaacb089b25d888c48900e3f071c6d6.
-const TOOL_CONTRACT_SHA256 = "a244791a2359802200a92a8e21d5922a4f129a22cfc9e3ca3ec68654eeac2baa";
+// 2026-08-20: read_pdf_layout retains finite source-bound ruled rectangles
+// outside the visible viewport, so ruled-rectangle x/y schema coordinates are
+// signed while width and height remain nonnegative. Previously
+// a244791a2359802200a92a8e21d5922a4f129a22cfc9e3ca3ec68654eeac2baa.
+const TOOL_CONTRACT_SHA256 = "4f068d3a0a1c311c1c30b8df700e3f384473f10b4a65698ced978f7273a1bd9a";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

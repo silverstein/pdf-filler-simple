@@ -1234,6 +1234,24 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
     expect(page.errors.some(error => error.stage === "ruled_rects")).toBe(false);
   });
 
+  it("retains source-bound ruled rectangles outside the visible viewport", async () => {
+    const fixture = fakeOperatorFixture([2], [rectPath(3, -20, 20, 10, 10)]);
+    const { result, bytes } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: -20, y: 762, width: 10, height: 10, verb: "fill" },
+    ]);
+
+    const validated = validateStructuredToolResult("read_pdf_layout", {
+      content: [{ type: "text", text: "signed ruled-rectangle viewport origin" }],
+      structuredContent: result,
+    });
+    expect(validated.structuredContent).toEqual(result);
+
+    const { pdfjs } = fakePdfjs([fixture]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toEqual(result);
+  });
+
   it("accepts an annotations-stage page error through structured-output validation (zyx.8)", async () => {
     const { result } = await runFake([{ items: [], annotationError: new Error("synthetic annotation failure") }]);
     const annotationEntry = result.pages[0].errors.find(error => error.stage === "annotations");
