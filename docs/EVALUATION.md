@@ -208,7 +208,7 @@ Regenerate and verify the corpus with:
 
 ```bash
 node scripts/eval-generate-verified-extraction-fixtures.mjs
-npm run eval:verified-extraction
+node scripts/eval-verified-extraction-contract.mjs
 ```
 
 The manifest binds every PDF, target schema, truth oracle, citation oracle, and

@@ -40,8 +40,7 @@
     "build:plugin": "node scripts/build-agent-plugin.mjs",
     "publish:plugin": "node scripts/publish-agent-plugin.mjs",
     "check:plugin-freshness": "node scripts/check-plugin-freshness.mjs",
-    "eval:olmocr": "node scripts/eval-olmocr-bench.mjs",
-    "eval:verified-extraction": "node scripts/eval-verified-extraction-contract.mjs"
+    "eval:olmocr": "node scripts/eval-olmocr-bench.mjs"
   },
   "repository": {
     "type": "git",
