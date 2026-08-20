@@ -5,6 +5,7 @@ import path from "node:path";
 import { PDFDocument } from "pdf-lib";
 
 const SHA256 = /^[a-f0-9]{64}$/;
+const GIT_COMMIT = /^[a-f0-9]{40}$/;
 const MAX_JSON_BYTES = 1024 * 1024;
 const MAX_PDF_BYTES = 32 * 1024 * 1024;
 const EXPECTED_SCHEMA_SUBSET = [
@@ -15,6 +16,14 @@ const ALLOWED_SCHEMA_KEYS = new Set([
   "$schema", "$id", "type", "required", "properties", "additionalProperties", "enum", "format",
   "items", "minItems", "maxItems", "x-key",
 ]);
+
+function isBoundSha256(value) {
+  return SHA256.test(value) && !/^0+$/.test(value);
+}
+
+function isBoundGitCommit(value) {
+  return GIT_COMMIT.test(value) && !/^0+$/.test(value);
+}
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -59,6 +68,29 @@ function exactSet(actual, expected, label) {
   const left = [...new Set(actual)].sort();
   const right = [...expected].sort();
   if (canonicalJson(left) !== canonicalJson(right)) throw new Error(`Unexpected ${label}`);
+}
+
+function validateProductIdentity(productIdentity, label = "product identity") {
+  if (!productIdentity || typeof productIdentity !== "object" || Array.isArray(productIdentity)) {
+    throw new Error(`Complete ${label} is required`);
+  }
+  if (productIdentity.scheme !== "pdf-tools-product-identity.v1") {
+    throw new Error(`Unknown ${label} scheme`);
+  }
+  if (productIdentity.kind === "git_source_tree") {
+    exactSet(Object.keys(productIdentity), ["scheme", "kind", "git_commit", "git_tree"], `${label} keys`);
+    if (!isBoundGitCommit(productIdentity.git_commit) || !isBoundGitCommit(productIdentity.git_tree)) {
+      throw new Error(`Invalid ${label}`);
+    }
+  } else if (productIdentity.kind === "packaged_artifact") {
+    exactSet(Object.keys(productIdentity), ["scheme", "kind", "git_commit", "artifact_sha256"], `${label} keys`);
+    if (!isBoundGitCommit(productIdentity.git_commit) || !isBoundSha256(productIdentity.artifact_sha256)) {
+      throw new Error(`Invalid ${label}`);
+    }
+  } else {
+    throw new Error(`Unknown ${label} kind`);
+  }
+  return sha256(Buffer.from(canonicalJson(productIdentity)));
 }
 
 function validateSchemaValue(schema, value, at = "$") {
@@ -232,10 +264,17 @@ export async function verifyVerifiedExtractionContract({ benchmarkRoot, repoRoot
     || manifest.claim_boundary?.classification !== "private_synthetic_calibration_only") {
     throw new Error("Benchmark claim boundary must remain private and not claim-ready");
   }
-  if (manifest.run_plan_admission?.contract_id !== "verified-extraction-paired-run-authority.v1"
-    || manifest.run_plan_admission?.measured_pairs_authorized !== 0
+  if (manifest.run_plan_admission?.comparison_contract_id !== "verified-extraction-comparison-authority.v1"
+    || manifest.run_plan_admission?.candidate_execution_contract_id !== "verified-extraction-candidate-execution-authority.v1"
+    || manifest.run_plan_admission?.measured_campaigns_authorized !== 0
     || manifest.run_plan_admission?.state !== "no_measured_execution_authorized") {
     throw new Error("Benchmark contract must not authorize a measured execution");
+  }
+  if (manifest.product_identity_qualification?.scheme !== "pdf-tools-product-identity.v1"
+    || manifest.product_identity_qualification?.contract_validation !== "syntactic_shape_and_immutable_binding_only"
+    || manifest.product_identity_qualification?.independent_observation_required !== true
+    || manifest.product_identity_qualification?.execution_gate !== "e9e.2_real_git_or_package_preflight_required") {
+    throw new Error("Product identity qualification boundary must remain explicit and fail-closed");
   }
   if (!Array.isArray(manifest.external_candidates) || manifest.external_candidates.length !== 3
     || manifest.external_candidates.some(candidate => candidate.admitted !== false)) {
@@ -363,92 +402,202 @@ function safeRatio(numerator, denominator) {
   return denominator === 0 ? null : numerator / denominator;
 }
 
-function validateRunPlanFields({ manifest, workflowRole, document, runPlan }) {
-  if (!manifest || !["baseline", "candidate"].includes(workflowRole)) throw new Error("Frozen manifest and workflow role are required");
-  exactSet(Object.keys(runPlan || {}), [
-    "plan_version", "plan_id", "workflow_role", "document_id", "source_sha256", "schema_sha256",
-    "workflow_protocol_id", "workflow_protocol_sha256", "scorer_sha256", "model", "host", "settings",
-    "settings_sha256", "time_budget_ms", "retry_budget",
-  ], `${workflowRole} run plan keys`);
-  const protocol = manifest.protocols?.[workflowRole];
-  if (!protocol || !manifest.scorer) throw new Error("Frozen scorer and workflow protocol bindings are required");
-  const required = {
-    plan_version: 1,
-    workflow_role: workflowRole,
-    document_id: document.id,
-    source_sha256: document.artifacts.pdf.sha256,
-    schema_sha256: document.artifacts.schema.sha256,
-    workflow_protocol_id: protocol.value.id,
-    workflow_protocol_sha256: protocol.sha256,
-    scorer_sha256: manifest.scorer.sha256,
-  };
-  for (const [key, expected] of Object.entries(required)) {
-    if (runPlan?.[key] !== expected) throw new Error(`Run plan binding mismatch: ${key}`);
-  }
-  if (typeof runPlan.plan_id !== "string" || runPlan.plan_id.length < 8) throw new Error("Run plan ID is required");
+function validateSharedExecution(sharedExecution) {
+  exactSet(Object.keys(sharedExecution || {}), [
+    "model", "host", "settings", "settings_sha256", "time_budget_ms",
+  ], "shared execution keys");
   for (const [label, record, keys] of [
-    ["model", runPlan.model, ["provider", "id", "version"]],
-    ["host", runPlan.host, ["id", "platform", "architecture", "runtime"]],
+    ["model", sharedExecution?.model, ["provider", "id", "version"]],
+    ["host", sharedExecution?.host, ["id", "platform", "architecture", "runtime"]],
   ]) {
     exactSet(Object.keys(record || {}), keys, `${label} binding keys`);
     if (!record || keys.some(key => typeof record[key] !== "string" || record[key].trim() === "")) {
       throw new Error(`Complete ${label} binding is required`);
     }
   }
-  if (!runPlan.settings || typeof runPlan.settings !== "object" || Array.isArray(runPlan.settings)) throw new Error("Model settings are required");
-  if (!SHA256.test(runPlan.settings_sha256)
-    || sha256(Buffer.from(canonicalJson(runPlan.settings))) !== runPlan.settings_sha256) {
+  if (!sharedExecution.settings || typeof sharedExecution.settings !== "object" || Array.isArray(sharedExecution.settings)) {
+    throw new Error("Model settings are required");
+  }
+  if (!SHA256.test(sharedExecution.settings_sha256)
+    || sha256(Buffer.from(canonicalJson(sharedExecution.settings))) !== sharedExecution.settings_sha256) {
     throw new Error("Model settings binding mismatch");
   }
-  if (!Number.isInteger(runPlan.time_budget_ms) || runPlan.time_budget_ms < 1) throw new Error("Positive time budget is required");
-  if (!Number.isInteger(runPlan.retry_budget) || runPlan.retry_budget < 0) throw new Error("Non-negative retry budget is required");
-  return sha256(Buffer.from(canonicalJson(runPlan)));
+  if (!Number.isInteger(sharedExecution.time_budget_ms) || sharedExecution.time_budget_ms < 1) {
+    throw new Error("Positive time budget is required");
+  }
 }
 
-export function validatePairedRunAuthority({ manifest, document, pairedRunAuthority }) {
-  exactSet(Object.keys(pairedRunAuthority || {}), [
-    "authority_version", "benchmark_id", "pair_id", "admission_class", "authorized_at", "plans", "plan_sha256",
-  ], "paired run authority keys");
-  if (pairedRunAuthority?.authority_version !== 1
-    || pairedRunAuthority?.benchmark_id !== manifest?.benchmark_id
-    || typeof pairedRunAuthority?.pair_id !== "string" || pairedRunAuthority.pair_id.length < 8) {
-    throw new Error("Invalid paired run authority identity");
-  }
-  if (pairedRunAuthority.admission_class !== "synthetic_scorer_calibration") {
-    throw new Error("No measured paired run is authorized by this benchmark contract");
-  }
-  const authorizedAt = Date.parse(pairedRunAuthority.authorized_at);
-  if (!Number.isFinite(authorizedAt)) throw new Error("Paired run authority requires an authorization timestamp");
-  exactSet(Object.keys(pairedRunAuthority.plans || {}), ["baseline", "candidate"], "paired run plan roles");
-  exactSet(Object.keys(pairedRunAuthority.plan_sha256 || {}), ["baseline", "candidate"], "paired run plan digests");
-  const planDigests = {};
-  for (const workflowRole of ["baseline", "candidate"]) {
-    const runPlan = pairedRunAuthority.plans[workflowRole];
-    planDigests[workflowRole] = validateRunPlanFields({ manifest, workflowRole, document, runPlan });
-    if (pairedRunAuthority.plan_sha256[workflowRole] !== planDigests[workflowRole]) {
-      throw new Error(`Authorized run plan digest mismatch: ${workflowRole}`);
-    }
-  }
-  const baseline = pairedRunAuthority.plans.baseline;
-  const candidate = pairedRunAuthority.plans.candidate;
-  const sharedFields = [
-    "document_id", "source_sha256", "schema_sha256", "model", "host", "settings", "settings_sha256",
-    "time_budget_ms", "retry_budget",
-  ];
-  for (const field of sharedFields) {
-    if (canonicalJson(baseline[field]) !== canonicalJson(candidate[field])) {
-      throw new Error(`Paired run plans differ on shared field: ${field}`);
-    }
-  }
-  if (baseline.plan_id === candidate.plan_id) throw new Error("Paired workflow plan IDs must be distinct");
+function expectedProtocolBindings(manifest) {
+  return Object.fromEntries(["baseline", "candidate"].map(workflowRole => [workflowRole, {
+    id: manifest.protocols?.[workflowRole]?.value?.id,
+    sha256: manifest.protocols?.[workflowRole]?.sha256,
+  }]));
+}
+
+function executionPlan({ comparison, workflowRole, productIdentity }) {
   return {
-    authority_sha256: sha256(Buffer.from(canonicalJson(pairedRunAuthority))),
-    authorized_at_ms: authorizedAt,
-    plan_digests: planDigests,
+    comparison_authority_sha256: comparison.authority_sha256,
+    workflow_role: workflowRole,
+    protocol_binding: comparison.value.protocol_bindings[workflowRole],
+    scorer_binding: comparison.value.scorer_binding,
+    shared_execution: comparison.value.shared_execution,
+    retry_budget: comparison.value.retry_budget,
+    product_identity: productIdentity,
   };
 }
 
-export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, pairedRunAuthority, document, schema, truth, citationOracle, candidate }) {
+export function validateComparisonAuthority({ manifest, comparisonAuthority }) {
+  exactSet(Object.keys(comparisonAuthority || {}), [
+    "comparison_version", "comparison_id", "benchmark_id", "benchmark_manifest_sha256", "admission_class",
+    "authorized_at", "candidate_identity_state", "admitted_document_ids", "workflow_roles", "protocol_bindings",
+    "scorer_binding", "shared_execution", "baseline_product_identity", "trials_per_document", "retry_budget",
+    "replacement_policy", "trial_count", "attempt_slot_count", "trials",
+  ], "comparison authority keys");
+  if (comparisonAuthority?.comparison_version !== 1
+    || comparisonAuthority?.benchmark_id !== manifest?.benchmark_id
+    || typeof comparisonAuthority?.comparison_id !== "string" || comparisonAuthority.comparison_id.length < 8) {
+    throw new Error("Invalid comparison authority identity");
+  }
+  const manifestSha256 = sha256(Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+  if (!SHA256.test(comparisonAuthority.benchmark_manifest_sha256)
+    || comparisonAuthority.benchmark_manifest_sha256 !== manifestSha256) {
+    throw new Error("Comparison benchmark manifest binding mismatch");
+  }
+  if (comparisonAuthority.admission_class !== "synthetic_scorer_calibration") {
+    throw new Error("No measured campaign is authorized by this benchmark contract");
+  }
+  const authorizedAt = Date.parse(comparisonAuthority.authorized_at);
+  if (!Number.isFinite(authorizedAt)) throw new Error("Comparison authority requires an authorization timestamp");
+  if (comparisonAuthority.candidate_identity_state !== "pending_implementation") {
+    throw new Error("Pre-baseline comparison must not contain a candidate product identity");
+  }
+  exactSet(Object.keys(comparisonAuthority.protocol_bindings || {}), ["baseline", "candidate"], "comparison protocol roles");
+  const protocols = expectedProtocolBindings(manifest);
+  if (canonicalJson(comparisonAuthority.protocol_bindings) !== canonicalJson(protocols)) {
+    throw new Error("Comparison protocol binding mismatch");
+  }
+  exactSet(Object.keys(comparisonAuthority.scorer_binding || {}), ["sha256"], "comparison scorer binding keys");
+  if (comparisonAuthority.scorer_binding.sha256 !== manifest.scorer?.sha256) {
+    throw new Error("Comparison scorer binding mismatch");
+  }
+  validateSharedExecution(comparisonAuthority.shared_execution);
+  validateProductIdentity(comparisonAuthority.baseline_product_identity, "baseline product identity");
+  const documentIds = (manifest.documents || []).map(document => document.id).sort();
+  if (!Array.isArray(comparisonAuthority.admitted_document_ids)
+    || new Set(comparisonAuthority.admitted_document_ids).size !== comparisonAuthority.admitted_document_ids.length) {
+    throw new Error("Comparison admitted document IDs must be unique");
+  }
+  exactSet(comparisonAuthority.admitted_document_ids, documentIds, "comparison admitted documents");
+  if (!Array.isArray(comparisonAuthority.workflow_roles)
+    || new Set(comparisonAuthority.workflow_roles).size !== comparisonAuthority.workflow_roles.length) {
+    throw new Error("Comparison workflow roles must be unique");
+  }
+  exactSet(comparisonAuthority.workflow_roles, ["baseline", "candidate"], "comparison workflow roles");
+  if (!Number.isInteger(comparisonAuthority.trials_per_document) || comparisonAuthority.trials_per_document < 1) {
+    throw new Error("Positive trials per document are required");
+  }
+  if (!Number.isInteger(comparisonAuthority.retry_budget) || comparisonAuthority.retry_budget < 0) {
+    throw new Error("Non-negative comparison retry budget is required");
+  }
+  if (comparisonAuthority.replacement_policy !== "no_product_replacement_harness_retry_only") {
+    throw new Error("Comparison replacement policy must retain every product result");
+  }
+  const expectedTrialCount = documentIds.length * 2 * comparisonAuthority.trials_per_document;
+  const expectedAttemptSlotCount = expectedTrialCount * (comparisonAuthority.retry_budget + 1);
+  if (comparisonAuthority.trial_count !== expectedTrialCount
+    || comparisonAuthority.attempt_slot_count !== expectedAttemptSlotCount
+    || !Array.isArray(comparisonAuthority.trials) || comparisonAuthority.trials.length !== expectedTrialCount) {
+    throw new Error("Comparison frozen attempt or trial count mismatch");
+  }
+  const trialsById = new Map();
+  const attemptIds = new Set();
+  const coverage = new Set();
+  for (const trial of comparisonAuthority.trials) {
+    exactSet(Object.keys(trial || {}), [
+      "trial_id", "document_id", "workflow_role", "trial_index", "attempt_ids",
+    ], "comparison trial keys");
+    if (typeof trial.trial_id !== "string" || trial.trial_id.length < 8 || trialsById.has(trial.trial_id)) {
+      throw new Error("Comparison trial IDs must be unique and non-empty");
+    }
+    if (!documentIds.includes(trial.document_id) || !["baseline", "candidate"].includes(trial.workflow_role)
+      || !Number.isInteger(trial.trial_index) || trial.trial_index < 1
+      || trial.trial_index > comparisonAuthority.trials_per_document) {
+      throw new Error(`Invalid comparison trial binding: ${trial.trial_id}`);
+    }
+    if (!Array.isArray(trial.attempt_ids)
+      || trial.attempt_ids.length !== comparisonAuthority.retry_budget + 1
+      || new Set(trial.attempt_ids).size !== trial.attempt_ids.length
+      || trial.attempt_ids.some(attemptId => typeof attemptId !== "string" || attemptId.length < 8 || attemptIds.has(attemptId))) {
+      throw new Error(`Invalid comparison attempt identities: ${trial.trial_id}`);
+    }
+    const coverageKey = `${trial.document_id}\u0000${trial.workflow_role}\u0000${trial.trial_index}`;
+    if (coverage.has(coverageKey)) throw new Error(`Duplicate comparison trial coverage: ${trial.trial_id}`);
+    coverage.add(coverageKey);
+    trialsById.set(trial.trial_id, trial);
+    for (const attemptId of trial.attempt_ids) attemptIds.add(attemptId);
+  }
+  for (const documentId of documentIds) {
+    for (let trialIndex = 1; trialIndex <= comparisonAuthority.trials_per_document; trialIndex++) {
+      for (const workflowRole of ["baseline", "candidate"]) {
+        const coverageKey = `${documentId}\u0000${workflowRole}\u0000${trialIndex}`;
+        if (!coverage.has(coverageKey)) throw new Error(`Comparison trial coverage is incomplete: ${coverageKey}`);
+      }
+    }
+  }
+  const authoritySha256 = sha256(Buffer.from(canonicalJson(comparisonAuthority)));
+  const validated = {
+    value: comparisonAuthority,
+    authority_sha256: authoritySha256,
+    authorized_at_ms: authorizedAt,
+    trials_by_id: trialsById,
+  };
+  validated.baseline_execution_plan_sha256 = sha256(Buffer.from(canonicalJson(executionPlan({
+    comparison: validated,
+    workflowRole: "baseline",
+    productIdentity: comparisonAuthority.baseline_product_identity,
+  }))));
+  return validated;
+}
+
+export function validateCandidateExecutionAuthority({ manifest, comparisonAuthority, candidateExecutionAuthority }) {
+  const comparison = validateComparisonAuthority({ manifest, comparisonAuthority });
+  exactSet(Object.keys(candidateExecutionAuthority || {}), [
+    "authority_version", "authority_id", "comparison_authority_sha256", "authorized_at", "workflow_role",
+    "product_identity", "execution_plan_sha256",
+  ], "candidate execution authority keys");
+  if (candidateExecutionAuthority?.authority_version !== 1
+    || typeof candidateExecutionAuthority?.authority_id !== "string" || candidateExecutionAuthority.authority_id.length < 8
+    || candidateExecutionAuthority.workflow_role !== "candidate") {
+    throw new Error("Invalid candidate execution authority identity");
+  }
+  if (candidateExecutionAuthority.comparison_authority_sha256 !== comparison.authority_sha256) {
+    throw new Error("Candidate execution comparison binding mismatch");
+  }
+  const authorizedAt = Date.parse(candidateExecutionAuthority.authorized_at);
+  if (!Number.isFinite(authorizedAt) || authorizedAt <= comparison.authorized_at_ms) {
+    throw new Error("Candidate execution authority must follow comparison authorization");
+  }
+  validateProductIdentity(candidateExecutionAuthority.product_identity, "candidate product identity");
+  const executionPlanSha256 = sha256(Buffer.from(canonicalJson(executionPlan({
+    comparison,
+    workflowRole: "candidate",
+    productIdentity: candidateExecutionAuthority.product_identity,
+  }))));
+  if (candidateExecutionAuthority.execution_plan_sha256 !== executionPlanSha256) {
+    throw new Error("Candidate execution plan binding mismatch");
+  }
+  return {
+    authority_sha256: sha256(Buffer.from(canonicalJson(candidateExecutionAuthority))),
+    authorized_at_ms: authorizedAt,
+    execution_plan_sha256: executionPlanSha256,
+    product_identity: candidateExecutionAuthority.product_identity,
+    comparison,
+  };
+}
+
+export function scoreVerifiedExtractionCandidate({
+  manifest, workflowRole, comparisonAuthority, candidateExecutionAuthority, document, schema, truth, citationOracle, candidate,
+}) {
   if (!candidate || typeof candidate !== "object") throw new Error("Candidate run record is required");
   if (!["baseline", "candidate"].includes(workflowRole)) throw new Error("Unknown workflow role");
   const expectedBindings = {
@@ -459,15 +608,37 @@ export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, paire
   for (const [key, expected] of Object.entries(expectedBindings)) {
     if (candidate[key] !== expected) throw new Error(`Candidate harness binding mismatch: ${key}`);
   }
-  const authority = validatePairedRunAuthority({ manifest, document, pairedRunAuthority });
-  if (candidate.pair_authority_sha256 !== authority.authority_sha256) throw new Error("Candidate pair authority binding mismatch");
-  const executionBindingSha256 = authority.plan_digests[workflowRole];
+  const comparison = validateComparisonAuthority({ manifest, comparisonAuthority });
+  if (candidate.comparison_authority_sha256 !== comparison.authority_sha256) {
+    throw new Error("Candidate comparison authority binding mismatch");
+  }
+  const roleAuthority = workflowRole === "baseline" ? {
+    authority_sha256: comparison.authority_sha256,
+    authorized_at_ms: comparison.authorized_at_ms,
+    execution_plan_sha256: comparison.baseline_execution_plan_sha256,
+    product_identity: comparisonAuthority.baseline_product_identity,
+  } : validateCandidateExecutionAuthority({ manifest, comparisonAuthority, candidateExecutionAuthority });
+  if (candidate.role_authority_sha256 !== roleAuthority.authority_sha256) {
+    throw new Error("Candidate role authority binding mismatch");
+  }
+  const executionBindingSha256 = roleAuthority.execution_plan_sha256;
   if (candidate.execution_binding_sha256 !== executionBindingSha256) throw new Error("Candidate execution binding mismatch");
+  if (canonicalJson(candidate.product_identity) !== canonicalJson(roleAuthority.product_identity)) {
+    throw new Error("Candidate product identity binding mismatch");
+  }
+  const trial = comparison.trials_by_id.get(candidate.trial_id);
+  if (!trial || trial.document_id !== document.id || trial.workflow_role !== workflowRole) {
+    throw new Error("Candidate comparison trial binding mismatch");
+  }
+  const attemptIndex = trial.attempt_ids.indexOf(candidate.attempt_id);
+  if (attemptIndex < 0 || candidate.attempt_index !== attemptIndex + 1) {
+    throw new Error("Candidate campaign attempt binding mismatch");
+  }
   const startedAt = Date.parse(candidate.execution?.started_at);
   const completedAt = Date.parse(candidate.execution?.completed_at);
   if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt)
-    || startedAt <= authority.authorized_at_ms || completedAt < startedAt) {
-    throw new Error("Candidate execution chronology does not follow paired plan authorization");
+    || startedAt <= comparison.authorized_at_ms || startedAt <= roleAuthority.authorized_at_ms || completedAt < startedAt) {
+    throw new Error("Candidate execution chronology does not follow role authorization");
   }
   let schemaValid = true;
   try {
@@ -519,9 +690,17 @@ export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, paire
     && candidate.completion?.processed_pages === document.page_count ? 0 : 1;
   return {
     document_id: document.id,
-    pair_authority_sha256: authority.authority_sha256,
+    workflow_role: workflowRole,
+    comparison_authority_sha256: comparison.authority_sha256,
+    role_authority_sha256: roleAuthority.authority_sha256,
+    trial_id: trial.trial_id,
+    attempt_id: candidate.attempt_id,
+    attempt_index: candidate.attempt_index,
     claim_eligible: false,
     execution_binding_sha256: executionBindingSha256,
+    product_identity: roleAuthority.product_identity,
+    product_identity_sha256: validateProductIdentity(roleAuthority.product_identity, `${workflowRole} product identity`),
+    product_identity_qualification: "external_preflight_required",
     json_schema_valid: schemaValid,
     leaf_precision: { numerator: correctLeaves, denominator: submittedLeaves, rate: safeRatio(correctLeaves, submittedLeaves) },
     leaf_recall: { numerator: correctLeaves, denominator: truthLeaves.length, rate: safeRatio(correctLeaves, truthLeaves.length) },
@@ -536,5 +715,193 @@ export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, paire
     deterministic_failure: !schemaValid || correctLeaves !== truthLeaves.length || correctLeaves !== submittedLeaves || keyed.correct !== keyed.expected
       || correctCitations !== Object.keys(citationOracle.citations).length || replayedCalculations !== citationOracle.calculations.length
       || extraCitationCount > 0 || silentOmissions > 0 || truncationCount > 0,
+  };
+}
+
+export function verifyVerifiedExtractionCampaignReceipt({
+  manifest, comparisonAuthority, candidateExecutionAuthority, documentContexts, attemptReceipts,
+}) {
+  const comparison = validateComparisonAuthority({ manifest, comparisonAuthority });
+  const candidateAuthority = validateCandidateExecutionAuthority({
+    manifest, comparisonAuthority, candidateExecutionAuthority,
+  });
+  const documentIds = (manifest.documents || []).map(document => document.id);
+  exactSet(Object.keys(documentContexts || {}), documentIds, "campaign document contexts");
+  for (const document of manifest.documents) {
+    const context = documentContexts[document.id];
+    exactSet(Object.keys(context || {}), ["document", "schema", "truth", "citationOracle"], "campaign document context keys");
+    if (canonicalJson(context.document) !== canonicalJson(document)) {
+      throw new Error(`Campaign document context mismatch: ${document.id}`);
+    }
+    for (const [contextKey, artifactRole] of [
+      ["schema", "schema"], ["truth", "truth"], ["citationOracle", "citations"],
+    ]) {
+      const contextBytes = Buffer.from(`${JSON.stringify(context[contextKey], null, 2)}\n`);
+      if (sha256(contextBytes) !== document.artifacts[artifactRole].sha256
+        || contextBytes.length !== document.artifacts[artifactRole].bytes) {
+        throw new Error(`Campaign document context artifact mismatch: ${document.id}/${artifactRole}`);
+      }
+    }
+  }
+  if (!Array.isArray(attemptReceipts) || attemptReceipts.length !== comparisonAuthority.attempt_slot_count) {
+    throw new Error("Campaign receipt does not account for every frozen attempt slot");
+  }
+  const receiptsByAttemptId = new Map();
+  const scoresByAttemptId = new Map();
+  for (const receipt of attemptReceipts) {
+    exactSet(Object.keys(receipt || {}), [
+      "receipt_version", "comparison_authority_sha256", "role_authority_sha256", "trial_id", "attempt_id", "attempt_index",
+      "document_id", "workflow_role", "outcome_kind", "outcome",
+    ], "campaign attempt receipt keys");
+    const expectedRoleAuthoritySha256 = receipt.workflow_role === "baseline"
+      ? comparison.authority_sha256 : candidateAuthority.authority_sha256;
+    if (receipt.receipt_version !== 1 || receipt.comparison_authority_sha256 !== comparison.authority_sha256
+      || receipt.role_authority_sha256 !== expectedRoleAuthoritySha256) {
+      throw new Error("Campaign attempt receipt authority mismatch");
+    }
+    if (receiptsByAttemptId.has(receipt.attempt_id)) throw new Error(`Duplicate campaign attempt receipt: ${receipt.attempt_id}`);
+    const trial = comparison.trials_by_id.get(receipt.trial_id);
+    const attemptIndex = trial?.attempt_ids.indexOf(receipt.attempt_id) ?? -1;
+    if (!trial || attemptIndex < 0 || receipt.attempt_index !== attemptIndex + 1
+      || receipt.document_id !== trial.document_id || receipt.workflow_role !== trial.workflow_role) {
+      throw new Error(`Unplanned or substituted campaign attempt receipt: ${receipt.attempt_id}`);
+    }
+    if (!receipt.outcome || typeof receipt.outcome !== "object" || Array.isArray(receipt.outcome)) {
+      throw new Error(`Malformed campaign attempt outcome: ${receipt.attempt_id}`);
+    }
+    if (receipt.outcome_kind === "product_result") {
+      exactSet(Object.keys(receipt.outcome), ["candidate", "candidate_sha256"], "product result outcome keys");
+      const candidateDigest = sha256(Buffer.from(canonicalJson(receipt.outcome.candidate)));
+      if (!SHA256.test(receipt.outcome.candidate_sha256) || receipt.outcome.candidate_sha256 !== candidateDigest) {
+        throw new Error(`Campaign product result digest mismatch: ${receipt.attempt_id}`);
+      }
+      const context = documentContexts[trial.document_id];
+      const score = scoreVerifiedExtractionCandidate({
+        manifest,
+        workflowRole: trial.workflow_role,
+        comparisonAuthority,
+        candidateExecutionAuthority,
+        document: context.document,
+        schema: context.schema,
+        truth: context.truth,
+        citationOracle: context.citationOracle,
+        candidate: receipt.outcome.candidate,
+      });
+      if (score?.document_id !== trial.document_id || score?.workflow_role !== trial.workflow_role
+        || score?.comparison_authority_sha256 !== comparison.authority_sha256
+        || score?.role_authority_sha256 !== expectedRoleAuthoritySha256
+        || score?.trial_id !== trial.trial_id || score?.attempt_id !== receipt.attempt_id
+        || score?.attempt_index !== receipt.attempt_index || typeof score?.deterministic_failure !== "boolean") {
+        throw new Error(`Campaign product score binding mismatch: ${receipt.attempt_id}`);
+      }
+      scoresByAttemptId.set(receipt.attempt_id, score);
+    } else if (receipt.outcome_kind === "harness_failure") {
+      exactSet(Object.keys(receipt.outcome), ["failure_code", "execution"], "harness failure outcome keys");
+      if (!manifest.protocols?.scoring?.value?.harness_failures?.includes(receipt.outcome.failure_code)) {
+        throw new Error(`Unknown campaign harness failure: ${receipt.attempt_id}`);
+      }
+      exactSet(Object.keys(receipt.outcome.execution || {}), ["started_at", "completed_at"], "harness failure execution keys");
+      const startedAt = Date.parse(receipt.outcome.execution?.started_at);
+      const completedAt = Date.parse(receipt.outcome.execution?.completed_at);
+      if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt)
+        || startedAt <= comparison.authorized_at_ms
+        || startedAt <= (trial.workflow_role === "candidate" ? candidateAuthority.authorized_at_ms : comparison.authorized_at_ms)
+        || completedAt < startedAt) {
+        throw new Error(`Campaign harness failure chronology mismatch: ${receipt.attempt_id}`);
+      }
+    } else if (receipt.outcome_kind === "not_run") {
+      exactSet(Object.keys(receipt.outcome), ["reason"], "not-run outcome keys");
+      if (!["retry_not_needed", "retry_not_used"].includes(receipt.outcome.reason)) {
+        throw new Error(`Unknown campaign not-run reason: ${receipt.attempt_id}`);
+      }
+    } else {
+      throw new Error(`Unknown campaign attempt outcome: ${receipt.attempt_id}`);
+    }
+    receiptsByAttemptId.set(receipt.attempt_id, receipt);
+  }
+
+  const totals = {
+    planned_trials: comparisonAuthority.trial_count,
+    planned_attempt_slots: comparisonAuthority.attempt_slot_count,
+    attempted_attempts: 0,
+    unused_attempt_slots: 0,
+    product_success_trials: 0,
+    product_failure_trials: 0,
+    harness_failure_trials: 0,
+    harness_failure_attempts: 0,
+  };
+  const deterministicDenominators = {
+    documents: comparisonAuthority.trial_count,
+    leaf_values: 0,
+    citation_obligations: 0,
+    keyed_array_items: 0,
+    calculations: 0,
+  };
+  const deterministicNumerators = {
+    schema_valid_documents: 0,
+    leaf_values: 0,
+    citation_obligations: 0,
+    keyed_array_items: 0,
+    calculations: 0,
+  };
+  for (const trial of comparisonAuthority.trials) {
+    const document = manifest.documents.find(item => item.id === trial.document_id);
+    deterministicDenominators.leaf_values += document.deterministic_denominators.leaf_values;
+    deterministicDenominators.citation_obligations += document.deterministic_denominators.citation_obligations;
+    deterministicDenominators.keyed_array_items += document.deterministic_denominators.keyed_array_items;
+    deterministicDenominators.calculations += document.deterministic_denominators.calculations;
+    let productReceipt = null;
+    let harnessFailures = 0;
+    let executionClosed = false;
+    for (const [index, attemptId] of trial.attempt_ids.entries()) {
+      const receipt = receiptsByAttemptId.get(attemptId);
+      if (!receipt) throw new Error(`Missing campaign attempt receipt: ${attemptId}`);
+      if (receipt.outcome_kind === "not_run") {
+        totals.unused_attempt_slots += 1;
+        if (index === 0) throw new Error(`Primary campaign attempt cannot be omitted: ${attemptId}`);
+        const expectedReason = productReceipt ? "retry_not_needed" : "retry_not_used";
+        if (receipt.outcome.reason !== expectedReason) throw new Error(`Campaign not-run reason contradicts trial history: ${attemptId}`);
+        executionClosed = true;
+        continue;
+      }
+      if (executionClosed) throw new Error(`Campaign attempt resumed after a not-run receipt: ${attemptId}`);
+      totals.attempted_attempts += 1;
+      if (receipt.outcome_kind === "harness_failure") {
+        if (productReceipt) throw new Error(`Harness retry replaced a retained product result: ${attemptId}`);
+        harnessFailures += 1;
+        totals.harness_failure_attempts += 1;
+      } else {
+        if (productReceipt) throw new Error(`Duplicate or replacement product result: ${attemptId}`);
+        productReceipt = receipt;
+      }
+    }
+    if (productReceipt) {
+      const score = scoresByAttemptId.get(productReceipt.attempt_id);
+      if (score.json_schema_valid) deterministicNumerators.schema_valid_documents += 1;
+      deterministicNumerators.leaf_values += score.leaf_recall.numerator;
+      deterministicNumerators.citation_obligations += score.citation_replay_rate.numerator;
+      deterministicNumerators.keyed_array_items += score.keyed_array_recall.numerator;
+      deterministicNumerators.calculations += score.calculation_replay_rate.numerator;
+      if (score.deterministic_failure) totals.product_failure_trials += 1;
+      else totals.product_success_trials += 1;
+    } else {
+      if (harnessFailures < 1) throw new Error(`Campaign trial has no retained outcome: ${trial.trial_id}`);
+      totals.harness_failure_trials += 1;
+    }
+  }
+  if (totals.product_success_trials + totals.product_failure_trials + totals.harness_failure_trials !== totals.planned_trials) {
+    throw new Error("Campaign trial denominator is incomplete");
+  }
+  return {
+    comparison_id: comparisonAuthority.comparison_id,
+    comparison_authority_sha256: comparison.authority_sha256,
+    candidate_execution_authority_sha256: candidateAuthority.authority_sha256,
+    benchmark_id: manifest.benchmark_id,
+    claim_eligible: false,
+    complete: true,
+    product_identity_qualification: "external_preflight_required",
+    deterministic_denominators: deterministicDenominators,
+    deterministic_numerators: deterministicNumerators,
+    ...totals,
   };
 }

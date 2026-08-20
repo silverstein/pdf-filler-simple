@@ -278,7 +278,7 @@ function schemaLeafCount(schema, value) {
 
 const BASELINE_PROTOCOL = Object.freeze({
   id: "current-tools-agent-workflow.v1",
-  product_ref: "exact_git_sha_required_at_execution",
+  product_ref: "exact_baseline_identity_frozen_before_baseline_with_external_preflight_required",
   allowed_product_tools: [
     "read_pdf_content", "read_pdf_layout", "convert_pdf_to_markdown", "display_pdf", "get_pdf_resource_uri",
   ],
@@ -286,7 +286,8 @@ const BASELINE_PROTOCOL = Object.freeze({
   requirements: [
     "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
     "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
-    "Bind the result to one separately retained pre-execution paired-run authority covering both workflows, protocols, scorer, model, host, settings, time budget, and retry budget.",
+    "Bind baseline execution and results to the immutable comparison authority, including its exact baseline Git/tree or package identity.",
+    "Freeze the full campaign denominator and shared execution dimensions before baseline while candidate product identity remains pending implementation.",
     "Return one final JSON value plus source citations; do not consult truth or citation oracle files.",
   ],
 });
@@ -301,7 +302,7 @@ const CANDIDATE_PROTOCOL = Object.freeze({
   forbidden_capabilities: [
     "model inside MCP server", "numeric confidence", "truth-oracle access", "unreported provider egress", "silent truncation",
   ],
-  pairing: "Use one pre-execution paired-run authority with the same host, model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline.",
+  pairing: "After implementation but before candidate execution, add a subordinate candidate execution authority with exact product identity. It binds the unchanged pre-baseline comparison digest and inherits all shared dimensions, protocols, scorer, retry policy, and denominator without rewriting baseline evidence.",
 });
 
 const SCORING_POLICY = Object.freeze({
@@ -311,12 +312,13 @@ const SCORING_POLICY = Object.freeze({
     "citation_replay_rate", "calculation_replay_rate", "silent_omission_count", "truncation_count",
   ],
   exact_comparison: "Strings, booleans, nulls, array keys, and numbers compare exactly; no semantic equivalence or tolerance is inferred.",
-  denominator_rule: "Denominators are computed from the frozen truth and citation oracle files, never from candidate output.",
+  denominator_rule: "Per-document and campaign-wide denominators are computed from the frozen manifest, truth, and citation oracle files, never from candidate output; harness-only trials retain full obligations with zero numerators.",
   zero_denominator_rule: "A rate with denominator zero is null (not applicable) and must be excluded from macro averages, never treated as 100 percent.",
   model_judge: "Secondary qualitative analysis only. It cannot change, excuse, or override a deterministic failure.",
   harness_failures: [
     "source_binding_mismatch", "schema_binding_mismatch", "model_binding_missing", "host_binding_missing",
-    "timeout", "tool_transport_error", "provider_error", "malformed_run_record", "scorer_error",
+    "product_identity_mismatch", "campaign_binding_mismatch", "timeout", "tool_transport_error", "provider_error",
+    "malformed_run_record", "scorer_error",
   ],
   product_failures: [
     "schema_invalid", "wrong_value", "missing_leaf", "extra_leaf", "array_key_missing", "array_key_duplicate",
@@ -329,7 +331,7 @@ const HOLDOUT_POLICY = Object.freeze({
   development_documents: ["nested-ledger-120", "keyed-register-96"],
   held_out_calibration_documents: ["citation-calculation-72"],
   rule: "Truth and citation oracles are validator-only. Workflow authors may inspect development PDFs and schemas but must not inspect held-out truth before both protocols and scorer bindings are frozen.",
-  comparison_rule: "Report per-document and aggregate outcomes; do not tune against held-out output, replace failed runs, or omit admitted documents.",
+  comparison_rule: "A pre-baseline comparison authority freezes every admitted document, role, trial, attempt slot, protocol, scorer, shared execution dimension, and the exact baseline product identity while candidate identity remains pending. Report every slot and aggregate outcome; do not tune against held-out output, replace failed product runs, substitute attempts, or omit admitted documents or failures.",
 });
 
 const CLAIM_BOUNDARY = Object.freeze({
@@ -434,10 +436,20 @@ export async function generateVerifiedExtractionFixtures(outputDir = DEFAULT_OUT
     deterministic_denominators: totals,
     protocols: protocolBindings,
     run_plan_admission: {
-      contract_id: "verified-extraction-paired-run-authority.v1",
-      measured_pairs_authorized: 0,
+      comparison_contract_id: "verified-extraction-comparison-authority.v1",
+      candidate_execution_contract_id: "verified-extraction-candidate-execution-authority.v1",
+      measured_campaigns_authorized: 0,
       state: "no_measured_execution_authorized",
-      rule: "This benchmark manifest authorizes no model or provider execution. E9E.2 must retain an exact paired-run authority before execution; both results bind its digest and the scorer validates shared pair dimensions and chronology.",
+      rule: "This benchmark manifest authorizes no model or provider execution. Before baseline, one immutable comparison authority must bind the exact manifest, baseline product identity, both frozen protocols, scorer, shared model/host/settings/budgets, full admitted document set, every trial and attempt slot, retry budget, and no-product-replacement policy while candidate identity is pending. After candidate implementation but before candidate execution, a subordinate authority adds the exact candidate product identity without changing the comparison digest. Aggregate verification requires both role authorities and every planned slot.",
+    },
+    product_identity_qualification: {
+      scheme: "pdf-tools-product-identity.v1",
+      contract_validation: "syntactic_shape_and_immutable_binding_only",
+      independent_observation_required: true,
+      execution_gate: "e9e.2_real_git_or_package_preflight_required",
+      source_preflight: "Independently verify the commit exists, its Git tree matches the recorded git_tree, and the observed clean execution tree is that tree.",
+      package_preflight: "Independently verify the commit exists and observer-computed SHA-256 of the exact executed package bytes matches artifact_sha256.",
+      limitation: "Contract validation alone does not prove that a Git object or package exists or that the bound identity was actually exercised.",
     },
     claim_boundary: CLAIM_BOUNDARY,
     external_candidates: [

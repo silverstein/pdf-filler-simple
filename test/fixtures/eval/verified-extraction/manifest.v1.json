@@ -4,11 +4,11 @@
   "frozen_at": "2026-08-20T00:00:00.000Z",
   "generator": {
     "path": "scripts/eval-generate-verified-extraction-fixtures.mjs",
-    "sha256": "37740b4f1a080dab7750ef317415af930ebf7e4f285f0ae6246c0ff8a8201fc6"
+    "sha256": "c7f46b190c58ec9c001ccc7337eb516c9e4d4e8e605d47084a367ea5b6c4b01d"
   },
   "scorer": {
     "path": "test/eval/verified-extraction-contract.js",
-    "sha256": "0e18980d5e673bdfad9ecfd5f8fbb1985b1af1ddd99b8e883016d14bbc32f2ec"
+    "sha256": "09a2ab04842f3baf5d45246f6731b2c8772efd737332e6b4a1769dc6f9a4b2f5"
   },
   "schema_subset": [
     "object",
@@ -165,7 +165,7 @@
     "baseline": {
       "value": {
         "id": "current-tools-agent-workflow.v1",
-        "product_ref": "exact_git_sha_required_at_execution",
+        "product_ref": "exact_baseline_identity_frozen_before_baseline_with_external_preflight_required",
         "allowed_product_tools": [
           "read_pdf_content",
           "read_pdf_layout",
@@ -177,11 +177,12 @@
         "requirements": [
           "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
           "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
-          "Bind the result to one separately retained pre-execution paired-run authority covering both workflows, protocols, scorer, model, host, settings, time budget, and retry budget.",
+          "Bind baseline execution and results to the immutable comparison authority, including its exact baseline Git/tree or package identity.",
+          "Freeze the full campaign denominator and shared execution dimensions before baseline while candidate product identity remains pending implementation.",
           "Return one final JSON value plus source citations; do not consult truth or citation oracle files."
         ]
       },
-      "sha256": "46cb19aa1eb3c80c58fff095b94179d914fadbcc300d29e3eb8c36fa9a504b1b"
+      "sha256": "4162fe1aa730d9a29d3e5847dcef8e6b529ea9bd5e1cd3359f22ab5d38b77abe"
     },
     "candidate": {
       "value": {
@@ -202,9 +203,9 @@
           "unreported provider egress",
           "silent truncation"
         ],
-        "pairing": "Use one pre-execution paired-run authority with the same host, model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline."
+        "pairing": "After implementation but before candidate execution, add a subordinate candidate execution authority with exact product identity. It binds the unchanged pre-baseline comparison digest and inherits all shared dimensions, protocols, scorer, retry policy, and denominator without rewriting baseline evidence."
       },
-      "sha256": "ef40952c5c80747f8c30b741aacd3680451d74f515bf87fb365b9c8ce7eac28c"
+      "sha256": "3825ad00032f35888b3b808e3b8efc1cc3dea23263ce00e79ff21be9ee16e077"
     },
     "scoring": {
       "value": {
@@ -221,7 +222,7 @@
           "truncation_count"
         ],
         "exact_comparison": "Strings, booleans, nulls, array keys, and numbers compare exactly; no semantic equivalence or tolerance is inferred.",
-        "denominator_rule": "Denominators are computed from the frozen truth and citation oracle files, never from candidate output.",
+        "denominator_rule": "Per-document and campaign-wide denominators are computed from the frozen manifest, truth, and citation oracle files, never from candidate output; harness-only trials retain full obligations with zero numerators.",
         "zero_denominator_rule": "A rate with denominator zero is null (not applicable) and must be excluded from macro averages, never treated as 100 percent.",
         "model_judge": "Secondary qualitative analysis only. It cannot change, excuse, or override a deterministic failure.",
         "harness_failures": [
@@ -229,6 +230,8 @@
           "schema_binding_mismatch",
           "model_binding_missing",
           "host_binding_missing",
+          "product_identity_mismatch",
+          "campaign_binding_mismatch",
           "timeout",
           "tool_transport_error",
           "provider_error",
@@ -249,7 +252,7 @@
           "silent_truncation"
         ]
       },
-      "sha256": "4f8f6c0dff3f75a35e780e9b231868094d569e4a79ccb62ae1e87865f6db04e7"
+      "sha256": "984ed8cceb7ed8e702a261b86a06f0b7c2196c55488eabc5fe6e9ef4519b466c"
     },
     "holdout": {
       "value": {
@@ -262,16 +265,26 @@
           "citation-calculation-72"
         ],
         "rule": "Truth and citation oracles are validator-only. Workflow authors may inspect development PDFs and schemas but must not inspect held-out truth before both protocols and scorer bindings are frozen.",
-        "comparison_rule": "Report per-document and aggregate outcomes; do not tune against held-out output, replace failed runs, or omit admitted documents."
+        "comparison_rule": "A pre-baseline comparison authority freezes every admitted document, role, trial, attempt slot, protocol, scorer, shared execution dimension, and the exact baseline product identity while candidate identity remains pending. Report every slot and aggregate outcome; do not tune against held-out output, replace failed product runs, substitute attempts, or omit admitted documents or failures."
       },
-      "sha256": "34bca8f79dd9a0b5eefdd0a82447729af896f7a92dceedc7ad3119f0bc85e5b4"
+      "sha256": "e17de858c608a41395fd8d1ccf991ed4749a360d1149a7d7d85cc086a75c81bf"
     }
   },
   "run_plan_admission": {
-    "contract_id": "verified-extraction-paired-run-authority.v1",
-    "measured_pairs_authorized": 0,
+    "comparison_contract_id": "verified-extraction-comparison-authority.v1",
+    "candidate_execution_contract_id": "verified-extraction-candidate-execution-authority.v1",
+    "measured_campaigns_authorized": 0,
     "state": "no_measured_execution_authorized",
-    "rule": "This benchmark manifest authorizes no model or provider execution. E9E.2 must retain an exact paired-run authority before execution; both results bind its digest and the scorer validates shared pair dimensions and chronology."
+    "rule": "This benchmark manifest authorizes no model or provider execution. Before baseline, one immutable comparison authority must bind the exact manifest, baseline product identity, both frozen protocols, scorer, shared model/host/settings/budgets, full admitted document set, every trial and attempt slot, retry budget, and no-product-replacement policy while candidate identity is pending. After candidate implementation but before candidate execution, a subordinate authority adds the exact candidate product identity without changing the comparison digest. Aggregate verification requires both role authorities and every planned slot."
+  },
+  "product_identity_qualification": {
+    "scheme": "pdf-tools-product-identity.v1",
+    "contract_validation": "syntactic_shape_and_immutable_binding_only",
+    "independent_observation_required": true,
+    "execution_gate": "e9e.2_real_git_or_package_preflight_required",
+    "source_preflight": "Independently verify the commit exists, its Git tree matches the recorded git_tree, and the observed clean execution tree is that tree.",
+    "package_preflight": "Independently verify the commit exists and observer-computed SHA-256 of the exact executed package bytes matches artifact_sha256.",
+    "limitation": "Contract validation alone does not prove that a Git object or package exists or that the bound identity was actually exercised."
   },
   "claim_boundary": {
     "benchmark_claim_ready": false,

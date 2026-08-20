@@ -7,7 +7,10 @@ import {
   canonicalJson,
   scoreVerifiedExtractionCandidate,
   sha256,
+  validateCandidateExecutionAuthority,
+  validateComparisonAuthority,
   verifyVerifiedExtractionContract,
+  verifyVerifiedExtractionCampaignReceipt,
 } from "./verified-extraction-contract.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -19,56 +22,188 @@ async function loadDocument(document) {
   return { schema, truth, citationOracle };
 }
 
-function runPlanFor(manifest, document, workflowRole = "candidate") {
+function syntheticBaselineIdentity() {
+  return {
+    scheme: "pdf-tools-product-identity.v1",
+    kind: "git_source_tree",
+    git_commit: "1".repeat(40),
+    git_tree: "a".repeat(40),
+  };
+}
+
+function syntheticCandidateIdentity() {
+  return {
+    scheme: "pdf-tools-product-identity.v1",
+    kind: "packaged_artifact",
+    git_commit: "2".repeat(40),
+    artifact_sha256: "b".repeat(64),
+  };
+}
+
+function comparisonAuthorityFor(manifest, { retryBudget = 1, trialsPerDocument = 1 } = {}) {
+  const trials = [];
+  for (const document of manifest.documents) {
+    for (let trialIndex = 1; trialIndex <= trialsPerDocument; trialIndex++) {
+      for (const workflowRole of ["baseline", "candidate"]) {
+        trials.push({
+          trial_id: `trial-${workflowRole}-${document.id}-${trialIndex}`,
+          document_id: document.id,
+          workflow_role: workflowRole,
+          trial_index: trialIndex,
+          attempt_ids: Array.from({ length: retryBudget + 1 }, (_, index) => (
+            `attempt-${workflowRole}-${document.id}-${trialIndex}-${index + 1}`
+          )),
+        });
+      }
+    }
+  }
   const settings = { temperature: 0, max_output_tokens: 4096 };
   return {
-    plan_version: 1,
-    plan_id: `synthetic-${workflowRole}-${document.id}`,
-    workflow_role: workflowRole,
+    comparison_version: 1,
+    comparison_id: "synthetic-comparison-complete-v1",
+    benchmark_id: manifest.benchmark_id,
+    benchmark_manifest_sha256: sha256(Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)),
+    admission_class: "synthetic_scorer_calibration",
+    authorized_at: "2026-08-20T12:00:00.000Z",
+    candidate_identity_state: "pending_implementation",
+    admitted_document_ids: manifest.documents.map(document => document.id).sort(),
+    workflow_roles: ["baseline", "candidate"],
+    protocol_bindings: Object.fromEntries(["baseline", "candidate"].map(workflowRole => [workflowRole, {
+      id: manifest.protocols[workflowRole].value.id,
+      sha256: manifest.protocols[workflowRole].sha256,
+    }])),
+    scorer_binding: { sha256: manifest.scorer.sha256 },
+    shared_execution: {
+      model: { provider: "host-managed-test", id: "synthetic-model", version: "fixture-v1" },
+      host: { id: "synthetic-host", platform: "test", architecture: "test", runtime: "node-test" },
+      settings,
+      settings_sha256: sha256(Buffer.from(canonicalJson(settings))),
+      time_budget_ms: 120000,
+    },
+    baseline_product_identity: syntheticBaselineIdentity(),
+    trials_per_document: trialsPerDocument,
+    retry_budget: retryBudget,
+    replacement_policy: "no_product_replacement_harness_retry_only",
+    trial_count: trials.length,
+    attempt_slot_count: trials.length * (retryBudget + 1),
+    trials,
+  };
+}
+
+function candidateExecutionPlan(comparisonAuthority, comparisonDigest, productIdentity) {
+  return {
+    comparison_authority_sha256: comparisonDigest,
+    workflow_role: "candidate",
+    protocol_binding: comparisonAuthority.protocol_bindings.candidate,
+    scorer_binding: comparisonAuthority.scorer_binding,
+    shared_execution: comparisonAuthority.shared_execution,
+    retry_budget: comparisonAuthority.retry_budget,
+    product_identity: productIdentity,
+  };
+}
+
+function candidateExecutionAuthorityFor(manifest, comparisonAuthority) {
+  const comparison = validateComparisonAuthority({ manifest, comparisonAuthority });
+  const productIdentity = syntheticCandidateIdentity();
+  return {
+    authority_version: 1,
+    authority_id: "synthetic-candidate-execution-v1",
+    comparison_authority_sha256: comparison.authority_sha256,
+    authorized_at: "2026-08-20T12:00:30.000Z",
+    workflow_role: "candidate",
+    product_identity: productIdentity,
+    execution_plan_sha256: sha256(Buffer.from(canonicalJson(candidateExecutionPlan(
+      comparisonAuthority, comparison.authority_sha256, productIdentity,
+    )))),
+  };
+}
+
+function trialFor(comparisonAuthority, document, workflowRole, trialIndex = 1) {
+  return comparisonAuthority.trials.find(trial => trial.document_id === document.id
+    && trial.workflow_role === workflowRole && trial.trial_index === trialIndex);
+}
+
+function runRecordFor({
+  manifest, comparisonAuthority, candidateExecutionAuthority, document, workflowRole, result, citationOracle, attemptIndex = 1,
+}) {
+  const comparison = validateComparisonAuthority({ manifest, comparisonAuthority });
+  const roleAuthority = workflowRole === "baseline" ? {
+    authority_sha256: comparison.authority_sha256,
+    execution_plan_sha256: comparison.baseline_execution_plan_sha256,
+    product_identity: comparisonAuthority.baseline_product_identity,
+  } : validateCandidateExecutionAuthority({ manifest, comparisonAuthority, candidateExecutionAuthority });
+  const trial = trialFor(comparisonAuthority, document, workflowRole);
+  return {
     document_id: document.id,
     source_sha256: document.artifacts.pdf.sha256,
     schema_sha256: document.artifacts.schema.sha256,
-    workflow_protocol_id: manifest.protocols[workflowRole].value.id,
-    workflow_protocol_sha256: manifest.protocols[workflowRole].sha256,
-    scorer_sha256: manifest.scorer.sha256,
-    model: { provider: "host-managed-test", id: "synthetic-model", version: "fixture-v1" },
-    host: { id: "synthetic-host", platform: "test", architecture: "test", runtime: "node-test" },
-    settings,
-    settings_sha256: sha256(Buffer.from(canonicalJson(settings))),
-    time_budget_ms: 120000,
-    retry_budget: 1,
+    comparison_authority_sha256: comparison.authority_sha256,
+    role_authority_sha256: roleAuthority.authority_sha256,
+    execution_binding_sha256: roleAuthority.execution_plan_sha256,
+    product_identity: structuredClone(roleAuthority.product_identity),
+    trial_id: trial.trial_id,
+    attempt_id: trial.attempt_ids[attemptIndex - 1],
+    attempt_index: attemptIndex,
+    execution: { started_at: "2026-08-20T12:01:00.000Z", completed_at: "2026-08-20T12:02:00.000Z" },
+    result: structuredClone(result),
+    citations: structuredClone(citationOracle.citations),
+    uncertainties: [],
+    completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
   };
 }
 
-function executionBinding(runPlan) {
-  return sha256(Buffer.from(canonicalJson(runPlan)));
-}
-
-function pairedAuthorityFor(manifest, document) {
-  const plans = {
-    baseline: runPlanFor(manifest, document, "baseline"),
-    candidate: runPlanFor(manifest, document, "candidate"),
-  };
+function attemptReceiptFor(trial, comparisonAuthority, candidateExecutionAuthority, attemptIndex, outcomeKind, outcome) {
+  const comparisonDigest = sha256(Buffer.from(canonicalJson(comparisonAuthority)));
+  const roleAuthorityDigest = trial.workflow_role === "baseline" ? comparisonDigest
+    : sha256(Buffer.from(canonicalJson(candidateExecutionAuthority)));
   return {
-    authority_version: 1,
-    benchmark_id: manifest.benchmark_id,
-    pair_id: `synthetic-pair-${document.id}`,
-    admission_class: "synthetic_scorer_calibration",
-    authorized_at: "2026-08-20T12:00:00.000Z",
-    plans,
-    plan_sha256: {
-      baseline: executionBinding(plans.baseline),
-      candidate: executionBinding(plans.candidate),
-    },
+    receipt_version: 1,
+    comparison_authority_sha256: comparisonDigest,
+    role_authority_sha256: roleAuthorityDigest,
+    trial_id: trial.trial_id,
+    attempt_id: trial.attempt_ids[attemptIndex - 1],
+    attempt_index: attemptIndex,
+    document_id: trial.document_id,
+    workflow_role: trial.workflow_role,
+    outcome_kind: outcomeKind,
+    outcome,
   };
 }
 
-function pairAuthorityBinding(authority) {
-  return sha256(Buffer.from(canonicalJson(authority)));
+function productReceiptFor(candidate, trial, comparisonAuthority, candidateExecutionAuthority) {
+  return attemptReceiptFor(trial, comparisonAuthority, candidateExecutionAuthority, candidate.attempt_index, "product_result", {
+    candidate,
+    candidate_sha256: sha256(Buffer.from(canonicalJson(candidate))),
+  });
 }
 
-function executionChronology() {
-  return { started_at: "2026-08-20T12:01:00.000Z", completed_at: "2026-08-20T12:02:00.000Z" };
+function harnessFailureOutcome(failureCode = "timeout") {
+  return {
+    failure_code: failureCode,
+    execution: { started_at: "2026-08-20T12:01:00.000Z", completed_at: "2026-08-20T12:02:00.000Z" },
+  };
+}
+
+async function successfulCampaignState(manifest, comparisonAuthority, candidateExecutionAuthority) {
+  const documentContexts = Object.fromEntries(await Promise.all(manifest.documents.map(async document => [
+    document.id, { document, ...await loadDocument(document) },
+  ])));
+  const receipts = [];
+  for (const trial of comparisonAuthority.trials) {
+    const document = manifest.documents.find(item => item.id === trial.document_id);
+    const { truth, citationOracle } = documentContexts[document.id];
+    const candidate = runRecordFor({
+      manifest, comparisonAuthority, candidateExecutionAuthority, document,
+      workflowRole: trial.workflow_role, result: truth, citationOracle,
+    });
+    receipts.push(productReceiptFor(candidate, trial, comparisonAuthority, candidateExecutionAuthority));
+    for (let attemptIndex = 2; attemptIndex <= trial.attempt_ids.length; attemptIndex++) {
+      receipts.push(attemptReceiptFor(
+        trial, comparisonAuthority, candidateExecutionAuthority, attemptIndex, "not_run", { reason: "retry_not_needed" },
+      ));
+    }
+  }
+  return { receipts, documentContexts };
 }
 
 describe("verified extraction benchmark contract", () => {
@@ -83,282 +218,332 @@ describe("verified extraction benchmark contract", () => {
       calculations: 1,
     });
     expect(verified.manifest.claim_boundary.benchmark_claim_ready).toBe(false);
+    expect(verified.manifest.product_identity_qualification.contract_validation)
+      .toBe("syntactic_shape_and_immutable_binding_only");
   }, 30000);
 
-  it("gives a perfect deterministic score only to a complete exact replay", async () => {
+  it("validates baseline before candidate identity exists and preserves it after later authorization", async () => {
     const { manifest } = await verifyVerifiedExtractionContract({ benchmarkRoot: BENCHMARK_ROOT, repoRoot: REPO_ROOT });
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const comparisonBefore = validateComparisonAuthority({ manifest, comparisonAuthority });
+    expect(comparisonAuthority.candidate_identity_state).toBe("pending_implementation");
+    expect(JSON.stringify(comparisonAuthority)).not.toContain(syntheticCandidateIdentity().git_commit);
+    const document = manifest.documents[0];
+    const { schema, truth, citationOracle } = await loadDocument(document);
+    const baseline = runRecordFor({
+      manifest, comparisonAuthority, document, workflowRole: "baseline", result: truth, citationOracle,
+    });
+    const baselineScore = scoreVerifiedExtractionCandidate({
+      manifest, workflowRole: "baseline", comparisonAuthority, document, schema, truth, citationOracle, candidate: baseline,
+    });
+    expect(baselineScore).toMatchObject({ deterministic_failure: false, product_identity_qualification: "external_preflight_required" });
+    const retainedBaselineDigest = sha256(Buffer.from(canonicalJson(baseline)));
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
+    const comparisonAfter = validateComparisonAuthority({ manifest, comparisonAuthority });
+    expect(comparisonAfter.authority_sha256).toBe(comparisonBefore.authority_sha256);
+    expect(comparisonAfter.baseline_execution_plan_sha256).toBe(comparisonBefore.baseline_execution_plan_sha256);
+    expect(sha256(Buffer.from(canonicalJson(baseline)))).toBe(retainedBaselineDigest);
+    expect(() => scoreVerifiedExtractionCandidate({
+      manifest, workflowRole: "baseline", comparisonAuthority, candidateExecutionAuthority,
+      document, schema, truth, citationOracle, candidate: baseline,
+    })).not.toThrow();
+  }, 30000);
+
+  it("requires later candidate authority and prevents it from drifting any frozen comparison dimension", async () => {
+    const { manifest } = await verifyVerifiedExtractionContract({ benchmarkRoot: BENCHMARK_ROOT, repoRoot: REPO_ROOT });
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
+    const document = manifest.documents[0];
+    const { schema, truth, citationOracle } = await loadDocument(document);
+    const candidate = runRecordFor({
+      manifest, comparisonAuthority, candidateExecutionAuthority, document,
+      workflowRole: "candidate", result: truth, citationOracle,
+    });
+    expect(() => scoreVerifiedExtractionCandidate({
+      manifest, workflowRole: "candidate", comparisonAuthority,
+      document, schema, truth, citationOracle, candidate,
+    })).toThrow(/candidate execution authority keys|Invalid candidate execution authority/);
+    for (const field of ["model", "host", "settings", "protocol_bindings", "scorer_binding", "retry_budget", "trials"]) {
+      const injected = structuredClone(candidateExecutionAuthority);
+      injected[field] = structuredClone(comparisonAuthority[field] ?? comparisonAuthority.shared_execution[field]);
+      expect(() => validateCandidateExecutionAuthority({
+        manifest, comparisonAuthority, candidateExecutionAuthority: injected,
+      })).toThrow(/candidate execution authority keys/);
+    }
+    const wrongComparison = structuredClone(candidateExecutionAuthority);
+    wrongComparison.comparison_authority_sha256 = "c".repeat(64);
+    expect(() => validateCandidateExecutionAuthority({
+      manifest, comparisonAuthority, candidateExecutionAuthority: wrongComparison,
+    })).toThrow(/comparison binding mismatch/);
+    const wrongPlan = structuredClone(candidateExecutionAuthority);
+    wrongPlan.execution_plan_sha256 = "d".repeat(64);
+    expect(() => validateCandidateExecutionAuthority({
+      manifest, comparisonAuthority, candidateExecutionAuthority: wrongPlan,
+    })).toThrow(/execution plan binding mismatch/);
+    for (const mutate of [
+      authority => { authority.shared_execution.model.version = "drifted"; },
+      authority => { authority.shared_execution.host.id = "drifted"; },
+      authority => {
+        authority.shared_execution.settings.temperature = 1;
+        authority.shared_execution.settings_sha256 = sha256(Buffer.from(canonicalJson(authority.shared_execution.settings)));
+      },
+      authority => { authority.shared_execution.time_budget_ms += 1; },
+      authority => { authority.protocol_bindings.candidate.sha256 = "e".repeat(64); },
+      authority => { authority.scorer_binding.sha256 = "e".repeat(64); },
+      authority => { authority.retry_budget += 1; },
+      authority => { authority.trials.pop(); },
+    ]) {
+      const drifted = structuredClone(comparisonAuthority);
+      mutate(drifted);
+      expect(() => validateCandidateExecutionAuthority({
+        manifest, comparisonAuthority: drifted, candidateExecutionAuthority,
+      })).toThrow();
+    }
+  }, 30000);
+
+  it("gives a perfect score only to complete role-bound exact replays", async () => {
+    const { manifest } = await verifyVerifiedExtractionContract({ benchmarkRoot: BENCHMARK_ROOT, repoRoot: REPO_ROOT });
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
     for (const document of manifest.documents) {
       const { schema, truth, citationOracle } = await loadDocument(document);
-      const pairedRunAuthority = pairedAuthorityFor(manifest, document);
       for (const workflowRole of ["baseline", "candidate"]) {
         const score = scoreVerifiedExtractionCandidate({
-          manifest,
-          workflowRole,
-          pairedRunAuthority,
-          document,
-          schema,
-          truth,
-          citationOracle,
-          candidate: {
-            document_id: document.id,
-            source_sha256: document.artifacts.pdf.sha256,
-            schema_sha256: document.artifacts.schema.sha256,
-            pair_authority_sha256: pairAuthorityBinding(pairedRunAuthority),
-            execution_binding_sha256: pairedRunAuthority.plan_sha256[workflowRole],
-            execution: executionChronology(),
-            result: truth,
-            citations: citationOracle.citations,
-            uncertainties: [],
-            completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
-          },
+          manifest, workflowRole, comparisonAuthority, candidateExecutionAuthority,
+          document, schema, truth, citationOracle,
+          candidate: runRecordFor({
+            manifest, comparisonAuthority, candidateExecutionAuthority, document, workflowRole, result: truth, citationOracle,
+          }),
         });
-        expect(score.deterministic_failure).toBe(false);
-        expect(score.claim_eligible).toBe(false);
+        expect(score).toMatchObject({ deterministic_failure: false, claim_eligible: false });
         expect(score.leaf_recall.rate).toBe(1);
         expect(score.citation_replay_rate.rate).toBe(1);
-        expect(score.truncation_count).toBe(0);
       }
     }
   }, 30000);
 
-  it("fails closed for wrong bindings, silent omissions, citation drift, and truncation", async () => {
+  it("fails closed for identity and execution drift, omissions, extra leaves, citations, and truncation", async () => {
     const manifest = JSON.parse(await fs.readFile(path.join(BENCHMARK_ROOT, "manifest.v1.json"), "utf8"));
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
     const document = manifest.documents[0];
     const { schema, truth, citationOracle } = await loadDocument(document);
-    const pairedRunAuthority = pairedAuthorityFor(manifest, document);
-    const base = {
-      document_id: document.id,
-      source_sha256: document.artifacts.pdf.sha256,
-      schema_sha256: document.artifacts.schema.sha256,
-      pair_authority_sha256: pairAuthorityBinding(pairedRunAuthority),
-      execution_binding_sha256: pairedRunAuthority.plan_sha256.candidate,
-      execution: executionChronology(),
-      result: structuredClone(truth),
-      citations: structuredClone(citationOracle.citations),
-      uncertainties: [],
-      completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
-    };
-    await expect(Promise.resolve().then(() => scoreVerifiedExtractionCandidate({
-      manifest, workflowRole: "candidate", pairedRunAuthority, document, schema, truth, citationOracle,
-      candidate: { ...base, source_sha256: "0".repeat(64) },
-    }))).rejects.toThrow(/binding mismatch/);
+    const base = runRecordFor({
+      manifest, comparisonAuthority, candidateExecutionAuthority, document, workflowRole: "candidate",
+      result: structuredClone(truth), citationOracle: { ...citationOracle, citations: structuredClone(citationOracle.citations) },
+    });
+    for (const mutate of [
+      candidate => { candidate.source_sha256 = "0".repeat(64); },
+      candidate => { candidate.comparison_authority_sha256 = "c".repeat(64); },
+      candidate => { candidate.role_authority_sha256 = "d".repeat(64); },
+      candidate => { candidate.execution_binding_sha256 = undefined; },
+      candidate => { candidate.product_identity.artifact_sha256 = "e".repeat(64); },
+      candidate => { candidate.execution.started_at = candidateExecutionAuthority.authorized_at; },
+    ]) {
+      const drifted = structuredClone(base);
+      mutate(drifted);
+      expect(() => scoreVerifiedExtractionCandidate({
+        manifest, workflowRole: "candidate", comparisonAuthority, candidateExecutionAuthority,
+        document, schema, truth, citationOracle, candidate: drifted,
+      })).toThrow();
+    }
     delete base.result.account.status;
+    base.result.account.unrequested_note = "extra";
     base.citations["account.id"].quote = "near enough is not replay";
+    base.citations.fabricated = { page: 1, quote: "not present anywhere" };
     base.completion.processed_pages -= 1;
-    const score = scoreVerifiedExtractionCandidate({ manifest, workflowRole: "candidate", pairedRunAuthority, document, schema, truth, citationOracle, candidate: base });
+    const score = scoreVerifiedExtractionCandidate({
+      manifest, workflowRole: "candidate", comparisonAuthority, candidateExecutionAuthority,
+      document, schema, truth, citationOracle, candidate: base,
+    });
     expect(score).toMatchObject({
       json_schema_valid: false,
       silent_omission_count: 1,
+      extra_citation_count: 1,
       truncation_count: 1,
       deterministic_failure: true,
     });
-    expect(score.citation_replay_rate.numerator).toBe(score.citation_replay_rate.denominator - 1);
-  });
-
-  it("counts extra submitted leaves against precision and fails the primary gate", async () => {
-    const manifest = JSON.parse(await fs.readFile(path.join(BENCHMARK_ROOT, "manifest.v1.json"), "utf8"));
-    const document = manifest.documents[0];
-    const { schema, truth, citationOracle } = await loadDocument(document);
-    const pairedRunAuthority = pairedAuthorityFor(manifest, document);
-    const result = structuredClone(truth);
-    result.account.unrequested_note = "extra";
-    const score = scoreVerifiedExtractionCandidate({
-      manifest,
-      workflowRole: "candidate",
-      pairedRunAuthority,
-      document,
-      schema,
-      truth,
-      citationOracle,
-      candidate: {
-        document_id: document.id,
-        source_sha256: document.artifacts.pdf.sha256,
-        schema_sha256: document.artifacts.schema.sha256,
-        pair_authority_sha256: pairAuthorityBinding(pairedRunAuthority),
-        execution_binding_sha256: pairedRunAuthority.plan_sha256.candidate,
-        execution: executionChronology(),
-        result,
-        citations: citationOracle.citations,
-        uncertainties: [],
-        completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
-      },
-    });
-    expect(score.leaf_recall.rate).toBe(1);
     expect(score.leaf_precision.rate).toBeLessThan(1);
-    expect(score.deterministic_failure).toBe(true);
   });
 
-  it("rejects unidentified execution and fails extra fabricated citations", async () => {
+  it("treats canonical product identities as binding-only and rejects malformed shapes", async () => {
     const manifest = JSON.parse(await fs.readFile(path.join(BENCHMARK_ROOT, "manifest.v1.json"), "utf8"));
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
     const document = manifest.documents[0];
     const { schema, truth, citationOracle } = await loadDocument(document);
-    const pairedRunAuthority = pairedAuthorityFor(manifest, document);
-    const candidate = {
-      document_id: document.id,
-      source_sha256: document.artifacts.pdf.sha256,
-      schema_sha256: document.artifacts.schema.sha256,
-      pair_authority_sha256: pairAuthorityBinding(pairedRunAuthority),
-      execution_binding_sha256: pairedRunAuthority.plan_sha256.candidate,
-      execution: executionChronology(),
-      result: truth,
-      citations: { ...citationOracle.citations, fabricated: { page: 1, quote: "not present anywhere" } },
-      uncertainties: [],
-      completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
-    };
+    const baseline = runRecordFor({
+      manifest, comparisonAuthority, document, workflowRole: "baseline", result: truth, citationOracle,
+    });
     const score = scoreVerifiedExtractionCandidate({
-      manifest, workflowRole: "candidate", pairedRunAuthority, document, schema, truth, citationOracle, candidate,
+      manifest, workflowRole: "baseline", comparisonAuthority,
+      document, schema, truth, citationOracle, candidate: baseline,
     });
-    expect(score.extra_citation_count).toBe(1);
-    expect(score.deterministic_failure).toBe(true);
-    await expect(Promise.resolve().then(() => scoreVerifiedExtractionCandidate({
-      manifest,
-      workflowRole: "candidate",
-      pairedRunAuthority,
-      document,
-      schema,
-      truth,
-      citationOracle,
-      candidate: { ...candidate, execution_binding_sha256: undefined },
-    }))).rejects.toThrow(/execution binding mismatch/);
-    const nestedEvidence = structuredClone(candidate);
-    delete nestedEvidence.citations.fabricated;
-    nestedEvidence.citations["account.id"].alternate = { page: 1, quote: "not present anywhere" };
-    const nestedScore = scoreVerifiedExtractionCandidate({
-      manifest, workflowRole: "candidate", pairedRunAuthority, document, schema, truth, citationOracle, candidate: nestedEvidence,
-    });
-    expect(nestedScore.citation_replay_rate.numerator).toBe(nestedScore.citation_replay_rate.denominator - 1);
-    expect(nestedScore.deterministic_failure).toBe(true);
-  });
-
-  it("requires every frozen workflow, scorer, model, host, settings, and budget binding", async () => {
-    const manifest = JSON.parse(await fs.readFile(path.join(BENCHMARK_ROOT, "manifest.v1.json"), "utf8"));
-    const document = manifest.documents[0];
-    const { schema, truth, citationOracle } = await loadDocument(document);
-    const original = pairedAuthorityFor(manifest, document);
-    const candidateFor = pairedRunAuthority => ({
-      document_id: document.id,
-      source_sha256: document.artifacts.pdf.sha256,
-      schema_sha256: document.artifacts.schema.sha256,
-      pair_authority_sha256: pairAuthorityBinding(pairedRunAuthority),
-      execution_binding_sha256: pairedRunAuthority.plan_sha256.candidate,
-      execution: executionChronology(),
-      result: truth,
-      citations: citationOracle.citations,
-      uncertainties: [],
-      completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
-    });
-    const mutants = [
-      authority => { delete authority.plans.candidate.workflow_protocol_sha256; },
-      authority => { delete authority.plans.candidate.scorer_sha256; },
-      authority => { delete authority.plans.candidate.model.version; },
-      authority => { delete authority.plans.candidate.host.runtime; },
-      authority => { authority.plans.candidate.settings_sha256 = "0".repeat(64); },
-      authority => { authority.plans.candidate.time_budget_ms = 0; },
-      authority => { authority.plans.candidate.retry_budget = -1; },
-      authority => { authority.plans.candidate.model.provider = "different-provider"; },
-      authority => { authority.plans.candidate.model.version = "different-version"; },
-      authority => { authority.plans.candidate.host.id = "different-host"; },
-      authority => {
-        authority.plans.candidate.settings.temperature = 1;
-        authority.plans.candidate.settings_sha256 = sha256(Buffer.from(canonicalJson(authority.plans.candidate.settings)));
-      },
-      authority => { authority.plans.candidate.time_budget_ms += 1; },
-      authority => { authority.plans.candidate.retry_budget += 1; },
-      authority => { authority.plans.candidate.execution_backend = "unclassified-backend"; },
-    ];
-    for (const mutate of mutants) {
-      const pairedRunAuthority = structuredClone(original);
-      mutate(pairedRunAuthority);
-      pairedRunAuthority.plan_sha256.candidate = executionBinding(pairedRunAuthority.plans.candidate);
-      expect(() => scoreVerifiedExtractionCandidate({
-        manifest,
-        workflowRole: "candidate",
-        pairedRunAuthority,
-        document,
-        schema,
-        truth,
-        citationOracle,
-        candidate: candidateFor(pairedRunAuthority),
-      })).toThrow();
+    expect(score.product_identity_qualification).toBe("external_preflight_required");
+    for (const mutate of [
+      identity => { identity.scheme = "unclassified"; },
+      identity => { identity.kind = "source_tree"; },
+      identity => { identity.git_commit = "0".repeat(40); },
+      identity => { identity.git_tree = "0".repeat(40); },
+      identity => { identity.unclassified = true; },
+    ]) {
+      const malformed = structuredClone(comparisonAuthority);
+      mutate(malformed.baseline_product_identity);
+      expect(() => validateComparisonAuthority({ manifest, comparisonAuthority: malformed })).toThrow();
     }
-    const measuredAuthority = structuredClone(original);
-    measuredAuthority.admission_class = "measured";
-    expect(() => scoreVerifiedExtractionCandidate({
-      manifest,
-      workflowRole: "candidate",
-      pairedRunAuthority: measuredAuthority,
-      document,
-      schema,
-      truth,
-      citationOracle,
-      candidate: candidateFor(measuredAuthority),
-    })).toThrow(/No measured paired run is authorized/);
-    const chronologyCandidate = candidateFor(original);
-    chronologyCandidate.execution.started_at = original.authorized_at;
-    expect(() => scoreVerifiedExtractionCandidate({
-      manifest,
-      workflowRole: "candidate",
-      pairedRunAuthority: original,
-      document,
-      schema,
-      truth,
-      citationOracle,
-      candidate: chronologyCandidate,
-    })).toThrow(/chronology/);
-    expect(() => scoreVerifiedExtractionCandidate({
-      manifest,
-      workflowRole: "not-a-role",
-      pairedRunAuthority: original,
-      document,
-      schema,
-      truth,
-      citationOracle,
-      candidate: { ...candidateFor(original), execution_binding_sha256: undefined },
-    })).toThrow(/Unknown workflow role/);
   });
 
-  it("rejects impossible calendar dates and reports zero-denominator rates as not applicable", async () => {
+  it("requires both role authorities for a complete campaign and rejects every denominator escape hatch", async () => {
+    const { manifest } = await verifyVerifiedExtractionContract({ benchmarkRoot: BENCHMARK_ROOT, repoRoot: REPO_ROOT });
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
+    const { receipts, documentContexts } = await successfulCampaignState(
+      manifest, comparisonAuthority, candidateExecutionAuthority,
+    );
+    const verifyReceipt = attemptReceipts => verifyVerifiedExtractionCampaignReceipt({
+      manifest, comparisonAuthority, candidateExecutionAuthority, documentContexts, attemptReceipts,
+    });
+    expect(() => verifyVerifiedExtractionCampaignReceipt({
+      manifest, comparisonAuthority, documentContexts, attemptReceipts: receipts,
+    })).toThrow(/candidate execution authority/);
+    expect(verifyReceipt(receipts)).toMatchObject({
+      complete: true,
+      claim_eligible: false,
+      product_identity_qualification: "external_preflight_required",
+      planned_trials: 6,
+      planned_attempt_slots: 12,
+      product_success_trials: 6,
+      deterministic_denominators: {
+        documents: 6,
+        leaf_values: 194,
+        citation_obligations: 86,
+        keyed_array_items: 54,
+        calculations: 2,
+      },
+    });
+    const driftedContexts = structuredClone(documentContexts);
+    driftedContexts[manifest.documents[0].id].truth.account.status = "inactive";
+    expect(() => verifyVerifiedExtractionCampaignReceipt({
+      manifest, comparisonAuthority, candidateExecutionAuthority,
+      documentContexts: driftedContexts, attemptReceipts: receipts,
+    })).toThrow(/context artifact mismatch/);
+    for (const mutate of [
+      authority => { authority.admitted_document_ids.pop(); },
+      authority => { authority.admitted_document_ids.push(authority.admitted_document_ids[0]); },
+      authority => { authority.workflow_roles.push("candidate"); },
+      authority => { authority.trial_count -= 1; },
+      authority => { authority.attempt_slot_count -= 1; },
+      authority => { authority.trials.pop(); },
+      authority => { authority.trials[1].attempt_ids[0] = authority.trials[0].attempt_ids[0]; },
+      authority => { authority.trials[0].document_id = manifest.documents[1].id; },
+      authority => { authority.trials[0].workflow_role = "candidate"; },
+      authority => { authority.replacement_policy = "replace-failures"; },
+      authority => { authority.candidate_product_identity = syntheticCandidateIdentity(); },
+    ]) {
+      const mutated = structuredClone(comparisonAuthority);
+      mutate(mutated);
+      expect(() => validateComparisonAuthority({ manifest, comparisonAuthority: mutated })).toThrow();
+    }
+    expect(() => verifyReceipt(receipts.slice(1))).toThrow(/every frozen attempt slot/);
+    const duplicated = structuredClone(receipts);
+    duplicated[duplicated.length - 1] = structuredClone(duplicated[0]);
+    expect(() => verifyReceipt(duplicated)).toThrow(/Duplicate campaign attempt receipt/);
+    for (const mutate of [
+      receipt => { receipt.document_id = manifest.documents[1].id; },
+      receipt => { receipt.attempt_id = "unplanned-attempt-id"; },
+      receipt => { receipt.role_authority_sha256 = "d".repeat(64); },
+      receipt => { receipt.comparison_authority_sha256 = "e".repeat(64); },
+    ]) {
+      const substituted = structuredClone(receipts);
+      mutate(substituted[0]);
+      expect(() => verifyReceipt(substituted)).toThrow();
+    }
+    const firstTrial = comparisonAuthority.trials[0];
+    const firstDocument = manifest.documents.find(document => document.id === firstTrial.document_id);
+    const firstLoaded = await loadDocument(firstDocument);
+    const retryCandidate = runRecordFor({
+      manifest, comparisonAuthority, candidateExecutionAuthority, document: firstDocument,
+      workflowRole: firstTrial.workflow_role, result: firstLoaded.truth,
+      citationOracle: firstLoaded.citationOracle, attemptIndex: 2,
+    });
+    const replacement = structuredClone(receipts);
+    replacement[replacement.findIndex(receipt => receipt.attempt_id === firstTrial.attempt_ids[1])]
+      = productReceiptFor(retryCandidate, firstTrial, comparisonAuthority, candidateExecutionAuthority);
+    expect(() => verifyReceipt(replacement)).toThrow(/replacement product result/);
+    const omittedPrimary = structuredClone(receipts);
+    omittedPrimary[omittedPrimary.findIndex(receipt => receipt.attempt_id === firstTrial.attempt_ids[0])]
+      = attemptReceiptFor(firstTrial, comparisonAuthority, candidateExecutionAuthority, 1, "not_run", { reason: "retry_not_used" });
+    expect(() => verifyReceipt(omittedPrimary)).toThrow(/Primary campaign attempt cannot be omitted/);
+  }, 30000);
+
+  it("retains product and harness failures in the frozen aggregate denominator", async () => {
+    const { manifest } = await verifyVerifiedExtractionContract({ benchmarkRoot: BENCHMARK_ROOT, repoRoot: REPO_ROOT });
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
+    const { receipts, documentContexts } = await successfulCampaignState(
+      manifest, comparisonAuthority, candidateExecutionAuthority,
+    );
+    const firstTrial = comparisonAuthority.trials[0];
+    receipts[receipts.findIndex(receipt => receipt.attempt_id === firstTrial.attempt_ids[0])]
+      = attemptReceiptFor(firstTrial, comparisonAuthority, candidateExecutionAuthority, 1, "harness_failure", harnessFailureOutcome());
+    receipts[receipts.findIndex(receipt => receipt.attempt_id === firstTrial.attempt_ids[1])]
+      = attemptReceiptFor(firstTrial, comparisonAuthority, candidateExecutionAuthority, 2, "not_run", { reason: "retry_not_used" });
+    const secondTrial = comparisonAuthority.trials[1];
+    const secondProductIndex = receipts.findIndex(receipt => receipt.attempt_id === secondTrial.attempt_ids[0]);
+    delete receipts[secondProductIndex].outcome.candidate.result.account.status;
+    receipts[secondProductIndex].outcome.candidate_sha256 = sha256(Buffer.from(canonicalJson(
+      receipts[secondProductIndex].outcome.candidate,
+    )));
+    const aggregate = verifyVerifiedExtractionCampaignReceipt({
+      manifest, comparisonAuthority, candidateExecutionAuthority, documentContexts, attemptReceipts: receipts,
+    });
+    expect(aggregate).toMatchObject({
+      planned_trials: 6,
+      product_success_trials: 4,
+      product_failure_trials: 1,
+      harness_failure_trials: 1,
+      harness_failure_attempts: 1,
+      deterministic_denominators: {
+        documents: 6,
+        leaf_values: 194,
+        citation_obligations: 86,
+        keyed_array_items: 54,
+        calculations: 2,
+      },
+      deterministic_numerators: {
+        schema_valid_documents: 4,
+        leaf_values: 180,
+        citation_obligations: 73,
+        keyed_array_items: 54,
+        calculations: 2,
+      },
+    });
+  }, 30000);
+
+  it("rejects impossible dates, uses null zero-denominator rates, and rejects retained-byte tampering", async () => {
     const manifest = JSON.parse(await fs.readFile(path.join(BENCHMARK_ROOT, "manifest.v1.json"), "utf8"));
+    const comparisonAuthority = comparisonAuthorityFor(manifest);
+    const candidateExecutionAuthority = candidateExecutionAuthorityFor(manifest, comparisonAuthority);
     const document = manifest.documents[0];
     const { schema, truth, citationOracle } = await loadDocument(document);
-    const pairedRunAuthority = pairedAuthorityFor(manifest, document);
     const result = structuredClone(truth);
     result.reporting.period_start = "2026-99-99";
     const score = scoreVerifiedExtractionCandidate({
-      manifest,
-      workflowRole: "candidate",
-      pairedRunAuthority,
-      document,
-      schema,
-      truth,
-      citationOracle,
-      candidate: {
-        document_id: document.id,
-        source_sha256: document.artifacts.pdf.sha256,
-        schema_sha256: document.artifacts.schema.sha256,
-        pair_authority_sha256: pairAuthorityBinding(pairedRunAuthority),
-        execution_binding_sha256: pairedRunAuthority.plan_sha256.candidate,
-        execution: executionChronology(),
-        result,
-        citations: citationOracle.citations,
-        uncertainties: [],
-        completion: { complete: true, processed_pages: document.page_count, omitted_paths: [] },
-      },
+      manifest, workflowRole: "candidate", comparisonAuthority, candidateExecutionAuthority,
+      document, schema, truth, citationOracle,
+      candidate: runRecordFor({
+        manifest, comparisonAuthority, candidateExecutionAuthority, document,
+        workflowRole: "candidate", result, citationOracle,
+      }),
     });
     expect(score.json_schema_valid).toBe(false);
     expect(score.calculation_replay_rate).toEqual({ numerator: 0, denominator: 0, rate: null });
-    expect(score.deterministic_failure).toBe(true);
-  });
-
-  it("rejects retained-byte tampering before oracle use", async () => {
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "verified-extraction-contract-"));
     try {
       await fs.cp(BENCHMARK_ROOT, temporaryRoot, { recursive: true });
-      const manifestPath = path.join(temporaryRoot, "manifest.v1.json");
-      const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
-      const target = path.join(temporaryRoot, manifest.documents[0].artifacts.truth.path);
-      await fs.appendFile(target, " ");
-      await expect(verifyVerifiedExtractionContract({ benchmarkRoot: temporaryRoot, repoRoot: REPO_ROOT })).rejects.toThrow(/Artifact binding mismatch/);
+      const copiedManifest = JSON.parse(await fs.readFile(path.join(temporaryRoot, "manifest.v1.json"), "utf8"));
+      await fs.appendFile(path.join(temporaryRoot, copiedManifest.documents[0].artifacts.truth.path), " ");
+      await expect(verifyVerifiedExtractionContract({ benchmarkRoot: temporaryRoot, repoRoot: REPO_ROOT }))
+        .rejects.toThrow(/Artifact binding mismatch/);
     } finally {
       await fs.rm(temporaryRoot, { recursive: true, force: true });
     }

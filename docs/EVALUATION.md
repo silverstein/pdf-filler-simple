@@ -226,21 +226,66 @@ current public PDF tools. The preregistered candidate may add a source-bound
 document map, stable bounded chunks, local intermediate state, pagination,
 typed uncertainty, and deterministic replay, but it may not put a model inside
 the MCP server, expose numeric confidence, read the truth oracles, silently
-truncate, or perform unreported provider egress. A paired run must use the same
+truncate, or perform unreported provider egress. A comparison must use the same
 host model and version, settings, source and schema bytes, time budget, retry
-budget, and scorer.
+budget, and scorer. Each role separately binds the exact exercised PDF Tools
+Git commit and either its source-tree digest or its packaged-artifact digest.
+Baseline and candidate product identities may differ, but neither may be
+missing, inferred from the branch name, or substituted after execution.
 
 The v1 manifest explicitly authorizes zero measured executions. Before any
-future baseline call, the execution lane must retain one paired-run authority
-for both baseline and candidate. Each role has a distinct plan and exact digest;
-the pair identifies the workflow protocols and scorer digest, document and
-schema, and shared model/provider/version, host/platform/architecture/runtime,
-canonical settings, and positive time and non-negative retry budgets. Both
-results bind the pair and role-plan digests. The scorer rejects plan drift,
-unpaired execution dimensions, and execution timestamps that do not follow the
-authority timestamp. E9E.2 must independently retain the authority before
-provider execution; timestamp ordering alone is not evidence of preregistration.
-Missing or mismatched bindings are harness failures and cannot produce a score.
+future baseline call, the execution lane must retain one immutable comparison
+authority. It binds the exact benchmark-manifest digest, both workflow protocol
+bindings, scorer binding, shared model/provider/version,
+host/platform/architecture/runtime, canonical settings, time and retry budgets,
+the exact baseline product identity, the full admitted-document set, both roles,
+every trial, every primary and retry attempt slot, and the
+`no_product_replacement_harness_retry_only` policy. The candidate product
+identity is deliberately absent and recorded as `pending_implementation`.
+This permits the governed current-tools baseline to run before the candidate
+exists.
+
+After candidate implementation and before candidate execution, the lane must
+retain a subordinate candidate execution authority. It adds only the exact
+candidate product identity and a derived execution-plan digest bound to the
+unchanged comparison-authority digest. It cannot override frozen protocols,
+scorer, model, host, settings, budgets, denominator, retry policy, or attempt
+identities. Creating it does not change the comparison digest, baseline
+execution-plan digest, or any retained baseline receipt. Baseline results bind
+the comparison authority as their role authority; candidate results bind both
+the comparison and later candidate authority. The scorer rejects identity,
+plan, trial, attempt, or chronology drift.
+
+A complete campaign receipt accounts for every frozen slot exactly once as a
+product result, harness
+failure, or an explicitly unused retry. Aggregate verification re-scores every
+retained product result from the frozen document context; it does not trust a
+caller-supplied score or success flag. It rejects omitted, duplicate, substituted,
+unplanned, resumed, or replacement attempts. Product failures and trials ending
+in harness failure remain in the frozen trial denominator. The aggregate receipt
+also publishes campaign-wide frozen document, leaf, citation, keyed-array, and
+calculation denominators with deterministically recomputed numerators; a trial
+ending in harness failure contributes its full obligations and zero numerators.
+Aggregate completion requires both the immutable comparison authority and the
+later candidate execution authority, even when all candidate attempts end in
+harness failure.
+
+Product identity uses the canonical `pdf-tools-product-identity.v1` shape:
+source execution binds a 40-hex Git commit and its 40-hex Git tree; packaged
+execution binds a 40-hex Git commit and the exact package SHA-256. Contract
+validation proves only syntactic shape and immutable digest binding. It does
+not prove that the Git object or package exists or that those bytes were
+actually exercised. E9E.2 therefore remains blocked until an independent
+preflight verifies the commit and observed clean tree, or the commit and
+observer-computed digest of the exact executed package. That retained preflight
+and independent observation are execution evidence, not an inference from this
+contract or its unit fixtures.
+
+E9E.2 must independently retain the comparison authority before baseline and
+the subordinate candidate authority before candidate execution; timestamp
+ordering alone is not evidence of preregistration. Missing or mismatched
+bindings are harness failures and cannot produce a role score or complete
+campaign receipt.
 
 Primary scoring is exact and deterministic: schema validity, leaf precision
 and recall, keyed-array precision and recall, citation replay, calculation
@@ -256,7 +301,9 @@ averages, never treated as 100 percent.
 Two PDFs are development cases. `citation-calculation-72` is held-out
 calibration: its truth and citation files are validator-only until both paired
 protocols and scorer bindings are frozen. Failed runs remain in the denominator;
-they cannot be replaced, tuned away, or omitted.
+they cannot be replaced, tuned away, or omitted. A retry may follow a retained
+harness failure only within the frozen slots; no retry may follow or replace a
+product result, including a deterministically failing result.
 
 VAREX, RealDoc-Bench, and LongExtractBench-50 are recorded as external
 candidates but are explicitly not admitted. VAREX does not match this frozen
@@ -270,6 +317,11 @@ This suite is `private_synthetic_calibration_only` and always reports
 support a fully qualified private paired comparison. It cannot support a public
 benchmark, state-of-the-art claim, real-world-document claim, provider-quality
 claim, or numeric-confidence claim.
+
+This three-document synthetic campaign is mechanics calibration, not the real
+P1 baseline. A separate rights-admitted public-pilot corpus tranche must pass
+admission and independent review before E9E.2 can be described as a real P1
+baseline.
 
 ## Scoring contracts
 
