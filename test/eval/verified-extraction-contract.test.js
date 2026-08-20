@@ -264,6 +264,7 @@ describe("verified extraction benchmark contract", () => {
       },
       authority => { authority.plans.candidate.time_budget_ms += 1; },
       authority => { authority.plans.candidate.retry_budget += 1; },
+      authority => { authority.plans.candidate.execution_backend = "unclassified-backend"; },
     ];
     for (const mutate of mutants) {
       const pairedRunAuthority = structuredClone(original);
@@ -304,6 +305,16 @@ describe("verified extraction benchmark contract", () => {
       citationOracle,
       candidate: chronologyCandidate,
     })).toThrow(/chronology/);
+    expect(() => scoreVerifiedExtractionCandidate({
+      manifest,
+      workflowRole: "not-a-role",
+      pairedRunAuthority: original,
+      document,
+      schema,
+      truth,
+      citationOracle,
+      candidate: { ...candidateFor(original), execution_binding_sha256: undefined },
+    })).toThrow(/Unknown workflow role/);
   });
 
   it("rejects impossible calendar dates and reports zero-denominator rates as not applicable", async () => {

@@ -8,7 +8,7 @@
   },
   "scorer": {
     "path": "test/eval/verified-extraction-contract.js",
-    "sha256": "1fbabe1b30461923332f1eec929fd118fee3fd1b7a2bf6c0cade28dd1d3dd380"
+    "sha256": "0e18980d5e673bdfad9ecfd5f8fbb1985b1af1ddd99b8e883016d14bbc32f2ec"
   },
   "schema_subset": [
     "object",

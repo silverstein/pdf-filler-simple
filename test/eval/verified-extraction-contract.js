@@ -365,6 +365,11 @@ function safeRatio(numerator, denominator) {
 
 function validateRunPlanFields({ manifest, workflowRole, document, runPlan }) {
   if (!manifest || !["baseline", "candidate"].includes(workflowRole)) throw new Error("Frozen manifest and workflow role are required");
+  exactSet(Object.keys(runPlan || {}), [
+    "plan_version", "plan_id", "workflow_role", "document_id", "source_sha256", "schema_sha256",
+    "workflow_protocol_id", "workflow_protocol_sha256", "scorer_sha256", "model", "host", "settings",
+    "settings_sha256", "time_budget_ms", "retry_budget",
+  ], `${workflowRole} run plan keys`);
   const protocol = manifest.protocols?.[workflowRole];
   if (!protocol || !manifest.scorer) throw new Error("Frozen scorer and workflow protocol bindings are required");
   const required = {
@@ -385,6 +390,7 @@ function validateRunPlanFields({ manifest, workflowRole, document, runPlan }) {
     ["model", runPlan.model, ["provider", "id", "version"]],
     ["host", runPlan.host, ["id", "platform", "architecture", "runtime"]],
   ]) {
+    exactSet(Object.keys(record || {}), keys, `${label} binding keys`);
     if (!record || keys.some(key => typeof record[key] !== "string" || record[key].trim() === "")) {
       throw new Error(`Complete ${label} binding is required`);
     }
@@ -400,6 +406,9 @@ function validateRunPlanFields({ manifest, workflowRole, document, runPlan }) {
 }
 
 export function validatePairedRunAuthority({ manifest, document, pairedRunAuthority }) {
+  exactSet(Object.keys(pairedRunAuthority || {}), [
+    "authority_version", "benchmark_id", "pair_id", "admission_class", "authorized_at", "plans", "plan_sha256",
+  ], "paired run authority keys");
   if (pairedRunAuthority?.authority_version !== 1
     || pairedRunAuthority?.benchmark_id !== manifest?.benchmark_id
     || typeof pairedRunAuthority?.pair_id !== "string" || pairedRunAuthority.pair_id.length < 8) {
@@ -441,6 +450,7 @@ export function validatePairedRunAuthority({ manifest, document, pairedRunAuthor
 
 export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, pairedRunAuthority, document, schema, truth, citationOracle, candidate }) {
   if (!candidate || typeof candidate !== "object") throw new Error("Candidate run record is required");
+  if (!["baseline", "candidate"].includes(workflowRole)) throw new Error("Unknown workflow role");
   const expectedBindings = {
     document_id: document.id,
     source_sha256: document.artifacts.pdf.sha256,
