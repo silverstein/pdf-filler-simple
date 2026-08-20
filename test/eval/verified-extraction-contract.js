@@ -93,7 +93,17 @@ function validateSchemaValue(schema, value, at = "$") {
           : schema.type === "null" ? value === null : false;
   if (!matches) throw new Error(`Truth type mismatch at ${at}`);
   if (schema.enum && !schema.enum.some(item => Object.is(item, value))) throw new Error(`Truth enum mismatch at ${at}`);
-  if (schema.format === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`Truth date mismatch at ${at}`);
+  if (schema.format === "date") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    const year = Number(match?.[1]);
+    const month = Number(match?.[2]);
+    const day = Number(match?.[3]);
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const monthLengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (!match || year < 1 || month < 1 || month > 12 || day < 1 || day > monthLengths[month - 1]) {
+      throw new Error(`Truth date mismatch at ${at}`);
+    }
+  }
 }
 
 function assertSchemaSubset(schema, at = "$") {
@@ -345,10 +355,48 @@ function keyedArrayCounts(schema, truth, candidate, at = "$") {
 }
 
 function safeRatio(numerator, denominator) {
-  return denominator === 0 ? 1 : numerator / denominator;
+  return denominator === 0 ? null : numerator / denominator;
 }
 
-export function scoreVerifiedExtractionCandidate({ document, schema, truth, citationOracle, candidate }) {
+function validateRunPlan({ manifest, workflowRole, document, runPlan, candidate }) {
+  if (!manifest || !["baseline", "candidate"].includes(workflowRole)) throw new Error("Frozen manifest and workflow role are required");
+  const protocol = manifest.protocols?.[workflowRole];
+  if (!protocol || !manifest.scorer) throw new Error("Frozen scorer and workflow protocol bindings are required");
+  const required = {
+    plan_version: 1,
+    workflow_role: workflowRole,
+    document_id: document.id,
+    source_sha256: document.artifacts.pdf.sha256,
+    schema_sha256: document.artifacts.schema.sha256,
+    workflow_protocol_id: protocol.value.id,
+    workflow_protocol_sha256: protocol.sha256,
+    scorer_sha256: manifest.scorer.sha256,
+  };
+  for (const [key, expected] of Object.entries(required)) {
+    if (runPlan?.[key] !== expected) throw new Error(`Run plan binding mismatch: ${key}`);
+  }
+  if (typeof runPlan.plan_id !== "string" || runPlan.plan_id.length < 8) throw new Error("Run plan ID is required");
+  for (const [label, record, keys] of [
+    ["model", runPlan.model, ["provider", "id", "version"]],
+    ["host", runPlan.host, ["id", "platform", "architecture", "runtime"]],
+  ]) {
+    if (!record || keys.some(key => typeof record[key] !== "string" || record[key].trim() === "")) {
+      throw new Error(`Complete ${label} binding is required`);
+    }
+  }
+  if (!runPlan.settings || typeof runPlan.settings !== "object" || Array.isArray(runPlan.settings)) throw new Error("Model settings are required");
+  if (!SHA256.test(runPlan.settings_sha256)
+    || sha256(Buffer.from(canonicalJson(runPlan.settings))) !== runPlan.settings_sha256) {
+    throw new Error("Model settings binding mismatch");
+  }
+  if (!Number.isInteger(runPlan.time_budget_ms) || runPlan.time_budget_ms < 1) throw new Error("Positive time budget is required");
+  if (!Number.isInteger(runPlan.retry_budget) || runPlan.retry_budget < 0) throw new Error("Non-negative retry budget is required");
+  const binding = sha256(Buffer.from(canonicalJson(runPlan)));
+  if (candidate.execution_binding_sha256 !== binding) throw new Error("Candidate execution binding mismatch");
+  return binding;
+}
+
+export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, runPlan, document, schema, truth, citationOracle, candidate }) {
   if (!candidate || typeof candidate !== "object") throw new Error("Candidate run record is required");
   const expectedBindings = {
     document_id: document.id,
@@ -358,6 +406,7 @@ export function scoreVerifiedExtractionCandidate({ document, schema, truth, cita
   for (const [key, expected] of Object.entries(expectedBindings)) {
     if (candidate[key] !== expected) throw new Error(`Candidate harness binding mismatch: ${key}`);
   }
+  const executionBindingSha256 = validateRunPlan({ manifest, workflowRole, document, runPlan, candidate });
   let schemaValid = true;
   try {
     validateSchemaValue(schema, candidate.result);
@@ -381,6 +430,9 @@ export function scoreVerifiedExtractionCandidate({ document, schema, truth, cita
   const submittedLeaves = collectSubmittedLeaves(candidate.result).length;
   const keyed = keyedArrayCounts(schema, truth, candidate.result);
   const citations = candidate.citations && typeof candidate.citations === "object" ? candidate.citations : {};
+  const expectedCitationKeys = Object.keys(citationOracle.citations);
+  const submittedCitationKeys = Object.keys(citations);
+  const extraCitationCount = submittedCitationKeys.filter(key => !expectedCitationKeys.includes(key)).length;
   let correctCitations = 0;
   for (const [citationPath, expected] of Object.entries(citationOracle.citations)) {
     const actual = citations[citationPath];
@@ -404,18 +456,20 @@ export function scoreVerifiedExtractionCandidate({ document, schema, truth, cita
     && candidate.completion?.processed_pages === document.page_count ? 0 : 1;
   return {
     document_id: document.id,
+    execution_binding_sha256: executionBindingSha256,
     json_schema_valid: schemaValid,
     leaf_precision: { numerator: correctLeaves, denominator: submittedLeaves, rate: safeRatio(correctLeaves, submittedLeaves) },
     leaf_recall: { numerator: correctLeaves, denominator: truthLeaves.length, rate: safeRatio(correctLeaves, truthLeaves.length) },
     keyed_array_precision: { numerator: keyed.correct, denominator: keyed.submitted, rate: safeRatio(keyed.correct, keyed.submitted) },
     keyed_array_recall: { numerator: keyed.correct, denominator: keyed.expected, rate: safeRatio(keyed.correct, keyed.expected) },
     citation_replay_rate: { numerator: correctCitations, denominator: Object.keys(citationOracle.citations).length, rate: safeRatio(correctCitations, Object.keys(citationOracle.citations).length) },
+    extra_citation_count: extraCitationCount,
     calculation_replay_rate: { numerator: replayedCalculations, denominator: citationOracle.calculations.length, rate: safeRatio(replayedCalculations, citationOracle.calculations.length) },
     missing_leaf_count: missingLeaves,
     silent_omission_count: silentOmissions,
     truncation_count: truncationCount,
     deterministic_failure: !schemaValid || correctLeaves !== truthLeaves.length || correctLeaves !== submittedLeaves || keyed.correct !== keyed.expected
       || correctCitations !== Object.keys(citationOracle.citations).length || replayedCalculations !== citationOracle.calculations.length
-      || silentOmissions > 0 || truncationCount > 0,
+      || extraCitationCount > 0 || silentOmissions > 0 || truncationCount > 0,
   };
 }

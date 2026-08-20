@@ -4,11 +4,11 @@
   "frozen_at": "2026-08-20T00:00:00.000Z",
   "generator": {
     "path": "scripts/eval-generate-verified-extraction-fixtures.mjs",
-    "sha256": "6107e88a9a3c091dea35c0ca8253c2f18aa6ee919e4b61e39881491fdc03e370"
+    "sha256": "f98ca5fc3c579d464f392beef1fcab43870cd0d7700a308c70341c9b6038288f"
   },
   "scorer": {
     "path": "test/eval/verified-extraction-contract.js",
-    "sha256": "d2b6fcae3e109c04c7e45997c30fd61739bdf45af95616a5ebbdc0fac63a552f"
+    "sha256": "d71717df3f959f5826eb92d03231995f741c482b8654e27232d4940d8274ee67"
   },
   "schema_subset": [
     "object",
@@ -177,10 +177,11 @@
         "requirements": [
           "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
           "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
+          "Bind the result to the predeclared run plan, workflow protocol, scorer, model, host, settings, time budget, and retry budget.",
           "Return one final JSON value plus source citations; do not consult truth or citation oracle files."
         ]
       },
-      "sha256": "4b285b4a416b712670dcb5f2215e00df32cdbcd4d42fb234bf7920c757d94f56"
+      "sha256": "538466a83b882aead9153e711c1d681f1d947bff8f9455d6140b2ca7a6a870f6"
     },
     "candidate": {
       "value": {
@@ -221,6 +222,7 @@
         ],
         "exact_comparison": "Strings, booleans, nulls, array keys, and numbers compare exactly; no semantic equivalence or tolerance is inferred.",
         "denominator_rule": "Denominators are computed from the frozen truth and citation oracle files, never from candidate output.",
+        "zero_denominator_rule": "A rate with denominator zero is null (not applicable) and must be excluded from macro averages, never treated as 100 percent.",
         "model_judge": "Secondary qualitative analysis only. It cannot change, excuse, or override a deterministic failure.",
         "harness_failures": [
           "source_binding_mismatch",
@@ -242,11 +244,12 @@
           "array_key_duplicate",
           "citation_missing",
           "citation_not_replayable",
+          "extra_citation",
           "calculation_mismatch",
           "silent_truncation"
         ]
       },
-      "sha256": "18439b3ef2cc796d1b370e949d5f44beffa7fa7fe540471ad05b042e2a4c6bc0"
+      "sha256": "4f8f6c0dff3f75a35e780e9b231868094d569e4a79ccb62ae1e87865f6db04e7"
     },
     "holdout": {
       "value": {

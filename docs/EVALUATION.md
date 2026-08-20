@@ -211,13 +211,15 @@ node scripts/eval-generate-verified-extraction-fixtures.mjs
 node scripts/eval-verified-extraction-contract.mjs
 ```
 
-The manifest binds every PDF, target schema, truth oracle, citation oracle, and
-protocol by exact byte length and SHA-256 digest. Verification independently
+The manifest binds every PDF, target schema, truth oracle, and citation oracle
+by exact byte length and SHA-256 digest. It binds each canonical protocol
+payload and the scorer and generator sources by SHA-256. Verification independently
 checks PDF page counts with PDF.js and pdf-lib, validates truth against the
 declared schema subset, replays citation quotes on the declared pages, checks
 key uniqueness, recomputes all denominators, and replays calculations. The
-generator is byte-deterministic; any generator or retained-artifact change
-requires an explicit new manifest identity rather than inheriting v1 results.
+generator is byte-deterministic; any generator, scorer, protocol, or retained-
+artifact change changes the manifest digest and invalidates prior v1 results.
+A semantic contract change must be reviewed as an explicit version revision.
 
 The frozen baseline is the best agent-managed workflow available from the
 current public PDF tools. The preregistered candidate may add a source-bound
@@ -228,6 +230,12 @@ truncate, or perform unreported provider egress. A paired run must use the same
 host model and version, settings, source and schema bytes, time budget, retry
 budget, and scorer.
 
+Every scored result must also bind an exact predeclared run plan. The plan
+identifies the workflow protocol and scorer digests, document and schema,
+model/provider/version, host/platform/architecture/runtime, canonical settings,
+and positive time and non-negative retry budgets. Missing or mismatched run
+bindings are harness failures; they cannot produce a quality score.
+
 Primary scoring is exact and deterministic: schema validity, leaf precision
 and recall, keyed-array precision and recall, citation replay, calculation
 replay, silent omissions, and truncation. The frozen denominator comes from the
@@ -235,6 +243,9 @@ truth and citation oracles, never candidate output. Harness failures and
 product failures are separate named taxonomies. A model judge may provide
 secondary qualitative analysis but cannot change, excuse, or override a
 deterministic failure.
+Extra submitted citation paths fail the primary gate. Rates with a zero
+denominator are `null` (not applicable) and must be excluded from macro
+averages, never treated as 100 percent.
 
 Two PDFs are development cases. `citation-calculation-72` is held-out
 calibration: its truth and citation files are validator-only until both paired

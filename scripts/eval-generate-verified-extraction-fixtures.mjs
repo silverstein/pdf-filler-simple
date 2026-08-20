@@ -286,6 +286,7 @@ const BASELINE_PROTOCOL = Object.freeze({
   requirements: [
     "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
     "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
+    "Bind the result to the predeclared run plan, workflow protocol, scorer, model, host, settings, time budget, and retry budget.",
     "Return one final JSON value plus source citations; do not consult truth or citation oracle files.",
   ],
 });
@@ -311,6 +312,7 @@ const SCORING_POLICY = Object.freeze({
   ],
   exact_comparison: "Strings, booleans, nulls, array keys, and numbers compare exactly; no semantic equivalence or tolerance is inferred.",
   denominator_rule: "Denominators are computed from the frozen truth and citation oracle files, never from candidate output.",
+  zero_denominator_rule: "A rate with denominator zero is null (not applicable) and must be excluded from macro averages, never treated as 100 percent.",
   model_judge: "Secondary qualitative analysis only. It cannot change, excuse, or override a deterministic failure.",
   harness_failures: [
     "source_binding_mismatch", "schema_binding_mismatch", "model_binding_missing", "host_binding_missing",
@@ -318,7 +320,7 @@ const SCORING_POLICY = Object.freeze({
   ],
   product_failures: [
     "schema_invalid", "wrong_value", "missing_leaf", "extra_leaf", "array_key_missing", "array_key_duplicate",
-    "citation_missing", "citation_not_replayable", "calculation_mismatch", "silent_truncation",
+    "citation_missing", "citation_not_replayable", "extra_citation", "calculation_mismatch", "silent_truncation",
   ],
 });
 
