@@ -286,7 +286,7 @@ const BASELINE_PROTOCOL = Object.freeze({
   requirements: [
     "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
     "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
-    "Bind the result to the predeclared run plan, workflow protocol, scorer, model, host, settings, time budget, and retry budget.",
+    "Bind the result to one separately retained pre-execution paired-run authority covering both workflows, protocols, scorer, model, host, settings, time budget, and retry budget.",
     "Return one final JSON value plus source citations; do not consult truth or citation oracle files.",
   ],
 });
@@ -301,7 +301,7 @@ const CANDIDATE_PROTOCOL = Object.freeze({
   forbidden_capabilities: [
     "model inside MCP server", "numeric confidence", "truth-oracle access", "unreported provider egress", "silent truncation",
   ],
-  pairing: "Use the same host model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline.",
+  pairing: "Use one pre-execution paired-run authority with the same host, model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline.",
 });
 
 const SCORING_POLICY = Object.freeze({
@@ -433,6 +433,12 @@ export async function generateVerifiedExtractionFixtures(outputDir = DEFAULT_OUT
     documents,
     deterministic_denominators: totals,
     protocols: protocolBindings,
+    run_plan_admission: {
+      contract_id: "verified-extraction-paired-run-authority.v1",
+      measured_pairs_authorized: 0,
+      state: "no_measured_execution_authorized",
+      rule: "This benchmark manifest authorizes no model or provider execution. E9E.2 must retain an exact paired-run authority before execution; both results bind its digest and the scorer validates shared pair dimensions and chronology.",
+    },
     claim_boundary: CLAIM_BOUNDARY,
     external_candidates: [
       {

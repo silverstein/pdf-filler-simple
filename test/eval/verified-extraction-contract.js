@@ -232,6 +232,11 @@ export async function verifyVerifiedExtractionContract({ benchmarkRoot, repoRoot
     || manifest.claim_boundary?.classification !== "private_synthetic_calibration_only") {
     throw new Error("Benchmark claim boundary must remain private and not claim-ready");
   }
+  if (manifest.run_plan_admission?.contract_id !== "verified-extraction-paired-run-authority.v1"
+    || manifest.run_plan_admission?.measured_pairs_authorized !== 0
+    || manifest.run_plan_admission?.state !== "no_measured_execution_authorized") {
+    throw new Error("Benchmark contract must not authorize a measured execution");
+  }
   if (!Array.isArray(manifest.external_candidates) || manifest.external_candidates.length !== 3
     || manifest.external_candidates.some(candidate => candidate.admitted !== false)) {
     throw new Error("External corpus candidates must remain explicitly not admitted");
@@ -358,7 +363,7 @@ function safeRatio(numerator, denominator) {
   return denominator === 0 ? null : numerator / denominator;
 }
 
-function validateRunPlan({ manifest, workflowRole, document, runPlan, candidate }) {
+function validateRunPlanFields({ manifest, workflowRole, document, runPlan }) {
   if (!manifest || !["baseline", "candidate"].includes(workflowRole)) throw new Error("Frozen manifest and workflow role are required");
   const protocol = manifest.protocols?.[workflowRole];
   if (!protocol || !manifest.scorer) throw new Error("Frozen scorer and workflow protocol bindings are required");
@@ -391,12 +396,50 @@ function validateRunPlan({ manifest, workflowRole, document, runPlan, candidate 
   }
   if (!Number.isInteger(runPlan.time_budget_ms) || runPlan.time_budget_ms < 1) throw new Error("Positive time budget is required");
   if (!Number.isInteger(runPlan.retry_budget) || runPlan.retry_budget < 0) throw new Error("Non-negative retry budget is required");
-  const binding = sha256(Buffer.from(canonicalJson(runPlan)));
-  if (candidate.execution_binding_sha256 !== binding) throw new Error("Candidate execution binding mismatch");
-  return binding;
+  return sha256(Buffer.from(canonicalJson(runPlan)));
 }
 
-export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, runPlan, document, schema, truth, citationOracle, candidate }) {
+export function validatePairedRunAuthority({ manifest, document, pairedRunAuthority }) {
+  if (pairedRunAuthority?.authority_version !== 1
+    || pairedRunAuthority?.benchmark_id !== manifest?.benchmark_id
+    || typeof pairedRunAuthority?.pair_id !== "string" || pairedRunAuthority.pair_id.length < 8) {
+    throw new Error("Invalid paired run authority identity");
+  }
+  if (pairedRunAuthority.admission_class !== "synthetic_scorer_calibration") {
+    throw new Error("No measured paired run is authorized by this benchmark contract");
+  }
+  const authorizedAt = Date.parse(pairedRunAuthority.authorized_at);
+  if (!Number.isFinite(authorizedAt)) throw new Error("Paired run authority requires an authorization timestamp");
+  exactSet(Object.keys(pairedRunAuthority.plans || {}), ["baseline", "candidate"], "paired run plan roles");
+  exactSet(Object.keys(pairedRunAuthority.plan_sha256 || {}), ["baseline", "candidate"], "paired run plan digests");
+  const planDigests = {};
+  for (const workflowRole of ["baseline", "candidate"]) {
+    const runPlan = pairedRunAuthority.plans[workflowRole];
+    planDigests[workflowRole] = validateRunPlanFields({ manifest, workflowRole, document, runPlan });
+    if (pairedRunAuthority.plan_sha256[workflowRole] !== planDigests[workflowRole]) {
+      throw new Error(`Authorized run plan digest mismatch: ${workflowRole}`);
+    }
+  }
+  const baseline = pairedRunAuthority.plans.baseline;
+  const candidate = pairedRunAuthority.plans.candidate;
+  const sharedFields = [
+    "document_id", "source_sha256", "schema_sha256", "model", "host", "settings", "settings_sha256",
+    "time_budget_ms", "retry_budget",
+  ];
+  for (const field of sharedFields) {
+    if (canonicalJson(baseline[field]) !== canonicalJson(candidate[field])) {
+      throw new Error(`Paired run plans differ on shared field: ${field}`);
+    }
+  }
+  if (baseline.plan_id === candidate.plan_id) throw new Error("Paired workflow plan IDs must be distinct");
+  return {
+    authority_sha256: sha256(Buffer.from(canonicalJson(pairedRunAuthority))),
+    authorized_at_ms: authorizedAt,
+    plan_digests: planDigests,
+  };
+}
+
+export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, pairedRunAuthority, document, schema, truth, citationOracle, candidate }) {
   if (!candidate || typeof candidate !== "object") throw new Error("Candidate run record is required");
   const expectedBindings = {
     document_id: document.id,
@@ -406,7 +449,16 @@ export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, runPl
   for (const [key, expected] of Object.entries(expectedBindings)) {
     if (candidate[key] !== expected) throw new Error(`Candidate harness binding mismatch: ${key}`);
   }
-  const executionBindingSha256 = validateRunPlan({ manifest, workflowRole, document, runPlan, candidate });
+  const authority = validatePairedRunAuthority({ manifest, document, pairedRunAuthority });
+  if (candidate.pair_authority_sha256 !== authority.authority_sha256) throw new Error("Candidate pair authority binding mismatch");
+  const executionBindingSha256 = authority.plan_digests[workflowRole];
+  if (candidate.execution_binding_sha256 !== executionBindingSha256) throw new Error("Candidate execution binding mismatch");
+  const startedAt = Date.parse(candidate.execution?.started_at);
+  const completedAt = Date.parse(candidate.execution?.completed_at);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt)
+    || startedAt <= authority.authorized_at_ms || completedAt < startedAt) {
+    throw new Error("Candidate execution chronology does not follow paired plan authorization");
+  }
   let schemaValid = true;
   try {
     validateSchemaValue(schema, candidate.result);
@@ -436,7 +488,8 @@ export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, runPl
   let correctCitations = 0;
   for (const [citationPath, expected] of Object.entries(citationOracle.citations)) {
     const actual = citations[citationPath];
-    if (actual?.page === expected.page && actual?.quote === expected.quote) correctCitations += 1;
+    if (actual && canonicalJson(Object.keys(actual).sort()) === canonicalJson(["page", "quote"])
+      && actual.page === expected.page && actual.quote === expected.quote) correctCitations += 1;
   }
   let replayedCalculations = 0;
   for (const calculation of citationOracle.calculations) {
@@ -456,6 +509,8 @@ export function scoreVerifiedExtractionCandidate({ manifest, workflowRole, runPl
     && candidate.completion?.processed_pages === document.page_count ? 0 : 1;
   return {
     document_id: document.id,
+    pair_authority_sha256: authority.authority_sha256,
+    claim_eligible: false,
     execution_binding_sha256: executionBindingSha256,
     json_schema_valid: schemaValid,
     leaf_precision: { numerator: correctLeaves, denominator: submittedLeaves, rate: safeRatio(correctLeaves, submittedLeaves) },

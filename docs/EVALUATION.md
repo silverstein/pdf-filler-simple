@@ -230,11 +230,17 @@ truncate, or perform unreported provider egress. A paired run must use the same
 host model and version, settings, source and schema bytes, time budget, retry
 budget, and scorer.
 
-Every scored result must also bind an exact predeclared run plan. The plan
-identifies the workflow protocol and scorer digests, document and schema,
-model/provider/version, host/platform/architecture/runtime, canonical settings,
-and positive time and non-negative retry budgets. Missing or mismatched run
-bindings are harness failures; they cannot produce a quality score.
+The v1 manifest explicitly authorizes zero measured executions. Before any
+future baseline call, the execution lane must retain one paired-run authority
+for both baseline and candidate. Each role has a distinct plan and exact digest;
+the pair identifies the workflow protocols and scorer digest, document and
+schema, and shared model/provider/version, host/platform/architecture/runtime,
+canonical settings, and positive time and non-negative retry budgets. Both
+results bind the pair and role-plan digests. The scorer rejects plan drift,
+unpaired execution dimensions, and execution timestamps that do not follow the
+authority timestamp. E9E.2 must independently retain the authority before
+provider execution; timestamp ordering alone is not evidence of preregistration.
+Missing or mismatched bindings are harness failures and cannot produce a score.
 
 Primary scoring is exact and deterministic: schema validity, leaf precision
 and recall, keyed-array precision and recall, citation replay, calculation

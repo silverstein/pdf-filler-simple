@@ -4,11 +4,11 @@
   "frozen_at": "2026-08-20T00:00:00.000Z",
   "generator": {
     "path": "scripts/eval-generate-verified-extraction-fixtures.mjs",
-    "sha256": "f98ca5fc3c579d464f392beef1fcab43870cd0d7700a308c70341c9b6038288f"
+    "sha256": "37740b4f1a080dab7750ef317415af930ebf7e4f285f0ae6246c0ff8a8201fc6"
   },
   "scorer": {
     "path": "test/eval/verified-extraction-contract.js",
-    "sha256": "d71717df3f959f5826eb92d03231995f741c482b8654e27232d4940d8274ee67"
+    "sha256": "1fbabe1b30461923332f1eec929fd118fee3fd1b7a2bf6c0cade28dd1d3dd380"
   },
   "schema_subset": [
     "object",
@@ -177,11 +177,11 @@
         "requirements": [
           "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
           "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
-          "Bind the result to the predeclared run plan, workflow protocol, scorer, model, host, settings, time budget, and retry budget.",
+          "Bind the result to one separately retained pre-execution paired-run authority covering both workflows, protocols, scorer, model, host, settings, time budget, and retry budget.",
           "Return one final JSON value plus source citations; do not consult truth or citation oracle files."
         ]
       },
-      "sha256": "538466a83b882aead9153e711c1d681f1d947bff8f9455d6140b2ca7a6a870f6"
+      "sha256": "46cb19aa1eb3c80c58fff095b94179d914fadbcc300d29e3eb8c36fa9a504b1b"
     },
     "candidate": {
       "value": {
@@ -202,9 +202,9 @@
           "unreported provider egress",
           "silent truncation"
         ],
-        "pairing": "Use the same host model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline."
+        "pairing": "Use one pre-execution paired-run authority with the same host, model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline."
       },
-      "sha256": "c4daf2a9a6148e0c2f369a3eab1621df6492cbac9ebde355b17c0f6ef9ef3552"
+      "sha256": "ef40952c5c80747f8c30b741aacd3680451d74f515bf87fb365b9c8ce7eac28c"
     },
     "scoring": {
       "value": {
@@ -266,6 +266,12 @@
       },
       "sha256": "34bca8f79dd9a0b5eefdd0a82447729af896f7a92dceedc7ad3119f0bc85e5b4"
     }
+  },
+  "run_plan_admission": {
+    "contract_id": "verified-extraction-paired-run-authority.v1",
+    "measured_pairs_authorized": 0,
+    "state": "no_measured_execution_authorized",
+    "rule": "This benchmark manifest authorizes no model or provider execution. E9E.2 must retain an exact paired-run authority before execution; both results bind its digest and the scorer validates shared pair dimensions and chronology."
   },
   "claim_boundary": {
     "benchmark_claim_ready": false,
