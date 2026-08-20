@@ -127,12 +127,12 @@
     "id": "pdf-tools.olmocr-bench.no-regression.v1",
     "reference_run_sha256": "eca355a6165a25d1259ff0365191d7c6faa6b4eff5e77bc377a12a6646eb9894",
     "reference_scorer_profile": "directional-js-v2",
-    "reference_scorer_sha256": "ab0c3b41691f5b98c2907b6572737b9a428fafcb01f41cac41c34b2ceb671ef6",
+    "reference_scorer_sha256": "2c5f8b7794d4f2216239c8c8f8a177ec493f82a6a3af1a90f35852578d7ca880",
     "reference_verification": "exact-run-replay-required",
     "reference": {
       "headline_excluding_math_proxy": {
-        "pass": 1032,
-        "failed_silent": 1030
+        "pass": 1034,
+        "failed_silent": 1028
       },
       "math_proxy": {
         "failed_silent": 2788
@@ -151,8 +151,8 @@
           "failed_silent": 31
         },
         "multi_column": {
-          "pass": 419,
-          "failed_silent": 381
+          "pass": 421,
+          "failed_silent": 379
         },
         "old_scans": {
           "pass": 70,

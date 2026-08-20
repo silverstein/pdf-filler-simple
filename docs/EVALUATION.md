@@ -108,7 +108,10 @@ The headline is the three-bucket decomposition excluding math: `pass`,
 `failed_flagged`, and `failed_silent`. Percentages use attempted tests only;
 `not_run` remains a separate count. Math is shown separately because it uses
 a normalized-string containment proxy rather than the upstream rendered-bbox
-symbol-layout test. `failed_flagged` requires a gap relevant to the test: a
+symbol-layout test. Exact Unicode superscript and subscript presentation forms
+are folded back to their base characters for matching because the corpus uses
+flat TeX-like math strings and the retained reference predates the product's
+presentation-preserving script projection. `failed_flagged` requires a gap relevant to the test: a
 whole-text failure or truncation can cover missing content, table gaps cover
 only table tests, and the math gap covers only math. Image/OCR gaps cover a
 failure only when the scored extraction body is empty; they never excuse

@@ -18,16 +18,42 @@ const HISTORICAL_TRUNCATION_GAPS = new Set([
   "OUTPUT_BYTE_LIMIT_REACHED",
 ]);
 
+// The product can truthfully preserve a source glyph's raised or lowered
+// presentation with Unicode script forms. olmOCR-bench math needles instead
+// use flat TeX-like spelling (for example p_1), while the retained reference
+// run predates that presentation-preserving projection and emitted p1. Fold
+// only the exact Unicode script characters the product can emit back to their
+// source characters so a typographic improvement is not scored as text loss.
+const SCRIPT_PRESENTATION_BASES = new Map(Object.entries({
+  "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+  "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+  "⁺": "+", "⁻": "-", "⁼": "=", "⁽": "(", "⁾": ")",
+  "ⁿ": "n", "ⁱ": "i",
+  "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+  "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+  "₊": "+", "₋": "-", "₌": "=", "₍": "(", "₎": ")",
+  "ₐ": "a", "ₑ": "e", "ₕ": "h", "ᵢ": "i", "ⱼ": "j",
+  "ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₒ": "o",
+  "ₚ": "p", "ᵣ": "r", "ₛ": "s", "ₜ": "t", "ᵤ": "u",
+  "ᵥ": "v", "ₓ": "x",
+}));
+
+function foldScriptPresentation(value) {
+  return [...String(value ?? "")]
+    .map(character => SCRIPT_PRESENTATION_BASES.get(character) ?? character)
+    .join("");
+}
+
 function normalizeWhitespace(value) {
   return String(value ?? "").split(/\s+/u).filter(Boolean).join(" ");
 }
 
 export function normalizeBenchmarkText(value) {
-  return normalizeWhitespace(String(value ?? "")
+  return normalizeWhitespace(foldScriptPresentation(String(value ?? "")
     .replace(/<br\s*\/?\s*>/giu, " ")
     .replace(/<\/?(?:b|i)>/giu, "")
     .replace(/(\*\*|__)(.*?)\1/gu, "$2")
-    .replace(/(\*|_)(.*?)\1/gu, "$2"))
+    .replace(/(\*|_)(.*?)\1/gu, "$2")))
     .normalize("NFC")
     .replace(/[‘’‚]/gu, "'")
     .replace(/[“”„]/gu, '"')

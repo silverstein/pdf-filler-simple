@@ -8,6 +8,7 @@ import {
   benchmarkMarkdownBody,
   evaluateOlmocrRegressionGate,
   fuzzyIncludes,
+  normalizeBenchmarkText,
   scoreOlmocrBench,
   scoreOlmocrTest,
   typedGapCoversFailure,
@@ -147,6 +148,20 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
     expect(fuzzyIncludes("fidelity", "high facility output", 1)).toBe(false);
     expect(fuzzyIncludes("𝑥=1", "we set 𝑥=2 here", 1)).toBe(true);
     expect(fuzzyIncludes("𝑥=1", "we set 𝑦=1 here", 1)).toBe(true);
+  });
+
+  it("folds exact Unicode script presentation without inventing base text", () => {
+    expect(normalizeBenchmarkText("p₁ + h₀ + xⁿ + y⁻² + zᵢ"))
+      .toBe("p1 + h0 + xn + y-2 + zi");
+    expect(scoreOlmocrTest(
+      { type: "math", math: "p_1/p_2", max_diffs: 2 },
+      { markdown: "p₁/p₂", gaps: [] },
+    )).toBe("pass");
+    expect(scoreOlmocrTest(
+      { type: "absent", text: "p1", case_sensitive: true, max_diffs: 0 },
+      { markdown: "p₁", gaps: [] },
+    )).toBe("failed_silent");
+    expect(normalizeBenchmarkText("₁")).not.toBe(normalizeBenchmarkText("₂"));
   });
 
   it("rejects self-asserted qualification and failed structured conversions", () => {
