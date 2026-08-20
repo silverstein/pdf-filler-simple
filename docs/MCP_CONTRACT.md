@@ -203,6 +203,17 @@ gaps and cannot receive a complete conversion status. The
 mathematical glyph occurs, or when a relation and independent cross-font
 evidence occur in the same compact source-item run; ambiguous operator words
 remain undeclared rather than guessed.
+By default, the renderer also removes only source-evidenced page furniture in
+the extreme top or bottom 12 percent of a page: an explicit page-number or
+provenance line, or text repeated in the same band on at least two selected
+pages after digit normalization. The line must be smaller than or comparable
+to body text, no longer than 120 Unicode characters, and geometrically
+separated from at least two inner-body lines.
+Detected headings and every source-evidenced table-region line, including an
+abandoned table, are protected. Each removal emits the page-scoped
+`PAGE_FURNITURE_REMOVED` gap, changes derived conversion status to `partial`,
+and is counted by kind and removed characters in `normalizations`.
+`remove_page_furniture: false` preserves every source line.
 With `emit_table_proposals: true`,
 each abandoned table region also carries one bounded packet containing source
 text items, ruled and painted geometry, header hints, typed truncation, and a

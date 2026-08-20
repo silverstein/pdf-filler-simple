@@ -66,3 +66,53 @@ No release/tag/push. Do not edit `.beads/`. No npm install. No reconstruction of
 ## Definition of done
 
 New typed gap registered, schema-wired, emitted only on documented evidence, Markdown body provably unchanged for the frozen lane corpus, derived partial status and renderer `1.18.0` provenance bound consistently, adversarial negatives pass, share parity green. Hand back for review; a codex diff review runs before integration.
+
+---
+
+# SPEC — E2: evidence-bounded page-furniture removal
+
+Bead: `pdf-toolkit-mcp-0av.2` (child of epic `pdf-toolkit-mcp-0av`)
+Base: exact reviewed E1 commit `f5d60170ece21d9ab62d93f7e3458325ad533e92`
+
+## Objective
+
+Improve absent-header/footer benchmark behavior without guessing at document
+structure or silently deleting source content. The renderer removes only
+source-evidenced extreme-margin furniture by default and offers an exact
+opt-out that preserves every source line.
+
+## Evidence rule and safety boundary
+
+A candidate must be no longer than 120 Unicode characters, wholly inside the
+top or bottom 12 percent of the page, smaller than or comparable to established
+body text, separated from at least two inner-body lines, and not be a detected
+heading or any row in a
+source-evidenced table region. It is removed only when it is either:
+
+1. an explicit page-number or provenance pattern; or
+2. normalized text repeated in the same margin band on at least two selected
+   pages, with digits normalized only to admit changing page/year numbers.
+
+A bare one-character Roman glyph is deliberately not treated as a page number.
+When evidence is ambiguous, retain the source line. No numeric confidence is
+created and no model or provider is called.
+
+## Contract consequences
+
+- Default: `remove_page_furniture: true`; exact opt-out: `false`.
+- Every affected page emits `PAGE_FURNITURE_REMOVED`, so its derived conversion
+  status is `partial` and the Markdown declaration, bytes, and digest change.
+- `normalizations` reports page-number, running-header, running-footer, removed
+  character, and affected-page counts.
+- Renderer identity is `pdf-tools.layout-markdown-renderer` `1.19.0`.
+- Source and share-bundle implementations remain byte-identical.
+
+## Acceptance
+
+Positive fixtures cover explicit and cross-page repeated furniture. Negative
+fixtures cover a genuine heading, reconstructed table content, ambiguous bare
+Roman text, and the exact opt-out. The real header/footer corpus must be
+measured against the frozen pre-E2 baseline, with present/order controls checked
+for regression. Focused conversion, schema, contract, and share-parity gates
+must pass before local integration. No release, tag, push, or public benchmark
+claim is authorized by this lane.

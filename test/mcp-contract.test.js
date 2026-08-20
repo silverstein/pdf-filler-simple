@@ -153,15 +153,13 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // lowered smaller glyph run and writes it as Unicode subscript characters. No
 // tool name, description, input schema, or read-only annotation changes.
 // Previously cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d.
-// 2026-08-20: the convert and verify output schemas gain the typed gap code
-// MATH_NOT_RECONSTRUCTED, which declares per page that source-evidenced
-// mathematical content was left as reading-order text. The renderer identity
-// becomes 1.18.0 because a qualifying input now gains a declaration section,
-// partial status, byte count, and digest even though its source-derived body is
-// unchanged. No tool name, description, input schema, or read-only annotation
-// changes. Previously
-// e5328f44d1f1f01a2f015d756cb13c1980b84c8042cdd1d8470699b9931b67ad.
-const TOOL_CONTRACT_SHA256 = "cb7b1b0e77df7bbab2b01dfa940f15cb2eaacb089b25d888c48900e3f071c6d6";
+// 2026-08-20: convert_pdf_to_markdown gains default-on evidence-bounded page-
+// furniture removal, its exact opt-out input, PAGE_FURNITURE_REMOVED, and typed
+// removal counts. The tool description, input schema, output schema, renderer
+// identity, and derived Markdown/status/digest can therefore change together.
+// Tool name and annotations remain unchanged. Previously
+// cb7b1b0e77df7bbab2b01dfa940f15cb2eaacb089b25d888c48900e3f071c6d6.
+const TOOL_CONTRACT_SHA256 = "a244791a2359802200a92a8e21d5922a4f129a22cfc9e3ca3ec68654eeac2baa";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

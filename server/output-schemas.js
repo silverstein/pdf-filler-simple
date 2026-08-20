@@ -775,6 +775,7 @@ const markdownGapCode = enumString([
   "TEXT_LAYER_FAILED",
   "TEXT_LAYER_EMPTY",
   "OCR_NOT_PERFORMED",
+  "PAGE_FURNITURE_REMOVED",
   "IMAGE_CONTENT_NOT_RENDERED",
   "VECTOR_CONTENT_NOT_INTERPRETED",
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
@@ -1081,13 +1082,17 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     {
       renderer: object({
         name: { const: "pdf-tools.layout-markdown-renderer" },
-        version: { const: "1.18.0" },
+        version: { const: "1.19.0" },
       }),
       conversion_status: enumString(["complete", "partial", "failed"]),
       markdown: string,
       markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       markdown_bytes: { type: "integer", minimum: 0 },
-      options: object({ include_page_boundaries: boolean, compact: boolean }),
+      options: object({
+        include_page_boundaries: boolean,
+        compact: boolean,
+        remove_page_furniture: boolean,
+      }),
       limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
       pages: arrayOf(markdownPage),
       pages_needing_vision: arrayOf(visionRoutingPage),
@@ -1096,6 +1101,10 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       normalizations: object({
         dot_leaders_collapsed: { type: "integer", minimum: 0 },
         page_number_lines_removed: { type: "integer", minimum: 0 },
+        running_header_lines_removed: { type: "integer", minimum: 0 },
+        running_footer_lines_removed: { type: "integer", minimum: 0 },
+        page_furniture_characters_removed: { type: "integer", minimum: 0 },
+        page_furniture_pages: integerArray,
         spaced_hyphens_joined: { type: "integer", minimum: 0 },
         normalized_pages: integerArray,
       }),
