@@ -92,11 +92,15 @@ npm run eval:olmocr -- score \
   --output /private/evidence/score.json
 ```
 
-The runner starts the candidate with a minimal environment and a pinned Node
-preload that denies network APIs. The report binds the Node executable, Node,
+The runner starts the candidate and every descendant inside a fail-closed
+OS process-tree boundary with no network namespace on Linux or a deny-network
+sandbox on macOS. A pinned Node preload denies common network APIs in the main
+process as defense in depth. The report binds the isolation executable and
+policy, Node executable, Node,
 V8, ICU/Unicode, platform, architecture, the exact installed dependency tree, evaluator,
 candidate source tree, and network preload. Provider credentials and proxy
-variables are not inherited. `score` accepts only a mode-`0600`, current-user
+variables are not inherited. A host without the required isolation mechanism
+cannot run or qualify. `score` accepts only a mode-`0600`, current-user
 owned run whose independently retained digest is supplied explicitly, and it
 re-verifies the exact clean Git candidate and installed runtime before scoring.
 

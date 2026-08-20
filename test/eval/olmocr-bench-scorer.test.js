@@ -70,6 +70,10 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
       sha256: String(index + 2).repeat(64),
     }));
     const evaluatorIdentity = { files: evaluatorFiles, runtime, dependencies };
+    const isolationPolicy = [
+      "--unshare-net", "--die-with-parent", "--new-session", "--ro-bind", "/", "/",
+      "--dev", "/dev", "--proc", "/proc", "--bind", "$ISOLATED_HOME", "$ISOLATED_HOME",
+    ];
     return {
       schema: "pdf-tools.olmocr-bench-run.v1",
       manifest_sha256: "c".repeat(64),
@@ -79,9 +83,18 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
         ...evaluatorIdentity,
         sha256: createHash("sha256").update(Buffer.from(canonicalJson(evaluatorIdentity))).digest("hex"),
         candidate_network_policy: {
-          mode: "node-preload-deny-network-v1",
+          mode: "os-process-tree-no-network-v1",
           environment: "minimal-allowlist-v1",
           preload_sha256: evaluatorFiles.find(file => file.path === "scripts/eval-no-network.cjs").sha256,
+          isolation: {
+            mechanism: "bubblewrap-unshare-net-v1",
+            scope: "candidate-and-descendants",
+            binary_path: "/usr/bin/bwrap",
+            binary_size_bytes: 1,
+            binary_sha256: "3".repeat(64),
+            policy_sha256: createHash("sha256")
+              .update(Buffer.from(canonicalJson(isolationPolicy))).digest("hex"),
+          },
         },
       },
       candidate: {
@@ -154,10 +167,10 @@ describe("olmOCR-bench directional scorer and retained compatibility profile", (
     const inventedGap = runReport();
     inventedGap.records[0].status = "partial";
     inventedGap.records[0].pages[0].conversion_status = "partial";
-    inventedGap.records[0].gaps = [{ code: "NOT_A_REAL_GAP" }];
+    inventedGap.records[0].gaps = [{ code: "NOT_A_REAL_GAP", message: "invented", page: 1 }];
     expect(() => validateRunReport(inventedGap)).toThrow(/invalid typed-gap evidence/u);
     const impossibleGap = runReport();
-    impossibleGap.records[0].gaps = [{ code: "TEXT_LAYER_FAILED" }];
+    impossibleGap.records[0].gaps = [{ code: "TEXT_LAYER_FAILED", message: "impossible", page: 1 }];
     expect(() => validateRunReport(impossibleGap)).toThrow(/contradictory conversion state/u);
   });
 

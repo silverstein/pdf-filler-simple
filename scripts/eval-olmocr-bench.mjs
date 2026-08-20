@@ -34,6 +34,7 @@ const MANIFEST_SCHEMA = path.join(
 const SHA256 = /^[a-f0-9]{64}$/u;
 const GIT_SHA1 = /^[a-f0-9]{40}$/u;
 const NETWORK_PRELOAD = path.join(REPO_ROOT, "scripts", "eval-no-network.cjs");
+const MACOS_SANDBOX_PROFILE = "(version 1)\n(allow default)\n(deny network*)\n";
 const GAP_CODES = new Set([
   "CONTROL_CHARACTERS_SANITIZED",
   "IMAGE_CONTENT_NOT_RENDERED",
@@ -396,6 +397,34 @@ async function installedDependencyBinding() {
   };
 }
 
+async function candidateIsolationBinding() {
+  const configuredPath = process.platform === "linux" ? "/usr/bin/bwrap" : "/usr/bin/sandbox-exec";
+  let binaryPath;
+  try {
+    binaryPath = await fs.realpath(configuredPath);
+  } catch {
+    throw new Error(`Required process-tree network isolation is unavailable: ${configuredPath}`);
+  }
+  const binary = await boundedRegularFile(binaryPath, 32 * 1024 * 1024, "network isolation executable");
+  const mechanism = process.platform === "linux"
+    ? "bubblewrap-unshare-net-v1"
+    : "macos-sandbox-exec-deny-network-v1";
+  const policy = process.platform === "linux"
+    ? [
+        "--unshare-net", "--die-with-parent", "--new-session", "--ro-bind", "/", "/",
+        "--dev", "/dev", "--proc", "/proc", "--bind", "$ISOLATED_HOME", "$ISOLATED_HOME",
+      ]
+    : ["-p", MACOS_SANDBOX_PROFILE];
+  return {
+    mechanism,
+    scope: "candidate-and-descendants",
+    binary_path: binaryPath,
+    binary_size_bytes: binary.size_bytes,
+    binary_sha256: binary.sha256,
+    policy_sha256: sha256(Buffer.from(canonicalJson(policy))),
+  };
+}
+
 async function candidateBinding() {
   const [{ stdout: revision }, { stdout: status }] = await Promise.all([
     execFileAsync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT }),
@@ -454,7 +483,9 @@ async function evaluatorBinding() {
     const bytes = await fs.readFile(path.join(REPO_ROOT, relativePath));
     files.push({ path: relativePath, size_bytes: bytes.length, sha256: sha256(bytes) });
   }
-  const [runtime, dependencies] = await Promise.all([runtimeBinding(), installedDependencyBinding()]);
+  const [runtime, dependencies, isolation] = await Promise.all([
+    runtimeBinding(), installedDependencyBinding(), candidateIsolationBinding(),
+  ]);
   const identity = { files, runtime, dependencies };
   return {
     sha256: sha256(Buffer.from(canonicalJson(identity))),
@@ -462,9 +493,10 @@ async function evaluatorBinding() {
     runtime,
     dependencies,
     candidate_network_policy: {
-      mode: "node-preload-deny-network-v1",
+      mode: "os-process-tree-no-network-v1",
       environment: "minimal-allowlist-v1",
       preload_sha256: files.find(file => file.path === "scripts/eval-no-network.cjs").sha256,
+      isolation,
     },
   };
 }
@@ -534,9 +566,19 @@ async function runConversions({ benchRoot, pdfs, limit, manifest }) {
   const pdfRoot = path.join(benchRoot, "bench_data", "pdfs");
   const isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-olmocr-"));
   await fs.chmod(isolatedHome, 0o700);
+  const isolation = await candidateIsolationBinding();
+  const candidateCommand = [process.execPath, path.join(REPO_ROOT, "server", "index.js")];
+  const isolationArguments = process.platform === "linux"
+    ? [
+        "--unshare-net", "--die-with-parent", "--new-session",
+        "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+        "--bind", isolatedHome, isolatedHome,
+        ...candidateCommand,
+      ]
+    : ["-p", MACOS_SANDBOX_PROFILE, ...candidateCommand];
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(REPO_ROOT, "server", "index.js")],
+    command: isolation.binary_path,
+    args: isolationArguments,
     env: safeEnvironment({
       HOME: isolatedHome,
       XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
@@ -575,10 +617,19 @@ async function runConversions({ benchRoot, pdfs, limit, manifest }) {
         if (typeof structured.markdown !== "string" || !Array.isArray(structured.gaps)) {
           throw new Error("convert_pdf_to_markdown returned an invalid structured result");
         }
+        for (const [gapIndex, gap] of structured.gaps.entries()) {
+          exactKeys(gap, ["code", "message", "page"], [], `structured gap ${gapIndex}`);
+          if (!GAP_CODES.has(gap.code) || typeof gap.message !== "string" || !gap.message
+            || gap.message.length > 1000 || gap.page !== 1) {
+            throw new Error("convert_pdf_to_markdown returned invalid typed-gap evidence");
+          }
+        }
         record.markdown = structured.markdown;
-        record.gaps = structured.gaps.map(gap => typeof gap === "string"
-          ? { code: gap }
-          : { code: gap?.code, message: gap?.message, page: gap?.page });
+        record.gaps = structured.gaps.map(gap => ({
+          code: gap.code,
+          message: gap.message,
+          page: gap.page,
+        }));
         record.status = structured.conversion_status ?? null;
         record.pages = (structured.pages ?? []).map(page => ({
           page: page?.page,
@@ -701,13 +752,32 @@ function validateEvaluatorBinding(binding) {
   validateRuntimeBinding(binding.runtime, "evaluator runtime");
   validateDependencyBinding(binding.dependencies, "evaluator dependencies");
   exactKeys(binding.candidate_network_policy, [
-    "mode", "environment", "preload_sha256",
+    "mode", "environment", "preload_sha256", "isolation",
   ], [], "candidate network policy");
   const preload = binding.files.find(file => file.path === "scripts/eval-no-network.cjs");
   const identity = { files: binding.files, runtime: binding.runtime, dependencies: binding.dependencies };
-  if (binding.candidate_network_policy.mode !== "node-preload-deny-network-v1"
+  const isolation = binding.candidate_network_policy.isolation;
+  const expectedIsolationMechanism = binding.runtime.platform === "linux"
+    ? "bubblewrap-unshare-net-v1"
+    : "macos-sandbox-exec-deny-network-v1";
+  const expectedIsolationPolicy = binding.runtime.platform === "linux"
+    ? [
+        "--unshare-net", "--die-with-parent", "--new-session", "--ro-bind", "/", "/",
+        "--dev", "/dev", "--proc", "/proc", "--bind", "$ISOLATED_HOME", "$ISOLATED_HOME",
+      ]
+    : ["-p", MACOS_SANDBOX_PROFILE];
+  exactKeys(isolation, [
+    "mechanism", "scope", "binary_path", "binary_size_bytes", "binary_sha256", "policy_sha256",
+  ], [], "candidate process-tree isolation");
+  if (binding.candidate_network_policy.mode !== "os-process-tree-no-network-v1"
     || binding.candidate_network_policy.environment !== "minimal-allowlist-v1"
     || binding.candidate_network_policy.preload_sha256 !== preload?.sha256
+    || isolation.mechanism !== expectedIsolationMechanism
+    || isolation.scope !== "candidate-and-descendants"
+    || typeof isolation.binary_path !== "string" || !path.isAbsolute(isolation.binary_path)
+    || !Number.isSafeInteger(isolation.binary_size_bytes) || isolation.binary_size_bytes < 1
+    || !SHA256.test(isolation.binary_sha256)
+    || isolation.policy_sha256 !== sha256(Buffer.from(canonicalJson(expectedIsolationPolicy)))
     || sha256(Buffer.from(canonicalJson(identity))) !== binding.sha256) {
     throw new Error("Evaluator network or identity binding is invalid");
   }
@@ -761,10 +831,10 @@ export function validateRunReport(report) {
       throw new Error(`Run record ${index} has an invalid shape`);
     }
     for (const [gapIndex, gap] of record.gaps.entries()) {
-      exactKeys(gap, ["code"], ["message", "page"], `record ${index} gap ${gapIndex}`);
+      exactKeys(gap, ["code", "message", "page"], [], `record ${index} gap ${gapIndex}`);
       if (!GAP_CODES.has(gap.code)
-        || (gap.message !== undefined && (typeof gap.message !== "string" || gap.message.length > 1000))
-        || (gap.page !== undefined && gap.page !== 1)) {
+        || typeof gap.message !== "string" || !gap.message || gap.message.length > 1000
+        || gap.page !== 1) {
         throw new Error(`Run record ${index} contains invalid typed-gap evidence`);
       }
     }
