@@ -90,8 +90,15 @@
     "tool": "convert_pdf_to_markdown",
     "page": 1,
     "options": {
-      "start_page": 1,
-      "end_page": 1
+      "compact": false,
+      "emit_table_proposals": false,
+      "end_page": 1,
+      "include_page_boundaries": false,
+      "max_characters": 50000,
+      "max_items": 1000,
+      "max_markdown_bytes": 50000,
+      "remove_page_furniture": true,
+      "start_page": 1
     },
     "required_pdf_count": 1403,
     "required_test_count": 7019,
@@ -99,7 +106,8 @@
     "output_permissions": "0600"
   },
   "scorer": {
-    "profile": "retained-first-run-js-v1",
+    "profile": "directional-js-v2",
+    "historical_compatibility_profile": "retained-first-run-js-v1-deprecated",
     "math": "normalized_string_containment_proxy",
     "table": "markdown_adjacency_approximation",
     "typed_gap_attribution": "v1"
@@ -110,16 +118,62 @@
     "public_benchmark_claim": "prohibited",
     "required_caveats": [
       "Math is a normalized-string containment proxy, not the upstream rendered-bbox symbol-layout test.",
-      "The JavaScript scorer preserves the retained first-run profile and is not certified by the upstream benchmark authors.",
+      "The JavaScript scorer is directionally aligned with the pinned upstream fields but is not certified by the upstream benchmark authors.",
+      "The retained first-run profile is reproduced separately and is deprecated for gating because its typed-gap attribution was over-broad.",
       "Failed-but-flagged measures typed-gap coverage; it is not a correctness pass."
     ]
+  },
+  "gate": {
+    "id": "pdf-tools.olmocr-bench.no-regression.v1",
+    "reference_run_sha256": "eca355a6165a25d1259ff0365191d7c6faa6b4eff5e77bc377a12a6646eb9894",
+    "reference_scorer_profile": "directional-js-v2",
+    "reference_scorer_sha256": "cf0954257213fe3d53158eb959d997d51b337252bd9f8b48960a32a65cbf685f",
+    "reference": {
+      "headline_excluding_math_proxy": {
+        "pass": 1032,
+        "failed_silent": 1030
+      },
+      "math_proxy": {
+        "failed_silent": 2788
+      },
+      "by_category": {
+        "arxiv_math": {
+          "pass": 10,
+          "failed_silent": 2605
+        },
+        "headers_footers": {
+          "pass": 410,
+          "failed_silent": 349
+        },
+        "long_tiny_text": {
+          "pass": 127,
+          "failed_silent": 31
+        },
+        "multi_column": {
+          "pass": 419,
+          "failed_silent": 381
+        },
+        "old_scans": {
+          "pass": 70,
+          "failed_silent": 0
+        },
+        "old_scans_math": {
+          "pass": 21,
+          "failed_silent": 183
+        },
+        "table_tests": {
+          "pass": 6,
+          "failed_silent": 269
+        }
+      }
+    }
   },
   "reference_run": {
     "candidate_revision": "dc90e7536e16e5b58c332f9f1dc7fe1d7e00e8a4",
     "run_sha256": "eca355a6165a25d1259ff0365191d7c6faa6b4eff5e77bc377a12a6646eb9894",
     "run_size_bytes": 12202601,
     "score_sha256": "8299fca484460b8f10b402681f8407c5723b17ddc1c419b97907ebb0bd150eec",
-    "expected": {
+    "historical_compatibility_expected": {
       "tests_total": 7019,
       "pdfs_converted": 1403,
       "overall": {

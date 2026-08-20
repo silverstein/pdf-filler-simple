@@ -76,8 +76,9 @@ dataset separately and verify all bytes before executing product code:
 npm run eval:olmocr -- verify --bench-root /absolute/path/to/olmOCR-bench
 ```
 
-A full release-candidate run and score use exclusive, atomic, mode-`0600` JSON
-outputs. Existing outputs are never overwritten:
+A full release-candidate run and score run on a POSIX Linux or macOS host and
+use exclusive, atomic, mode-`0600` JSON outputs outside the repository.
+Existing outputs are never overwritten:
 
 ```bash
 npm run eval:olmocr -- run \
@@ -90,14 +91,35 @@ npm run eval:olmocr -- score \
 ```
 
 The headline is the three-bucket decomposition excluding math: `pass`,
-`failed_flagged`, and `failed_silent`. Math is shown separately because it uses
+`failed_flagged`, and `failed_silent`. Percentages use attempted tests only;
+`not_run` remains a separate count. Math is shown separately because it uses
 a normalized-string containment proxy rather than the upstream rendered-bbox
-symbol-layout test. `failed_flagged` means a relevant typed gap covered the
-failure; it is not a correctness pass. The retained JavaScript scorer and table
-approximation are useful for internal directional regression tracking only.
+symbol-layout test. `failed_flagged` requires a gap relevant to the test: a
+whole-text failure or truncation can cover missing content, table gaps cover
+only table tests, and the math gap covers only math. Image/OCR gaps cover a
+failure only when the scored extraction body is empty; they never excuse
+forbidden text emitted by an `absent` failure. It is not a correctness pass.
+The JavaScript fuzzy and table approximations are useful for internal
+directional regression tracking only.
 Every report therefore sets `benchmark_claim_ready` to false and prohibits a
 public benchmark claim. A limited run, dirty candidate, conversion failure,
 corpus mismatch, or binding mismatch is non-qualifying.
+
+The `score` command is an executable gate, not just a report generator. It
+exits `0` only when the run is qualifying and the pinned no-regression policy
+passes: non-math pass count cannot fall, non-math silent failures cannot rise,
+math silent failures cannot rise, and every category must preserve its pass
+and silent-failure bounds. It writes the report before returning exit `2` for a
+qualification or regression failure so the blocking evidence is retained.
+The manifest binds the reference run, scorer digest, and exact reference
+counts. Changing scorer semantics requires an explicit baseline review and
+re-pin.
+
+For continuity, each score also reproduces the original 2026-08-19 report in a
+`historical_compatibility` section. That profile is deprecated and non-gating:
+its page-wide typed-gap attribution was too broad. It exists only to prove the
+retained 921 / 2,922 / 3,176 first-run decomposition can still be reproduced,
+not to legitimize that decomposition as a current quality metric.
 
 ### Executable corpus v0
 

@@ -1,17 +1,107 @@
-const UNREADABLE_GAPS = new Set([
+const WHOLE_TEXT_FAILURE_GAPS = new Set([
+  "PAGE_RANGE_INCOMPLETE",
+  "SOURCE_CHARACTER_LIMIT_REACHED",
+  "SOURCE_ITEM_LIMIT_REACHED",
+  "TEXT_INTEGRITY_SUSPECT",
+  "TEXT_LAYER_EMPTY",
+  "TEXT_LAYER_FAILED",
+]);
+const TABLE_GAPS = new Set(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"]);
+const HISTORICAL_UNREADABLE_GAPS = new Set([
   "TEXT_LAYER_EMPTY",
   "OCR_NOT_PERFORMED",
   "IMAGE_CONTENT_NOT_RENDERED",
   "TEXT_INTEGRITY_SUSPECT",
 ]);
-const TABLE_GAPS = new Set(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"]);
-const TRUNCATION_GAPS = new Set(["SOURCE_ITEM_LIMIT_REACHED", "OUTPUT_BYTE_LIMIT_REACHED"]);
+const HISTORICAL_TRUNCATION_GAPS = new Set([
+  "SOURCE_ITEM_LIMIT_REACHED",
+  "OUTPUT_BYTE_LIMIT_REACHED",
+]);
 
 function normalizeWhitespace(value) {
   return String(value ?? "").split(/\s+/u).filter(Boolean).join(" ");
 }
 
+export function normalizeBenchmarkText(value) {
+  return normalizeWhitespace(String(value ?? "")
+    .replace(/<br\s*\/?\s*>/giu, " ")
+    .replace(/<\/?(?:b|i)>/giu, "")
+    .replace(/(\*\*|__)(.*?)\1/gu, "$2")
+    .replace(/(\*|_)(.*?)\1/gu, "$2"))
+    .normalize("NFC")
+    .replace(/[‘’‚]/gu, "'")
+    .replace(/[“”„]/gu, '"')
+    .replace(/[＿]/gu, "_")
+    .replace(/[–—‑‒−]/gu, "-")
+    .replace(/µ/gu, "μ");
+}
+
+export function benchmarkMarkdownBody(markdown) {
+  let body = String(markdown ?? "")
+    .replace(/^<!--\s*PDF page 1\s*-->\s*/u, "");
+  const markers = ["\n\n## Conversion gaps\n", "\n\n## Conversion limitations\n"];
+  let end = body.length;
+  for (const marker of markers) {
+    const found = body.lastIndexOf(marker);
+    if (found >= 0) end = Math.min(end, found);
+  }
+  body = body.slice(0, end).trim();
+  if (body === "[No source-backed text was available on this page.]") return "";
+  return body;
+}
+
 function sellersWithin(pattern, text, maximumEdits) {
+  let previous = Array.from({ length: pattern.length + 1 }, (_, index) => index);
+  if (previous[pattern.length] <= maximumEdits) return true;
+  for (let textIndex = 0; textIndex < text.length; textIndex += 1) {
+    const character = text[textIndex];
+    const current = Array(pattern.length + 1).fill(0);
+    for (let index = 1; index <= pattern.length; index += 1) {
+      current[index] = Math.min(
+        previous[index] + 1,
+        current[index - 1] + 1,
+        previous[index - 1] + (pattern[index - 1] === character ? 0 : 1),
+      );
+    }
+    if (current[pattern.length] <= maximumEdits) return true;
+    previous = current;
+  }
+  return false;
+}
+
+function fuzzyCandidates(needle, haystack, maximumEdits) {
+  const chunks = maximumEdits + 1;
+  const chunkLength = Math.max(1, Math.floor(needle.length / chunks));
+  const candidates = new Set();
+  for (let index = 0; index < chunks; index += 1) {
+    const offset = index * chunkLength;
+    const piece = index < chunks - 1
+      ? needle.slice(offset, offset + chunkLength)
+      : needle.slice(offset);
+    if (!piece) continue;
+    let cursor = 0;
+    while (cursor <= haystack.length) {
+      const found = haystack.indexOf(piece, cursor);
+      if (found < 0) break;
+      candidates.add(found - offset);
+      cursor = found + 1;
+    }
+  }
+  return [...candidates].sort((left, right) => left - right);
+}
+
+export function fuzzyIncludes(needle, haystack, maximumEdits = 0) {
+  if (!needle) return true;
+  if (maximumEdits <= 0 || haystack.includes(needle)) return haystack.includes(needle);
+  const span = needle.length + maximumEdits + 2;
+  return fuzzyCandidates(needle, haystack, maximumEdits).some(candidate => {
+    const start = Math.max(0, candidate - maximumEdits - 1);
+    const end = Math.min(haystack.length, candidate + span);
+    return sellersWithin(needle, haystack.slice(start, end), maximumEdits);
+  });
+}
+
+function historicalSellersWithin(pattern, text, maximumEdits) {
   let previous = Array.from({ length: pattern.length + 1 }, (_, index) => index);
   if (previous[pattern.length] <= maximumEdits) return true;
   for (const character of text) {
@@ -29,7 +119,7 @@ function sellersWithin(pattern, text, maximumEdits) {
   return false;
 }
 
-export function fuzzyIncludes(needle, haystack, maximumEdits = 0) {
+function historicalFuzzyIncludes(needle, haystack, maximumEdits = 0) {
   if (!needle) return true;
   if (maximumEdits <= 0 || haystack.includes(needle)) return haystack.includes(needle);
   const chunks = maximumEdits + 1;
@@ -37,9 +127,7 @@ export function fuzzyIncludes(needle, haystack, maximumEdits = 0) {
   const candidates = new Set();
   for (let index = 0; index < chunks; index += 1) {
     const offset = index * chunkLength;
-    const piece = index < chunks - 1
-      ? needle.slice(offset, offset + chunkLength)
-      : needle.slice(offset);
+    const piece = index < chunks - 1 ? needle.slice(offset, offset + chunkLength) : needle.slice(offset);
     if (!piece) continue;
     let cursor = 0;
     while (cursor <= haystack.length) {
@@ -50,16 +138,15 @@ export function fuzzyIncludes(needle, haystack, maximumEdits = 0) {
       if (candidates.size > 4000) break;
     }
   }
-  if (candidates.size === 0) return false;
   const span = needle.length + maximumEdits + 2;
   return [...candidates].sort((left, right) => left - right).some(candidate => {
     const start = Math.max(0, candidate - maximumEdits - 1);
     const end = Math.min(haystack.length, candidate + span);
-    return sellersWithin(needle, haystack.slice(start, end), maximumEdits);
+    return historicalSellersWithin(needle, haystack.slice(start, end), maximumEdits);
   });
 }
 
-function fuzzyPosition(needle, haystack, maximumEdits = 0) {
+function historicalFuzzyPosition(needle, haystack, maximumEdits = 0) {
   if (!needle) return 0;
   const exact = haystack.indexOf(needle);
   if (exact >= 0 || maximumEdits <= 0) return exact;
@@ -68,9 +155,7 @@ function fuzzyPosition(needle, haystack, maximumEdits = 0) {
   const candidates = new Set();
   for (let index = 0; index < chunks; index += 1) {
     const offset = index * chunkLength;
-    const piece = index < chunks - 1
-      ? needle.slice(offset, offset + chunkLength)
-      : needle.slice(offset);
+    const piece = index < chunks - 1 ? needle.slice(offset, offset + chunkLength) : needle.slice(offset);
     if (!piece) continue;
     let cursor = 0;
     while (cursor <= haystack.length) {
@@ -84,9 +169,29 @@ function fuzzyPosition(needle, haystack, maximumEdits = 0) {
   for (const candidate of [...candidates].sort((left, right) => left - right)) {
     const start = Math.max(0, candidate - maximumEdits - 1);
     const end = Math.min(haystack.length, candidate + needle.length + maximumEdits + 2);
-    if (sellersWithin(needle, haystack.slice(start, end), maximumEdits)) return candidate;
+    if (historicalSellersWithin(needle, haystack.slice(start, end), maximumEdits)) return candidate;
   }
   return -1;
+}
+
+function fuzzyPositions(needle, haystack, maximumEdits = 0) {
+  if (!needle) return [0];
+  if (maximumEdits <= 0) {
+    const positions = [];
+    let cursor = 0;
+    while (cursor <= haystack.length) {
+      const found = haystack.indexOf(needle, cursor);
+      if (found < 0) break;
+      positions.push(found);
+      cursor = found + 1;
+    }
+    return positions;
+  }
+  return fuzzyCandidates(needle, haystack, maximumEdits).filter(candidate => {
+    const start = Math.max(0, candidate - maximumEdits - 1);
+    const end = Math.min(haystack.length, candidate + needle.length + maximumEdits + 2);
+    return sellersWithin(needle, haystack.slice(start, end), maximumEdits);
+  });
 }
 
 function parseMarkdownTables(markdown) {
@@ -110,16 +215,16 @@ function parseMarkdownTables(markdown) {
   return tables;
 }
 
-function scoreTable(test, tables) {
-  const cell = normalizeWhitespace(test.cell);
+function scoreTable(test, tables, normalize = normalizeBenchmarkText, fuzzyMatch = fuzzyIncludes) {
+  const cell = normalize(test.cell);
   const maximumEdits = test.max_diffs ?? 0;
   for (const table of tables) {
     for (let rowIndex = 0; rowIndex < table.length; rowIndex += 1) {
       for (let columnIndex = 0; columnIndex < table[rowIndex].length; columnIndex += 1) {
-        if (!fuzzyIncludes(cell, normalizeWhitespace(table[rowIndex][columnIndex]), maximumEdits)) continue;
+        if (!fuzzyMatch(cell, normalize(table[rowIndex][columnIndex]), maximumEdits)) continue;
         const neighbor = (row, column) => (
           row >= 0 && row < table.length && column >= 0 && column < table[row].length
-            ? normalizeWhitespace(table[row][column])
+            ? normalize(table[row][column])
             : null
         );
         let passed = true;
@@ -128,7 +233,7 @@ function scoreTable(test, tables) {
         ]) {
           if (test[key] === null || test[key] === undefined) continue;
           const observed = neighbor(rowIndex + rowOffset, columnIndex + columnOffset);
-          if (observed === null || !fuzzyIncludes(normalizeWhitespace(test[key]), observed, maximumEdits)) {
+          if (observed === null || !fuzzyMatch(normalize(test[key]), observed, maximumEdits)) {
             passed = false;
             break;
           }
@@ -136,12 +241,12 @@ function scoreTable(test, tables) {
         if (passed && test.top_heading !== null && test.top_heading !== undefined) {
           const observed = neighbor(0, columnIndex);
           passed = observed !== null
-            && fuzzyIncludes(normalizeWhitespace(test.top_heading), observed, maximumEdits);
+            && fuzzyMatch(normalize(test.top_heading), observed, maximumEdits);
         }
         if (passed && test.left_heading !== null && test.left_heading !== undefined) {
           const observed = neighbor(rowIndex, 0);
           passed = observed !== null
-            && fuzzyIncludes(normalizeWhitespace(test.left_heading), observed, maximumEdits);
+            && fuzzyMatch(normalize(test.left_heading), observed, maximumEdits);
         }
         if (passed) return true;
       }
@@ -151,13 +256,77 @@ function scoreTable(test, tables) {
 }
 
 export function typedGapCoversFailure(testType, codes) {
-  if ([...codes].some(code => UNREADABLE_GAPS.has(code) || TRUNCATION_GAPS.has(code))) return true;
+  if (testType === "absent") return false;
+  if ([...codes].some(code => WHOLE_TEXT_FAILURE_GAPS.has(code))) return true;
   if (testType === "table" && [...codes].some(code => TABLE_GAPS.has(code))) return true;
   if (testType === "math" && codes.has("MATH_NOT_RECONSTRUCTED")) return true;
   return false;
 }
 
+function historicalGapCoversFailure(testType, codes) {
+  if ([...codes].some(code => (
+    HISTORICAL_UNREADABLE_GAPS.has(code) || HISTORICAL_TRUNCATION_GAPS.has(code)
+  ))) return true;
+  if (testType === "table" && [...codes].some(code => TABLE_GAPS.has(code))) return true;
+  return false;
+}
+
+function windowedText(value, first, last, concatenate) {
+  if (first && last) return concatenate
+    ? value.slice(0, first) + value.slice(-last)
+    : value.slice(0, first).slice(-last);
+  if (first) return value.slice(0, first);
+  if (last) return value.slice(-last);
+  return value;
+}
+
+function gapCodes(record) {
+  return new Set((record?.gaps ?? [])
+    .map(gap => typeof gap === "string" ? gap : gap?.code)
+    .filter(Boolean));
+}
+
 export function scoreOlmocrTest(test, record) {
+  const markdown = benchmarkMarkdownBody(record?.markdown);
+  const normalized = normalizeBenchmarkText(markdown);
+  const maximumEdits = test.max_diffs ?? 0;
+  let passed = false;
+  if (test.type === "present" || test.type === "absent") {
+    let needle = normalizeBenchmarkText(test.text);
+    let haystack = normalized;
+    if (test.case_sensitive === false) {
+      needle = needle.toLocaleLowerCase("en-US");
+      haystack = haystack.toLocaleLowerCase("en-US");
+    }
+    haystack = windowedText(haystack, test.first_n, test.last_n, true);
+    const found = fuzzyIncludes(needle, haystack, maximumEdits);
+    passed = test.type === "present" ? found : !found;
+  } else if (test.type === "order") {
+    const before = fuzzyPositions(normalizeBenchmarkText(test.before), normalized, maximumEdits);
+    const after = fuzzyPositions(normalizeBenchmarkText(test.after), normalized, maximumEdits);
+    passed = before.some(beforePosition => after.some(afterPosition => beforePosition < afterPosition));
+  } else if (test.type === "table") {
+    passed = scoreTable(test, parseMarkdownTables(markdown));
+  } else if (test.type === "math") {
+    const expected = normalizeBenchmarkText(test.math).replaceAll(" ", "");
+    passed = expected.length > 0 && normalized.replaceAll(" ", "").includes(expected);
+  } else if (test.type === "baseline") {
+    passed = [...normalized].some(character => /[\p{L}\p{N}]/u.test(character));
+  } else {
+    throw new Error(`Unsupported olmOCR-bench test type: ${test.type}`);
+  }
+  if (passed) return "pass";
+  const codes = gapCodes(record);
+  const imageOnlyFailure = normalized.length === 0
+    && codes.has("OCR_NOT_PERFORMED")
+    && codes.has("IMAGE_CONTENT_NOT_RENDERED")
+    && test.type !== "absent";
+  return imageOnlyFailure || typedGapCoversFailure(test.type, codes)
+    ? "failed_flagged"
+    : "failed_silent";
+}
+
+export function scoreOlmocrTestHistorical(test, record) {
   const markdown = String(record?.markdown ?? "");
   const caseSensitive = normalizeWhitespace(markdown);
   const caseInsensitive = caseSensitive.toLocaleLowerCase("en-US");
@@ -167,21 +336,20 @@ export function scoreOlmocrTest(test, record) {
     let haystack = test.case_sensitive === false ? caseInsensitive : caseSensitive;
     let needle = normalizeWhitespace(test.text);
     if (test.case_sensitive === false) needle = needle.toLocaleLowerCase("en-US");
-    if (test.first_n) haystack = haystack.slice(0, test.first_n);
-    if (test.last_n) haystack = haystack.slice(-test.last_n);
-    passed = fuzzyIncludes(needle, haystack, maximumEdits);
+    haystack = windowedText(haystack, test.first_n, test.last_n, false);
+    passed = historicalFuzzyIncludes(needle, haystack, maximumEdits);
   } else if (test.type === "absent") {
-    passed = !fuzzyIncludes(
+    passed = !historicalFuzzyIncludes(
       normalizeWhitespace(test.text).toLocaleLowerCase("en-US"),
       caseInsensitive,
       maximumEdits,
     );
   } else if (test.type === "order") {
-    const before = fuzzyPosition(normalizeWhitespace(test.before), caseSensitive, maximumEdits);
-    const after = fuzzyPosition(normalizeWhitespace(test.after), caseSensitive, maximumEdits);
+    const before = historicalFuzzyPosition(normalizeWhitespace(test.before), caseSensitive, maximumEdits);
+    const after = historicalFuzzyPosition(normalizeWhitespace(test.after), caseSensitive, maximumEdits);
     passed = before >= 0 && after >= 0 && before < after;
   } else if (test.type === "table") {
-    passed = scoreTable(test, parseMarkdownTables(markdown));
+    passed = scoreTable(test, parseMarkdownTables(markdown), normalizeWhitespace, historicalFuzzyIncludes);
   } else if (test.type === "math") {
     const expected = normalizeWhitespace(test.math).replaceAll(" ", "");
     passed = expected.length > 0 && caseSensitive.replaceAll(" ", "").includes(expected);
@@ -191,8 +359,7 @@ export function scoreOlmocrTest(test, record) {
     throw new Error(`Unsupported olmOCR-bench test type: ${test.type}`);
   }
   if (passed) return "pass";
-  const codes = new Set((record?.gaps ?? []).map(gap => typeof gap === "string" ? gap : gap?.code).filter(Boolean));
-  return typedGapCoversFailure(test.type, codes) ? "failed_flagged" : "failed_silent";
+  return historicalGapCoversFailure(test.type, gapCodes(record)) ? "failed_flagged" : "failed_silent";
 }
 
 function emptyBucket() {
@@ -203,30 +370,27 @@ function percentage(numerator, denominator) {
   return denominator ? Number((100 * numerator / denominator).toFixed(1)) : null;
 }
 
-function finishBucket(bucket) {
+function finishBucket(bucket, attemptedDenominator = true) {
+  const attempted = bucket.n - bucket.not_run;
+  const denominator = attemptedDenominator ? attempted : bucket.n;
   return {
     ...bucket,
-    pass_pct: percentage(bucket.pass, bucket.n),
-    failed_flagged_pct: percentage(bucket.failed_flagged, bucket.n),
-    failed_silent_pct: percentage(bucket.failed_silent, bucket.n),
+    attempted,
+    pass_pct: percentage(bucket.pass, denominator),
+    failed_flagged_pct: percentage(bucket.failed_flagged, denominator),
+    failed_silent_pct: percentage(bucket.failed_silent, denominator),
   };
 }
 
-function combineBuckets(buckets) {
+function combineBuckets(buckets, attemptedDenominator) {
   const combined = emptyBucket();
   for (const bucket of buckets) {
     for (const key of Object.keys(combined)) combined[key] += bucket[key] ?? 0;
   }
-  return finishBucket(combined);
+  return finishBucket(combined, attemptedDenominator);
 }
 
-export function scoreOlmocrBench({
-  tests,
-  records,
-  bindings = {},
-  runQualifying = false,
-  claimBoundary = null,
-}) {
+function aggregate({ tests, records, classifier, attemptedDenominator }) {
   const recordsByPdf = new Map(records.map(record => [record.pdf, record]));
   if (recordsByPdf.size !== records.length) throw new Error("Run contains duplicate PDF records");
   const byCategory = new Map();
@@ -237,61 +401,124 @@ export function scoreOlmocrBench({
       throw new Error("Benchmark test IDs must be unique non-empty strings");
     }
     seenIds.add(test.id);
-    const category = test.category;
-    if (!byCategory.has(category)) byCategory.set(category, emptyBucket());
+    if (!byCategory.has(test.category)) byCategory.set(test.category, emptyBucket());
     if (!byType.has(test.type)) byType.set(test.type, emptyBucket());
-    const categoryBucket = byCategory.get(category);
-    const typeBucket = byType.get(test.type);
-    categoryBucket.n += 1;
-    typeBucket.n += 1;
+    const buckets = [byCategory.get(test.category), byType.get(test.type)];
+    for (const bucket of buckets) bucket.n += 1;
     const record = recordsByPdf.get(test.pdf);
     if (!record || record.ok !== true) {
-      categoryBucket.not_run += 1;
-      typeBucket.not_run += 1;
+      for (const bucket of buckets) bucket.not_run += 1;
       continue;
     }
-    const classification = scoreOlmocrTest(test, record);
-    categoryBucket[classification] += 1;
-    typeBucket[classification] += 1;
+    const classification = classifier(test, record);
+    for (const bucket of buckets) bucket[classification] += 1;
   }
-  const categories = Object.fromEntries([...byCategory].sort().map(([key, value]) => [key, finishBucket(value)]));
-  const types = Object.fromEntries([...byType].sort().map(([key, value]) => [key, finishBucket(value)]));
+  const finish = value => finishBucket(value, attemptedDenominator);
+  const categories = Object.fromEntries([...byCategory].sort().map(([key, value]) => [key, finish(value)]));
+  const types = Object.fromEntries([...byType].sort().map(([key, value]) => [key, finish(value)]));
   const nonMath = Object.entries(types).filter(([type]) => type !== "math").map(([, bucket]) => bucket);
-  const overall = combineBuckets(Object.values(categories));
-  const excludingMath = combineBuckets(nonMath);
-  const math = finishBucket(types.math ?? emptyBucket());
+  return {
+    recordsByPdf,
+    categories,
+    types,
+    overall: combineBuckets(Object.values(categories), attemptedDenominator),
+    excludingMath: combineBuckets(nonMath, attemptedDenominator),
+    math: finish(types.math ?? emptyBucket()),
+  };
+}
+
+export function scoreOlmocrBenchHistorical({ tests, records }) {
+  const result = aggregate({
+    tests,
+    records,
+    classifier: scoreOlmocrTestHistorical,
+    attemptedDenominator: false,
+  });
+  return {
+    profile: "retained-first-run-js-v1-deprecated",
+    gating: false,
+    tests_total: tests.length,
+    pdfs_observed: result.recordsByPdf.size,
+    headline_excluding_math_proxy: result.excludingMath,
+    math_proxy: result.math,
+    overall_including_math_proxy: result.overall,
+    by_category: result.categories,
+    by_type: result.types,
+  };
+}
+
+export function evaluateOlmocrRegressionGate(report, policy) {
+  const checks = [];
+  const addMaximum = (id, observed, maximum) => checks.push({ id, observed, maximum, pass: observed <= maximum });
+  const addMinimum = (id, observed, minimum) => checks.push({ id, observed, minimum, pass: observed >= minimum });
+  if (!report.qualifying) checks.push({ id: "qualifying_run", observed: false, expected: true, pass: false });
+  else checks.push({ id: "qualifying_run", observed: true, expected: true, pass: true });
+  addMinimum("headline_pass", report.headline_excluding_math_proxy.pass, policy.reference.headline_excluding_math_proxy.pass);
+  addMaximum("headline_failed_silent", report.headline_excluding_math_proxy.failed_silent, policy.reference.headline_excluding_math_proxy.failed_silent);
+  addMaximum("math_failed_silent", report.math_proxy.failed_silent, policy.reference.math_proxy.failed_silent);
+  for (const [category, expected] of Object.entries(policy.reference.by_category)) {
+    const observed = report.by_category[category];
+    if (!observed) {
+      checks.push({ id: `category_${category}_present`, observed: false, expected: true, pass: false });
+      continue;
+    }
+    addMinimum(`category_${category}_pass`, observed.pass, expected.pass);
+    addMaximum(`category_${category}_failed_silent`, observed.failed_silent, expected.failed_silent);
+  }
+  return {
+    policy: policy.id,
+    passed: checks.every(check => check.pass),
+    checks,
+  };
+}
+
+export function scoreOlmocrBench({
+  tests,
+  records,
+  bindings = {},
+  runQualifying = false,
+  claimBoundary = null,
+  gatePolicy = null,
+}) {
+  const result = aggregate({
+    tests,
+    records,
+    classifier: scoreOlmocrTest,
+    attemptedDenominator: true,
+  });
   const expectedPdfs = new Set(tests.map(test => test.pdf));
-  const complete = recordsByPdf.size === expectedPdfs.size
-    && [...expectedPdfs].every(pdf => recordsByPdf.get(pdf)?.ok === true)
-    && overall.not_run === 0;
+  const complete = result.recordsByPdf.size === expectedPdfs.size
+    && [...expectedPdfs].every(pdf => result.recordsByPdf.get(pdf)?.ok === true)
+    && result.overall.not_run === 0;
   const boundary = claimBoundary ?? {
     comparability: "directional_only",
     release_gate_role: "internal_regression_tracking",
     public_benchmark_claim: "prohibited",
-    required_caveats: [
-      "Math is a normalized-string containment proxy, not the upstream rendered-bbox symbol-layout test.",
-      "The JavaScript scorer preserves the retained first-run profile and is not certified by the upstream benchmark authors.",
-      "Failed-but-flagged measures typed-gap coverage; it is not a correctness pass.",
-    ],
+    required_caveats: [],
   };
   if (boundary.comparability !== "directional_only"
     || boundary.release_gate_role !== "internal_regression_tracking"
     || boundary.public_benchmark_claim !== "prohibited") {
     throw new Error("olmOCR-bench claim boundary is invalid");
   }
-  return {
-    schema: "pdf-tools.olmocr-bench-score.v1",
+  const report = {
+    schema: "pdf-tools.olmocr-bench-score.v2",
     benchmark_claim_ready: false,
     claim_boundary: boundary,
     bindings,
     qualifying: Boolean(runQualifying && complete),
     pdfs_expected: expectedPdfs.size,
-    pdfs_observed: recordsByPdf.size,
+    pdfs_observed: result.recordsByPdf.size,
     tests_total: tests.length,
-    headline_excluding_math_proxy: excludingMath,
-    math_proxy: math,
-    overall_including_math_proxy: overall,
-    by_category: categories,
-    by_type: types,
+    headline_excluding_math_proxy: result.excludingMath,
+    math_proxy: result.math,
+    overall_including_math_proxy: result.overall,
+    by_category: result.categories,
+    by_type: result.types,
+    historical_compatibility: scoreOlmocrBenchHistorical({ tests, records }),
   };
+  report.release_regression_gate = gatePolicy
+    ? evaluateOlmocrRegressionGate(report, gatePolicy)
+    : { policy: null, passed: false, checks: [{ id: "gate_policy_present", pass: false }] };
+  return report;
 }

@@ -3,32 +3,34 @@
   "$id": "https://pdf-tools.local/schemas/olmocr-bench-manifest.v1.json",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "suite_id",
-    "suite_version",
-    "benchmark_claim_ready",
-    "source",
-    "execution",
-    "scorer",
-    "claim_boundary",
-    "reference_run"
-  ],
+  "required": ["suite_id", "suite_version", "benchmark_claim_ready", "source", "execution", "scorer", "claim_boundary", "gate", "reference_run"],
   "properties": {
     "suite_id": { "const": "pdf-tools.olmocr-bench.directional.v1" },
     "suite_version": { "const": 1 },
     "benchmark_claim_ready": { "const": false },
     "source": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["repository", "revision", "license", "redistribution", "corpus_directory", "metadata", "pdf_inventory", "categories"],
       "properties": {
         "repository": { "type": "string", "format": "uri" },
-        "revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "revision": { "$ref": "#/$defs/git_sha1" },
         "license": { "const": "ODC-BY-1.0" },
         "redistribution": { "const": "external_only" },
         "corpus_directory": { "const": "bench_data" },
-        "metadata": { "type": "object", "minProperties": 3 },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [".gitattributes", "README.md", "eval.yaml"],
+          "properties": {
+            ".gitattributes": { "$ref": "#/$defs/file_binding" },
+            "README.md": { "$ref": "#/$defs/file_binding" },
+            "eval.yaml": { "$ref": "#/$defs/file_binding" }
+          }
+        },
         "pdf_inventory": {
           "type": "object",
+          "additionalProperties": false,
           "required": ["count", "total_size_bytes", "canonical_inventory_sha256"],
           "properties": {
             "count": { "type": "integer", "minimum": 1 },
@@ -38,13 +40,14 @@
         },
         "categories": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 7,
+          "maxItems": 7,
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": ["id", "file", "sha256", "size_bytes", "test_count", "unique_pdf_count"],
             "properties": {
-              "id": { "type": "string", "minLength": 1 },
+              "id": { "type": "string", "pattern": "^[a-z_]+$" },
               "file": { "type": "string", "pattern": "^bench_data/[a-z_]+\\.jsonl$" },
               "sha256": { "$ref": "#/$defs/sha256" },
               "size_bytes": { "type": "integer", "minimum": 1 },
@@ -55,12 +58,122 @@
         }
       }
     },
-    "execution": { "type": "object" },
-    "scorer": { "type": "object" },
-    "claim_boundary": { "type": "object" },
-    "reference_run": { "type": "object" }
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "page", "options", "required_pdf_count", "required_test_count", "output_mode", "output_permissions"],
+      "properties": {
+        "tool": { "const": "convert_pdf_to_markdown" },
+        "page": { "const": 1 },
+        "options": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["compact", "emit_table_proposals", "end_page", "include_page_boundaries", "max_characters", "max_items", "max_markdown_bytes", "remove_page_furniture", "start_page"],
+          "properties": {
+            "compact": { "const": false },
+            "emit_table_proposals": { "const": false },
+            "end_page": { "const": 1 },
+            "include_page_boundaries": { "const": false },
+            "max_characters": { "const": 50000 },
+            "max_items": { "const": 1000 },
+            "max_markdown_bytes": { "const": 50000 },
+            "remove_page_furniture": { "const": true },
+            "start_page": { "const": 1 }
+          }
+        },
+        "required_pdf_count": { "const": 1403 },
+        "required_test_count": { "const": 7019 },
+        "output_mode": { "const": "atomic_json" },
+        "output_permissions": { "const": "0600" }
+      }
+    },
+    "scorer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "historical_compatibility_profile", "math", "table", "typed_gap_attribution"],
+      "properties": {
+        "profile": { "const": "directional-js-v2" },
+        "historical_compatibility_profile": { "const": "retained-first-run-js-v1-deprecated" },
+        "math": { "const": "normalized_string_containment_proxy" },
+        "table": { "const": "markdown_adjacency_approximation" },
+        "typed_gap_attribution": { "const": "v1" }
+      }
+    },
+    "claim_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comparability", "release_gate_role", "public_benchmark_claim", "required_caveats"],
+      "properties": {
+        "comparability": { "const": "directional_only" },
+        "release_gate_role": { "const": "internal_regression_tracking" },
+        "public_benchmark_claim": { "const": "prohibited" },
+        "required_caveats": { "type": "array", "minItems": 4, "items": { "type": "string", "minLength": 20 } }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reference_run_sha256", "reference_scorer_profile", "reference_scorer_sha256", "reference"],
+      "properties": {
+        "id": { "const": "pdf-tools.olmocr-bench.no-regression.v1" },
+        "reference_run_sha256": { "$ref": "#/$defs/sha256" },
+        "reference_scorer_profile": { "const": "directional-js-v2" },
+        "reference_scorer_sha256": { "$ref": "#/$defs/sha256" },
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["headline_excluding_math_proxy", "math_proxy", "by_category"],
+          "properties": {
+            "headline_excluding_math_proxy": { "$ref": "#/$defs/gate_counts" },
+            "math_proxy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["failed_silent"],
+              "properties": { "failed_silent": { "type": "integer", "minimum": 0 } }
+            },
+            "by_category": {
+              "type": "object",
+              "minProperties": 7,
+              "maxProperties": 7,
+              "additionalProperties": { "$ref": "#/$defs/gate_counts" }
+            }
+          }
+        }
+      }
+    },
+    "reference_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_revision", "run_sha256", "run_size_bytes", "score_sha256", "historical_compatibility_expected"],
+      "properties": {
+        "candidate_revision": { "$ref": "#/$defs/git_sha1" },
+        "run_sha256": { "$ref": "#/$defs/sha256" },
+        "run_size_bytes": { "type": "integer", "minimum": 1 },
+        "score_sha256": { "$ref": "#/$defs/sha256" },
+        "historical_compatibility_expected": { "type": "object" }
+      }
+    }
   },
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+    "git_sha1": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "file_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size_bytes", "sha256"],
+      "properties": {
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "gate_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "failed_silent"],
+      "properties": {
+        "pass": { "type": "integer", "minimum": 0 },
+        "failed_silent": { "type": "integer", "minimum": 0 }
+      }
+    }
   }
 }

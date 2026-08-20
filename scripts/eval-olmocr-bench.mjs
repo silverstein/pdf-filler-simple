@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { scoreOlmocrBench } from "../test/eval/olmocr-bench-scorer.js";
 
 const execFileAsync = promisify(execFile);
@@ -22,18 +23,14 @@ const DEFAULT_MANIFEST = path.join(
   "olmocr",
   "manifest.v1.json",
 );
-const RUNTIME_SOURCE_FILES = [
-  "package.json",
-  "package-lock.json",
-  "server/index.js",
-  "server/layout-extraction.js",
-  "server/markdown-conversion.js",
-  "server/markdown-output-transaction.js",
-  "server/output-schemas.js",
-  "server/pdfjs-subprocess.js",
-  "server/pdfjs-worker.js",
-  "server/type3-cm-reference.js",
-];
+const MANIFEST_SCHEMA = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "olmocr",
+  "manifest.schema.json",
+);
 const SHA256 = /^[a-f0-9]{64}$/u;
 const GIT_SHA1 = /^[a-f0-9]{40}$/u;
 
@@ -147,7 +144,30 @@ function validateManifest(manifest) {
     || !GIT_SHA1.test(manifest.source?.revision ?? "")
     || !Array.isArray(manifest.source?.categories)
     || manifest.source.categories.length < 1
-    || manifest.claim_boundary?.public_benchmark_claim !== "prohibited") {
+    || manifest.claim_boundary?.public_benchmark_claim !== "prohibited"
+    || manifest.scorer?.profile !== "directional-js-v2"
+    || manifest.execution?.tool !== "convert_pdf_to_markdown"
+    || manifest.execution?.page !== 1
+    || canonicalJson(manifest.execution?.options) !== canonicalJson({
+      compact: false,
+      emit_table_proposals: false,
+      end_page: 1,
+      include_page_boundaries: false,
+      max_characters: 50000,
+      max_items: 1000,
+      max_markdown_bytes: 50000,
+      remove_page_furniture: true,
+      start_page: 1,
+    })
+    || manifest.gate?.id !== "pdf-tools.olmocr-bench.no-regression.v1"
+    || !SHA256.test(manifest.gate?.reference_run_sha256 ?? "")
+    || !SHA256.test(manifest.gate?.reference_scorer_sha256 ?? "")
+    || manifest.gate?.reference_run_sha256 !== manifest.reference_run?.run_sha256
+    || manifest.gate?.reference_scorer_profile !== manifest.scorer?.profile
+    || !manifest.gate?.reference?.headline_excluding_math_proxy
+    || !manifest.gate?.reference?.math_proxy
+    || !manifest.gate?.reference?.by_category
+    || !manifest.source?.metadata || Array.isArray(manifest.source.metadata)) {
     throw new Error("olmOCR-bench manifest identity or claim boundary is invalid");
   }
   const inventory = manifest.source.pdf_inventory;
@@ -174,8 +194,17 @@ function validateManifest(manifest) {
 }
 
 async function loadManifest(filename) {
-  const source = await boundedRegularFile(filename, 1024 * 1024, "manifest");
-  return { manifest: validateManifest(JSON.parse(source.bytes.toString("utf8"))), binding: source };
+  const [source, schemaSource] = await Promise.all([
+    boundedRegularFile(filename, 1024 * 1024, "manifest"),
+    boundedRegularFile(MANIFEST_SCHEMA, 1024 * 1024, "manifest schema"),
+  ]);
+  const manifest = JSON.parse(source.bytes.toString("utf8"));
+  const schema = JSON.parse(schemaSource.bytes.toString("utf8"));
+  const validation = new AjvJsonSchemaValidator().getValidator(schema)(manifest);
+  if (!validation.valid) {
+    throw new Error(`olmOCR-bench manifest fails its schema: ${JSON.stringify(validation.error)}`);
+  }
+  return { manifest: validateManifest(manifest), binding: source, schemaBinding: schemaSource };
 }
 
 function parseJsonLines(bytes, label) {
@@ -258,10 +287,24 @@ async function verifyCorpus(benchRoot, manifest) {
 async function candidateBinding() {
   const [{ stdout: revision }, { stdout: status }] = await Promise.all([
     execFileAsync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT }),
-    execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: REPO_ROOT }),
+    execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: REPO_ROOT,
+      maxBuffer: 64 * 1024 * 1024,
+    }),
   ]);
+  const serverFiles = [];
+  const visit = async (directory, relativeDirectory) => {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const relativePath = path.posix.join(relativeDirectory, entry.name);
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolutePath, relativePath);
+      else if (entry.isFile() && entry.name.endsWith(".js")) serverFiles.push(relativePath);
+    }
+  };
+  await visit(path.join(REPO_ROOT, "server"), "server");
   const files = [];
-  for (const relativePath of RUNTIME_SOURCE_FILES) {
+  for (const relativePath of ["package.json", "package-lock.json", ...serverFiles]) {
     const bytes = await fs.readFile(path.join(REPO_ROOT, relativePath));
     files.push({ path: relativePath, size_bytes: bytes.length, sha256: sha256(bytes) });
   }
@@ -290,6 +333,9 @@ async function evaluatorBinding() {
 }
 
 async function writeAtomicExclusive(filename, value) {
+  if (filename === REPO_ROOT || filename.startsWith(`${REPO_ROOT}${path.sep}`)) {
+    throw new Error("Evaluation output must be written outside the repository");
+  }
   const parent = path.dirname(filename);
   await canonicalDirectory(parent, "output directory");
   try {
@@ -307,14 +353,19 @@ async function writeAtomicExclusive(filename, value) {
   } finally {
     await handle.close();
   }
+  let linked = false;
   try {
     await fs.link(temporary, filename);
+    linked = true;
     const directoryHandle = await fs.open(parent, fsConstants.O_RDONLY);
     try {
       await directoryHandle.sync();
     } finally {
       await directoryHandle.close();
     }
+  } catch (error) {
+    if (linked) await fs.unlink(filename).catch(() => {});
+    throw error;
   } finally {
     await fs.unlink(temporary).catch(() => {});
   }
@@ -326,7 +377,7 @@ function safeEnvironment(overrides) {
     .filter(([, value]) => typeof value === "string"));
 }
 
-async function runConversions({ benchRoot, pdfs, limit }) {
+async function runConversions({ benchRoot, pdfs, limit, manifest }) {
   const selected = limit === null ? pdfs : pdfs.slice(0, limit);
   const pdfRoot = path.join(benchRoot, "bench_data", "pdfs");
   const isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-olmocr-"));
@@ -349,13 +400,21 @@ async function runConversions({ benchRoot, pdfs, limit }) {
     await client.connect(transport);
     let completed = 0;
     for (const relativePath of selected) {
-      const record = { pdf: relativePath, ok: false, markdown: "", gaps: [], status: null };
+      const record = {
+        pdf: relativePath,
+        ok: false,
+        outcome: "harness_failure",
+        markdown: "",
+        gaps: [],
+        status: null,
+        pages: [],
+      };
       try {
         const result = await client.callTool({
-          name: "convert_pdf_to_markdown",
+          name: manifest.execution.tool,
           arguments: {
             pdf_path: path.join(pdfRoot, relativePath),
-            ...{ start_page: 1, end_page: 1 },
+            ...manifest.execution.options,
           },
         });
         if (result.isError) throw new Error("convert_pdf_to_markdown returned isError=true");
@@ -363,12 +422,26 @@ async function runConversions({ benchRoot, pdfs, limit }) {
         if (typeof structured.markdown !== "string" || !Array.isArray(structured.gaps)) {
           throw new Error("convert_pdf_to_markdown returned an invalid structured result");
         }
-        record.ok = true;
         record.markdown = structured.markdown;
         record.gaps = structured.gaps.map(gap => typeof gap === "string"
           ? { code: gap }
           : { code: gap?.code, message: gap?.message, page: gap?.page });
         record.status = structured.conversion_status ?? null;
+        record.pages = (structured.pages ?? []).map(page => ({
+          page: page?.page,
+          conversion_status: page?.conversion_status,
+          line_count: page?.line_count,
+          rendered_line_count: page?.rendered_line_count,
+        }));
+        if (!["complete", "partial"].includes(record.status)
+          || record.pages.length !== 1
+          || record.pages.some(page => page.conversion_status === "failed")) {
+          record.outcome = "product_failure";
+          record.error = `conversion_status=${String(record.status)}`;
+        } else {
+          record.ok = true;
+          record.outcome = "converted";
+        }
       } catch (error) {
         record.error = String(error?.message ?? error).slice(0, 500);
       }
@@ -385,23 +458,115 @@ async function runConversions({ benchRoot, pdfs, limit }) {
   return { selected, records };
 }
 
+function exactKeys(value, required, optional, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const keys = Object.keys(value).sort();
+  const allowed = new Set([...required, ...optional]);
+  if (required.some(key => !Object.hasOwn(value, key)) || keys.some(key => !allowed.has(key))) {
+    throw new Error(`${label} has missing or unexpected keys`);
+  }
+}
+
+export function validateRunReport(report) {
+  exactKeys(report, [
+    "schema", "manifest_sha256", "manifest_size_bytes", "corpus", "evaluator",
+    "candidate", "selection", "qualifying", "records",
+  ], [], "run report");
+  if (report.schema !== "pdf-tools.olmocr-bench-run.v1"
+    || !SHA256.test(report.manifest_sha256)
+    || !Number.isSafeInteger(report.manifest_size_bytes) || report.manifest_size_bytes < 1
+    || typeof report.qualifying !== "boolean"
+    || !Array.isArray(report.records)) {
+    throw new Error("Run report identity or records are invalid");
+  }
+  exactKeys(report.selection, ["full", "pdf_count"], [], "run selection");
+  if (typeof report.selection.full !== "boolean"
+    || !Number.isSafeInteger(report.selection.pdf_count) || report.selection.pdf_count < 1
+    || report.selection.pdf_count !== report.records.length) {
+    throw new Error("Run selection does not match its records");
+  }
+  exactKeys(report.candidate, [
+    "git_revision", "git_clean", "runtime_source_sha256", "runtime_sources",
+  ], [], "candidate binding");
+  if (!GIT_SHA1.test(report.candidate.git_revision)
+    || typeof report.candidate.git_clean !== "boolean"
+    || !SHA256.test(report.candidate.runtime_source_sha256)
+    || !Array.isArray(report.candidate.runtime_sources)
+    || report.candidate.runtime_sources.length < 2
+    || report.candidate.runtime_sources.some(source => (
+      typeof source?.path !== "string" || !source.path
+      || !Number.isSafeInteger(source.size_bytes) || source.size_bytes < 1
+      || !SHA256.test(source.sha256 ?? "")
+    ))
+    || sha256(Buffer.from(canonicalJson(report.candidate.runtime_sources)))
+      !== report.candidate.runtime_source_sha256) {
+    throw new Error("Candidate binding is invalid");
+  }
+  const pdfs = [];
+  for (const [index, record] of report.records.entries()) {
+    exactKeys(record, ["pdf", "ok", "outcome", "markdown", "gaps", "status", "pages"], ["error"], `record ${index}`);
+    if (typeof record.pdf !== "string" || !record.pdf
+      || typeof record.ok !== "boolean"
+      || !["converted", "product_failure", "harness_failure"].includes(record.outcome)
+      || typeof record.markdown !== "string"
+      || !Array.isArray(record.gaps)
+      || !Array.isArray(record.pages)
+      || record.gaps.some(gap => typeof gap?.code !== "string" || !gap.code)) {
+      throw new Error(`Run record ${index} has an invalid shape`);
+    }
+    if (record.ok !== (record.outcome === "converted")
+      || (record.ok && !["complete", "partial"].includes(record.status))
+      || (record.ok && (record.pages.length !== 1
+        || record.pages.some(page => (
+          page?.page !== 1
+          || !["complete", "partial"].includes(page.conversion_status)
+          || !Number.isSafeInteger(page.line_count) || page.line_count < 0
+          || !Number.isSafeInteger(page.rendered_line_count) || page.rendered_line_count < 0
+        ))))) {
+      throw new Error(`Run record ${index} has contradictory conversion state`);
+    }
+    pdfs.push(record.pdf);
+  }
+  if (new Set(pdfs).size !== pdfs.length
+    || canonicalJson(pdfs) !== canonicalJson([...pdfs].sort())) {
+    throw new Error("Run records must be unique and sorted by PDF path");
+  }
+  const expectedQualifying = report.selection.full
+    && report.candidate.git_clean
+    && report.records.every(record => record.ok);
+  if (report.qualifying !== expectedQualifying) {
+    throw new Error("Run report qualifying flag contradicts its evidence");
+  }
+  return report;
+}
+
 async function loadRun(filename) {
   const source = await boundedRegularFile(filename, 1024 * 1024 * 1024, "run report");
+  let parsed = null;
   if (source.bytes[0] === 0x7b) {
     try {
-      const parsed = JSON.parse(source.bytes.toString("utf8"));
-      if (parsed?.schema === "pdf-tools.olmocr-bench-run.v1" && Array.isArray(parsed.records)) {
-        return { records: parsed.records, qualifying: parsed.qualifying === true, binding: source, report: parsed };
-      }
+      parsed = JSON.parse(source.bytes.toString("utf8"));
     } catch {
       // The retained first-run input is JSONL and also begins with an object.
     }
+  }
+  if (parsed !== null) {
+    if (parsed?.schema !== "pdf-tools.olmocr-bench-run.v1" || !Array.isArray(parsed.records)) {
+      throw new Error("JSON run report has an unknown schema or missing records");
+    }
+    const report = validateRunReport(parsed);
+    return { records: report.records, qualifying: report.qualifying, binding: source, report };
   }
   const records = parseJsonLines(source.bytes, "legacy run report");
   return { records, qualifying: false, binding: source, report: null };
 }
 
 async function main() {
+  if (!["linux", "darwin"].includes(process.platform)) {
+    throw new Error("The olmOCR-bench gate requires a POSIX Linux or macOS host");
+  }
   const options = parseArguments(process.argv.slice(2));
   const { manifest, binding: manifestBinding } = await loadManifest(options.manifestPath);
   const [corpus, evaluator] = await Promise.all([
@@ -414,13 +579,22 @@ async function main() {
     corpus: corpus.binding,
     evaluator,
   };
+  const scorerBinding = evaluator.files.find(file => file.path === "test/eval/olmocr-bench-scorer.js");
+  if (scorerBinding?.sha256 !== manifest.gate.reference_scorer_sha256) {
+    throw new Error("Gate reference scorer digest does not match the current scorer");
+  }
   if (options.command === "verify") {
     process.stdout.write(`${JSON.stringify({ verified: true, ...common, tests: corpus.tests.length, pdfs: corpus.pdfs.length }, null, 2)}\n`);
     return;
   }
   if (options.command === "run") {
     const candidate = await candidateBinding();
-    const { selected, records } = await runConversions({ benchRoot: options.benchRoot, pdfs: corpus.pdfs, limit: options.limit });
+    const { selected, records } = await runConversions({
+      benchRoot: options.benchRoot,
+      pdfs: corpus.pdfs,
+      limit: options.limit,
+      manifest,
+    });
     const [afterManifest, afterCorpus, afterCandidate, afterEvaluator] = await Promise.all([
       loadManifest(options.manifestPath),
       verifyCorpus(options.benchRoot, manifest),
@@ -445,6 +619,7 @@ async function main() {
     };
     const output = await writeAtomicExclusive(options.outputPath, report);
     process.stdout.write(`${JSON.stringify({ written: output, qualifying: report.qualifying, conversions_failed: records.filter(record => !record.ok).length }, null, 2)}\n`);
+    if (!report.qualifying) process.exitCode = 2;
     return;
   }
   const run = await loadRun(options.runPath);
@@ -455,11 +630,20 @@ async function main() {
   )) {
     throw new Error("Run report does not bind the current manifest, corpus, and evaluator");
   }
+  if (run.report) {
+    const observedPdfs = run.records.map(record => record.pdf);
+    const expectedPdfs = corpus.pdfs.slice(0, run.report.selection.pdf_count);
+    if (canonicalJson(observedPdfs) !== canonicalJson(expectedPdfs)
+      || run.report.selection.full !== (observedPdfs.length === corpus.pdfs.length)) {
+      throw new Error("Run selection does not match the pinned deterministic corpus order");
+    }
+  }
   const report = scoreOlmocrBench({
     tests: corpus.tests,
     records: run.records,
     runQualifying: run.qualifying,
     claimBoundary: manifest.claim_boundary,
+    gatePolicy: manifest.gate,
     bindings: {
       ...common,
       run_sha256: run.binding.sha256,
@@ -469,7 +653,8 @@ async function main() {
     },
   });
   const output = await writeAtomicExclusive(options.outputPath, report);
-  process.stdout.write(`${JSON.stringify({ written: output, qualifying: report.qualifying, headline: report.headline_excluding_math_proxy, math_proxy: report.math_proxy }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ written: output, qualifying: report.qualifying, release_regression_gate: report.release_regression_gate, headline: report.headline_excluding_math_proxy, math_proxy: report.math_proxy }, null, 2)}\n`);
+  if (!report.release_regression_gate.passed) process.exitCode = 2;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
