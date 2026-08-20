@@ -195,6 +195,65 @@ correct page count, but the geometry scorer rejects the swapped page order.
 This is the minimum adversarial guard against tests that only prove a PDF was
 written.
 
+### Verified long-document extraction contract v1
+
+`test/fixtures/eval/verified-extraction/manifest.v1.json` freezes the private
+P0 contract for a possible Verified Extraction Workspace before any candidate
+product implementation or paired model run. The admitted corpus contains only
+three deterministic ODA-authored synthetic PDFs: 288 pages, 97 schema-leaf
+values, 43 citation obligations, 27 keyed-array items, and one replayable
+calculation. It contains no personal data or third-party source-document bytes.
+
+Regenerate and verify the corpus with:
+
+```bash
+node scripts/eval-generate-verified-extraction-fixtures.mjs
+npm run eval:verified-extraction
+```
+
+The manifest binds every PDF, target schema, truth oracle, citation oracle, and
+protocol by exact byte length and SHA-256 digest. Verification independently
+checks PDF page counts with PDF.js and pdf-lib, validates truth against the
+declared schema subset, replays citation quotes on the declared pages, checks
+key uniqueness, recomputes all denominators, and replays calculations. The
+generator is byte-deterministic; any generator or retained-artifact change
+requires an explicit new manifest identity rather than inheriting v1 results.
+
+The frozen baseline is the best agent-managed workflow available from the
+current public PDF tools. The preregistered candidate may add a source-bound
+document map, stable bounded chunks, local intermediate state, pagination,
+typed uncertainty, and deterministic replay, but it may not put a model inside
+the MCP server, expose numeric confidence, read the truth oracles, silently
+truncate, or perform unreported provider egress. A paired run must use the same
+host model and version, settings, source and schema bytes, time budget, retry
+budget, and scorer.
+
+Primary scoring is exact and deterministic: schema validity, leaf precision
+and recall, keyed-array precision and recall, citation replay, calculation
+replay, silent omissions, and truncation. The frozen denominator comes from the
+truth and citation oracles, never candidate output. Harness failures and
+product failures are separate named taxonomies. A model judge may provide
+secondary qualitative analysis but cannot change, excuse, or override a
+deterministic failure.
+
+Two PDFs are development cases. `citation-calculation-72` is held-out
+calibration: its truth and citation files are validator-only until both paired
+protocols and scorer bindings are frozen. Failed runs remain in the denominator;
+they cannot be replaced, tuned away, or omitted.
+
+VAREX, RealDoc-Bench, and LongExtractBench-50 are recorded as external
+candidates but are explicitly not admitted. VAREX does not match this frozen
+long-document workload. RealDoc-Bench source documents require per-document
+license and takedown review even though its published annotations have a dataset
+license. LongExtractBench-50 says source PDFs retain their original rights. No
+external corpus bytes were downloaded or treated as rights-cleared for v1.
+
+This suite is `private_synthetic_calibration_only` and always reports
+`benchmark_claim_ready: false`. It can gate exact internal regressions and
+support a fully qualified private paired comparison. It cannot support a public
+benchmark, state-of-the-art claim, real-world-document claim, provider-quality
+claim, or numeric-confidence claim.
+
 ## Scoring contracts
 
 Accessibility claims have an additional fail-closed evidence ladder. The

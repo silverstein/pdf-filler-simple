@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:oda:verified-extraction:citation-calculation-72:schema:v1",
+  "type": "object",
+  "required": [
+    "report_id",
+    "regions",
+    "grand_total"
+  ],
+  "properties": {
+    "report_id": {
+      "type": "string"
+    },
+    "regions": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "x-key": "code",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "units",
+          "adjustment"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "units": {
+            "type": "integer"
+          },
+          "adjustment": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "grand_total": {
+      "type": "number"
+    }
+  },
+  "additionalProperties": false
+}

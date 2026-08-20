@@ -1,0 +1,27 @@
+{
+  "account": {
+    "id": "ACCT-8042",
+    "name": "Northstar Fabrication",
+    "status": "active"
+  },
+  "reporting": {
+    "period_start": "2026-01-01",
+    "period_end": "2026-12-31",
+    "currency": "USD"
+  },
+  "limits": {
+    "annual": 2750000,
+    "per_event": 625000,
+    "deductible": 18000
+  },
+  "contacts": {
+    "primary": {
+      "name": "Avery Stone",
+      "role": "Operations"
+    },
+    "billing": {
+      "name": "Jordan Vale",
+      "role": "Finance"
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "document_id": "nested-ledger-120",
+  "citations": {
+    "account.id": {
+      "page": 2,
+      "quote": "Account ID: ACCT-8042"
+    },
+    "account.name": {
+      "page": 2,
+      "quote": "Legal name: Northstar Fabrication"
+    },
+    "account.status": {
+      "page": 119,
+      "quote": "FINAL ACCOUNT STATUS: active"
+    },
+    "reporting.period_start": {
+      "page": 17,
+      "quote": "Reporting period start: 2026-01-01"
+    },
+    "reporting.period_end": {
+      "page": 17,
+      "quote": "Reporting period end: 2026-12-31"
+    },
+    "reporting.currency": {
+      "page": 17,
+      "quote": "Reporting currency: USD"
+    },
+    "limits.annual": {
+      "page": 74,
+      "quote": "AMENDED annual limit: USD 2750000"
+    },
+    "limits.per_event": {
+      "page": 74,
+      "quote": "AMENDED per-event limit: USD 625000"
+    },
+    "limits.deductible": {
+      "page": 41,
+      "quote": "Current deductible: USD 18000"
+    },
+    "contacts.primary.name": {
+      "page": 53,
+      "quote": "Primary contact: Avery Stone"
+    },
+    "contacts.primary.role": {
+      "page": 53,
+      "quote": "Primary role: Operations"
+    },
+    "contacts.billing.name": {
+      "page": 91,
+      "quote": "Billing contact: Jordan Vale"
+    },
+    "contacts.billing.role": {
+      "page": 91,
+      "quote": "Billing role: Finance"
+    }
+  },
+  "calculations": []
+}

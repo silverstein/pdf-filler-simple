@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:oda:verified-extraction:nested-ledger-120:schema:v1",
+  "type": "object",
+  "required": [
+    "account",
+    "reporting",
+    "limits",
+    "contacts"
+  ],
+  "properties": {
+    "account": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive"
+          ]
+        }
+      }
+    },
+    "reporting": {
+      "type": "object",
+      "required": [
+        "period_start",
+        "period_end",
+        "currency"
+      ],
+      "properties": {
+        "period_start": {
+          "type": "string",
+          "format": "date"
+        },
+        "period_end": {
+          "type": "string",
+          "format": "date"
+        },
+        "currency": {
+          "type": "string"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "annual",
+        "per_event",
+        "deductible"
+      ],
+      "properties": {
+        "annual": {
+          "type": "number"
+        },
+        "per_event": {
+          "type": "number"
+        },
+        "deductible": {
+          "type": "number"
+        }
+      }
+    },
+    "contacts": {
+      "type": "object",
+      "required": [
+        "primary",
+        "billing"
+      ],
+      "properties": {
+        "primary": {
+          "type": "object",
+          "required": [
+            "name",
+            "role"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          }
+        },
+        "billing": {
+          "type": "object",
+          "required": [
+            "name",
+            "role"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

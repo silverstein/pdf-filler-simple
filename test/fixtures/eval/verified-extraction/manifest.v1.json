@@ -1,0 +1,300 @@
+{
+  "manifest_version": 1,
+  "benchmark_id": "oda-verified-extraction-synthetic-v1",
+  "frozen_at": "2026-08-20T00:00:00.000Z",
+  "generator": {
+    "path": "scripts/eval-generate-verified-extraction-fixtures.mjs",
+    "sha256": "6107e88a9a3c091dea35c0ca8253c2f18aa6ee919e4b61e39881491fdc03e370"
+  },
+  "scorer": {
+    "path": "test/eval/verified-extraction-contract.js",
+    "sha256": "d2b6fcae3e109c04c7e45997c30fd61739bdf45af95616a5ebbdc0fac63a552f"
+  },
+  "schema_subset": [
+    "object",
+    "array",
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "null",
+    "required",
+    "properties",
+    "additionalProperties",
+    "enum",
+    "format:date",
+    "items",
+    "minItems",
+    "maxItems",
+    "x-key"
+  ],
+  "documents": [
+    {
+      "id": "nested-ledger-120",
+      "split": "development",
+      "description": "Nested account ledger with sparse authoritative values and superseded decoys.",
+      "page_count": 120,
+      "rights": {
+        "admitted": true,
+        "license": "MIT",
+        "author": "Open Document Alliance PDF Tools maintainers",
+        "source": "Deterministically generated in this repository; no third-party source document bytes.",
+        "personal_data": false
+      },
+      "artifacts": {
+        "pdf": {
+          "path": "documents/nested-ledger-120.pdf",
+          "bytes": 108064,
+          "sha256": "26976b6f0880f6bd598a0311a6c0ece2529a0ed9e5ab25d4d6f2a2584b1f44e2"
+        },
+        "schema": {
+          "path": "schemas/nested-ledger-120.schema.json",
+          "bytes": 2211,
+          "sha256": "7609c80a2368a1435f82df0aea79dacf849d41fbc743aa9527fdf3fc9139a0be"
+        },
+        "truth": {
+          "path": "oracles/nested-ledger-120.truth.json",
+          "bytes": 484,
+          "sha256": "8179a462c7a969cdbb1dd9e64a152830ba06e08d69d360a407ae34725d8f8735"
+        },
+        "citations": {
+          "path": "oracles/nested-ledger-120.citations.json",
+          "bytes": 1367,
+          "sha256": "985820078f6468060fb8800f611d61244a262a766b933c522e6bc3026f4f561a"
+        }
+      },
+      "deterministic_denominators": {
+        "leaf_values": 13,
+        "citation_obligations": 13,
+        "keyed_array_items": 0,
+        "calculations": 0
+      }
+    },
+    {
+      "id": "keyed-register-96",
+      "split": "development",
+      "description": "Keyed array register with 24 final rows and draft-row decoys.",
+      "page_count": 96,
+      "rights": {
+        "admitted": true,
+        "license": "MIT",
+        "author": "Open Document Alliance PDF Tools maintainers",
+        "source": "Deterministically generated in this repository; no third-party source document bytes.",
+        "personal_data": false
+      },
+      "artifacts": {
+        "pdf": {
+          "path": "documents/keyed-register-96.pdf",
+          "bytes": 90248,
+          "sha256": "7c700ebf2299a5842f546e29139465db7370771c52da05539dde30945269b7bd"
+        },
+        "schema": {
+          "path": "schemas/keyed-register-96.schema.json",
+          "bytes": 908,
+          "sha256": "a69850bef3ba8c22100347771fd16c7255171df339090ca15591528c091f97c5"
+        },
+        "truth": {
+          "path": "oracles/keyed-register-96.truth.json",
+          "bytes": 2214,
+          "sha256": "4a6f9e00e3e63d7aca374787f02e93477639abcc63e22011da4eba8dd6490553"
+        },
+        "citations": {
+          "path": "oracles/keyed-register-96.citations.json",
+          "bytes": 3077,
+          "sha256": "e9be3f992d2eb72e8a514be435beac5965eb0c7dbd409775941238050832c648"
+        }
+      },
+      "deterministic_denominators": {
+        "leaf_values": 73,
+        "citation_obligations": 25,
+        "keyed_array_items": 24,
+        "calculations": 0
+      }
+    },
+    {
+      "id": "citation-calculation-72",
+      "split": "held_out_calibration",
+      "description": "Sparse regional values with replayable citations and a deterministic calculation.",
+      "page_count": 72,
+      "rights": {
+        "admitted": true,
+        "license": "MIT",
+        "author": "Open Document Alliance PDF Tools maintainers",
+        "source": "Deterministically generated in this repository; no third-party source document bytes.",
+        "personal_data": false
+      },
+      "artifacts": {
+        "pdf": {
+          "path": "documents/citation-calculation-72.pdf",
+          "bytes": 65351,
+          "sha256": "d9b0efb91de76176bf86455a4fb239d9695bd42c51210ac40a8d4913195fa63a"
+        },
+        "schema": {
+          "path": "schemas/citation-calculation-72.schema.json",
+          "bytes": 867,
+          "sha256": "f5e1548f2c575aa5edb60151db4d4efd8b25a3aafb5d1d480f1cd965ee805698"
+        },
+        "truth": {
+          "path": "oracles/citation-calculation-72.truth.json",
+          "bytes": 315,
+          "sha256": "568b22080f882765d331251ae160b9709b289db13841debf23607a1df89decef"
+        },
+        "citations": {
+          "path": "oracles/citation-calculation-72.citations.json",
+          "bytes": 972,
+          "sha256": "cecc7bfd1c4062d96edc26ca122d2f913647df9e362c247eadde368bfd7d7e54"
+        }
+      },
+      "deterministic_denominators": {
+        "leaf_values": 11,
+        "citation_obligations": 5,
+        "keyed_array_items": 3,
+        "calculations": 1
+      }
+    }
+  ],
+  "deterministic_denominators": {
+    "documents": 3,
+    "pages": 288,
+    "leaf_values": 97,
+    "citation_obligations": 43,
+    "keyed_array_items": 27,
+    "calculations": 1
+  },
+  "protocols": {
+    "baseline": {
+      "value": {
+        "id": "current-tools-agent-workflow.v1",
+        "product_ref": "exact_git_sha_required_at_execution",
+        "allowed_product_tools": [
+          "read_pdf_content",
+          "read_pdf_layout",
+          "convert_pdf_to_markdown",
+          "display_pdf",
+          "get_pdf_resource_uri"
+        ],
+        "orchestration": "Host agent may maintain bounded scratch state and merge partial results; no hidden retrieval or extraction service is allowed.",
+        "requirements": [
+          "Use the same admitted PDF bytes and schema bytes as the paired candidate run.",
+          "Record model, host, settings, tool calls, token accounting, latency, retry count, and cost basis.",
+          "Return one final JSON value plus source citations; do not consult truth or citation oracle files."
+        ]
+      },
+      "sha256": "4b285b4a416b712670dcb5f2215e00df32cdbcd4d42fb234bf7920c757d94f56"
+    },
+    "candidate": {
+      "value": {
+        "id": "verified-extraction-workspace.v1-preregistered",
+        "implementation_state": "not_implemented_at_freeze",
+        "allowed_capabilities": [
+          "source-bound document map",
+          "stable bounded chunks",
+          "persistent local intermediate state",
+          "paginated results",
+          "typed uncertainty",
+          "deterministic citation and calculation replay"
+        ],
+        "forbidden_capabilities": [
+          "model inside MCP server",
+          "numeric confidence",
+          "truth-oracle access",
+          "unreported provider egress",
+          "silent truncation"
+        ],
+        "pairing": "Use the same host model, model version, settings, admitted document bytes, schema bytes, time budget, retry budget, and scoring code as baseline."
+      },
+      "sha256": "c4daf2a9a6148e0c2f369a3eab1621df6492cbac9ebde355b17c0f6ef9ef3552"
+    },
+    "scoring": {
+      "value": {
+        "id": "verified-extraction-deterministic-primary.v1",
+        "primary_metrics": [
+          "json_schema_valid",
+          "leaf_precision",
+          "leaf_recall",
+          "keyed_array_precision",
+          "keyed_array_recall",
+          "citation_replay_rate",
+          "calculation_replay_rate",
+          "silent_omission_count",
+          "truncation_count"
+        ],
+        "exact_comparison": "Strings, booleans, nulls, array keys, and numbers compare exactly; no semantic equivalence or tolerance is inferred.",
+        "denominator_rule": "Denominators are computed from the frozen truth and citation oracle files, never from candidate output.",
+        "model_judge": "Secondary qualitative analysis only. It cannot change, excuse, or override a deterministic failure.",
+        "harness_failures": [
+          "source_binding_mismatch",
+          "schema_binding_mismatch",
+          "model_binding_missing",
+          "host_binding_missing",
+          "timeout",
+          "tool_transport_error",
+          "provider_error",
+          "malformed_run_record",
+          "scorer_error"
+        ],
+        "product_failures": [
+          "schema_invalid",
+          "wrong_value",
+          "missing_leaf",
+          "extra_leaf",
+          "array_key_missing",
+          "array_key_duplicate",
+          "citation_missing",
+          "citation_not_replayable",
+          "calculation_mismatch",
+          "silent_truncation"
+        ]
+      },
+      "sha256": "18439b3ef2cc796d1b370e949d5f44beffa7fa7fe540471ad05b042e2a4c6bc0"
+    },
+    "holdout": {
+      "value": {
+        "id": "verified-extraction-holdout.v1",
+        "development_documents": [
+          "nested-ledger-120",
+          "keyed-register-96"
+        ],
+        "held_out_calibration_documents": [
+          "citation-calculation-72"
+        ],
+        "rule": "Truth and citation oracles are validator-only. Workflow authors may inspect development PDFs and schemas but must not inspect held-out truth before both protocols and scorer bindings are frozen.",
+        "comparison_rule": "Report per-document and aggregate outcomes; do not tune against held-out output, replace failed runs, or omit admitted documents."
+      },
+      "sha256": "34bca8f79dd9a0b5eefdd0a82447729af896f7a92dceedc7ad3119f0bc85e5b4"
+    }
+  },
+  "claim_boundary": {
+    "benchmark_claim_ready": false,
+    "classification": "private_synthetic_calibration_only",
+    "allowed": [
+      "Internal deterministic regression gating on the exact admitted bytes.",
+      "A private paired baseline-versus-candidate report with all execution bindings and limitations."
+    ],
+    "prohibited": [
+      "A public benchmark or state-of-the-art claim.",
+      "A claim about real-world documents, providers, or model quality.",
+      "Converting deterministic results into numeric confidence scores."
+    ]
+  },
+  "external_candidates": [
+    {
+      "name": "VAREX",
+      "url": "https://huggingface.co/datasets/ibm-research/VAREX",
+      "admitted": false,
+      "reason": "Permissively licensed, but the published form/image task is not the long-document paired workload frozen here."
+    },
+    {
+      "name": "RealDoc-Bench",
+      "url": "https://huggingface.co/datasets/Extend-AI/RealDoc-Bench",
+      "admitted": false,
+      "reason": "Dataset annotations are CC-BY-4.0, while source-document licenses and takedown status require per-document admission review."
+    },
+    {
+      "name": "LongExtractBench-50",
+      "url": "https://huggingface.co/datasets/micro1-inc/longextract-bench-50",
+      "admitted": false,
+      "reason": "Source PDFs retain their original rights; individual document terms have not been admitted or downloaded."
+    }
+  ]
+}
