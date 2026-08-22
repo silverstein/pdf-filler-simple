@@ -394,6 +394,7 @@ describe("MCPB static declarations", () => {
     for (const filename of [
       "accessibility-inspection.js",
       "bounded-pdf-file.js",
+      "document-map.js",
       "pdf-comparison.js",
       "index.js",
       "helpers.js",
@@ -420,7 +421,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(22);
+    expect(mirrored).toHaveLength(23);
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),

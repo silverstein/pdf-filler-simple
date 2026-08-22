@@ -3472,6 +3472,65 @@ export function boundTableProposalRegions(regions) {
 }
 
 /**
+ * Return the renderer's deterministic structural evidence for the experimental
+ * document-map layer. The caller must first validate every source layout; this
+ * helper deliberately reuses the renderer's heading, table-gap, and
+ * cross-page furniture rules instead of growing a second set of heuristics.
+ * It performs no I/O and does not expose a new MCP tool.
+ */
+export function analyzeValidatedPdfPagesForDocumentMap(pages) {
+  assertion(Array.isArray(pages) && pages.length > 0,
+    "document-map pages must be a non-empty array");
+  const furniturePlans = planDocumentPageFurniture(pages, true);
+  return pages.map(page => {
+    const headings = headingLevels(page);
+    const headingContinuations = headingContinuationIds(page, headings);
+    const pageFurniture = furniturePlans.get(page.page) ?? [];
+    const furnitureLineIds = new Set(pageFurniture.map(entry => entry.lineId));
+    const analysis = segmentPageLines(page);
+    const linkState = analyzePageLinks(page, analysis, headings, furnitureLineIds);
+    const unsafePage = analysis.tableReason !== null
+      || linkState.unavailable
+      || linkState.ambiguous
+      || linkState.unsupportedTarget;
+    const fractionPlan = pageStackedFractionPlan(page, analysis.segments, {
+      headings,
+      linkState,
+      unsafePage,
+    });
+    const gaps = pageGaps(page, analysis, linkState, {
+      mathNotReconstructed: pageMathNotReconstructed(analysis, fractionPlan),
+      pageFurniture,
+    });
+    return {
+      page: page.page,
+      headings: page.lines.flatMap(line => headings.has(line.id) ? [{
+        line_id: line.id,
+        level: headings.get(line.id),
+        text: line.text,
+      }] : []),
+      heading_continuation_line_ids: page.lines
+        .filter(line => headingContinuations.has(line.id))
+        .map(line => line.id),
+      furniture: pageFurniture.map(entry => ({ ...entry })),
+      table_regions: analysis.regions.map((region, index) => (
+        buildTableProposalRegion(page, region.run, region.reason, index + 1)
+      )),
+      gaps: gaps.map(gap => ({ ...gap })),
+      content_lines: page.lines
+        .filter(line => !furnitureLineIds.has(line.id))
+        .map(line => ({
+          line_id: line.id,
+          text: line.text,
+          item_ids: [...line.item_ids],
+          heading_level: headings.get(line.id) ?? null,
+          heading_continuation: headingContinuations.has(line.id),
+        })),
+    };
+  });
+}
+
+/**
  * Render an already source-validated PDF Tools layout IR to deterministic
  * Markdown. This function rechecks IR semantics but deliberately performs no
  * I/O, PDF parsing, rendering, OCR, or annotation lookup. Table reconstruction

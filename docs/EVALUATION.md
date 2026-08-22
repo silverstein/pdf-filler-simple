@@ -323,6 +323,29 @@ P1 baseline. A separate rights-admitted public-pilot corpus tranche must pass
 admission and independent review before E9E.2 can be described as a real P1
 baseline.
 
+### Experimental source-bound document map
+
+E9E.3 introduces a pure experimental contract in `server/document-map.js`.
+It is not registered as an MCP tool and is not candidate-execution authority.
+The contract consumes exact PDF and schema bytes plus already validated
+Extraction IR pages. It binds their source and schema SHA-256 identities, the
+pinned parser and IR, the deterministic renderer identity, and the complete
+chunk policy before producing a document-map digest.
+
+Chunks prefer renderer-supported heading boundaries, otherwise use fixed
+line and UTF-8 byte ceilings. Each stable chunk identity binds the source,
+schema, parser, IR, renderer, policy, page and line range, admitted item-ID
+digest, and content digest. Reading a chunk reconstructs the complete map and
+fails closed if any binding or returned descriptor has drifted.
+
+The compact map reuses the active renderer's heading, table-gap, and
+cross-page page-furniture evidence rules. It reports exact observed, returned,
+and omitted counts for pages, source items, source characters, chunks,
+headings, table regions, and typed gaps. Output caps retain counts plus a digest
+of the complete hidden inventory; omitted chunks cannot be read through the
+bounded contract. No OCR, schema filling, numeric confidence, model call,
+provider egress, truth-oracle access, or benchmark claim occurs in this layer.
+
 ## Scoring contracts
 
 Accessibility claims have an additional fail-closed evidence ladder. The
