@@ -436,6 +436,67 @@ candidate execution, scoring, publication, or benchmark claim. It remains
 experimental and excluded from release artifacts until a separately reviewed
 product-integration tranche authorizes that boundary change.
 
+### Experimental source-replayed proposal verifier
+
+E9E.5 adds the model-free private verifier in
+`scripts/verified-extraction-proposal.mjs`. It loads the named proposal only
+from the exact complete current E9E.4 generation, rejects a second assignment
+to the same leaf, and revalidates the E9E.3 map from the exact PDF bytes,
+schema bytes, Extraction IR pages, renderer, and chunk policy. Citation inputs
+contain only a returned chunk ID, exact UTF-8 byte range, and quote digest. The
+verifier reconstructs the chunk and quote from fresh source; caller text,
+source identity, page, geometry, confidence, and table topology are not proof.
+
+The supported schema subset is explicit and fail-closed. It includes bounded
+objects, arrays, strings, numbers, integers, booleans, nulls, constants, enums,
+exclusive `anyOf`, calendar dates, item and length bounds, `uniqueItems`, and
+the frozen `x-key` convention for keyed arrays. Duplicate JSON members,
+unsupported schema keywords, duplicate whole-array items, missing keyed-array
+identities, and duplicate keyed-array identities reject. The verifier does not
+silently treat an unsupported JSON Schema feature as if it had been enforced.
+String lengths count Unicode code points. Every raw schema numeric token is
+accepted only when its JSON spelling is a canonical safe integer. Decimal,
+exponent, negative-zero, and out-of-range spellings reject from the raw UTF-8
+text before ordinary JSON construction can round or underflow them.
+
+`verified_exact` means a declared identity or narrow ASCII normalization
+replayed the proposed value. `computed_with_inputs` means an allowlisted sum,
+difference, product, or quotient over two or more bounded decimal citations
+replayed exactly as a rational calculation; its retained input-selection status
+remains `unverified_reasoning` because arithmetic replay does not prove that the
+right business inputs were chosen. `source_supported`, `ambiguous`,
+and `unverified_reasoning` retain exact source citations while explicitly
+preserving the semantic judgment that this layer cannot prove. `not_found`
+requires a null proposal, no citations, every returned chunk ID, complete
+accounting, no omitted admitted bytes or chunk material, complete page
+extraction, and no visual-inspection flag. It cannot turn missing or truncated
+scope into an absence claim.
+
+`decimal_ascii` never converts source text to a floating-point value before
+comparison. It compares the bounded source decimal and the canonical JSON
+representation of the proposed number as exact fractions, and rejects proposal
+representations that require exponent or otherwise unsupported numeric syntax.
+
+The canonical result retains and replays the complete content-addressed proposal
+event, including its workspace identity, leaf, proposal value, chunk inventory,
+and unverified state, as well as the proposal value digest. A `not_found` result
+also retains the exact map digest, returned chunk inventory, page states, and
+zero-omission accounting that authorized the complete search. Standalone result
+validation deterministically replays those bindings and the method over retained
+citation bytes, and requires the status, reasons, derived value, and every
+calculation field to match that replay. These hashes prove internal binding, not
+that re-authored bytes belonged to an actual workspace generation; authentic
+workspace membership still requires the exact external workspace and map bytes
+used by `verifyWorkspaceExtractionProposal`. The canonical digest is integrity
+formatting and cannot make an internally impossible re-authored result valid.
+
+This general verifier never promotes table topology. The separately shipped
+`verify_table_proposal` contract remains the only specialized table-structure
+verifier, with its existing fresh-parse, coverage, ordering, and ruling checks.
+E9E.5 performs no model call, provider egress, holdout scoring, candidate
+execution, release packaging, publication, or benchmark claim, and remains
+excluded from both package inventories.
+
 ## Scoring contracts
 
 Accessibility claims have an additional fail-closed evidence ladder. The
