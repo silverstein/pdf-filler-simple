@@ -346,6 +346,96 @@ of the complete hidden inventory; omitted chunks cannot be read through the
 bounded contract. No OCR, schema filling, numeric confidence, model call,
 provider egress, truth-oracle access, or benchmark claim occurs in this layer.
 
+### Experimental transactional extraction workspace
+
+E9E.4 adds a model-free private artifact contract in
+`scripts/verified-extraction-workspace.mjs`. It is deliberately outside the
+MCP server and both package inventories. Creating a workspace revalidates the
+complete E9E.3 document map from the exact PDF bytes, schema bytes, Extraction
+IR pages, renderer, and chunk policy. It then binds that map, the admitted
+schema-leaf obligations, and strict byte, record, generation, and pagination
+limits into one immutable workspace identity. Loading a workspace recomputes
+the retained document-map digest from the map body itself; re-authoring a
+generation inventory around changed map bytes cannot preserve the workspace.
+
+Creation writes a durable root-level creator claim before exposing any
+initialization directory. That claim binds the workspace, transaction,
+initialization directory, and workspace identity. A crash before the first
+directory or static artifact can therefore be abandoned only with the exact
+physical claim digest and independently retained initialization-workspace
+identity. If static identity bytes exist, abandonment reconciles those bytes
+to the same authority before it proceeds. The claim is removed only after
+genesis publication succeeds or after an immutable root-level abandonment
+tombstone is durable.
+
+The workspace root and every generation directory are mode 0700; retained
+files are mode 0600. Physical-path, no-symlink, file-identity, exact-inventory,
+and canonical-byte checks fail closed. Static artifacts are assembled and
+fsynced in a private unique sibling directory. The canonical 0600 pointer is
+retained with those static artifacts and atomically hard-linked into the
+deterministic workspace slot with exclusive no-replacement semantics; a reader
+therefore sees either no pointer or the complete retained pointer bytes, and an
+existing file, link, or empty or non-empty directory is never replaced. A crash
+during static writes cannot expose or strand a partial authoritative workspace.
+Unpublished initialization scratch is never silently pruned; its explicit
+abandonment requires the exact current pointer identity when one exists,
+refuses a missing or substituted creator claim, reconciles any retained static
+identity, writes a nonreplaceable transaction tombstone before cleanup, refuses
+links, unsafe modes, writer or generation history, and cannot remove the
+directory named by the authoritative pointer. Creation and genesis recovery
+both consult the tombstone, so an abandoned transaction can never be reused.
+Creation, genesis recovery, and abandonment share one exclusive per-transaction
+operation lease. Its exact owner bytes are atomically hard-linked into place;
+a live owner rejects every overlapping operation, while a dead owner can be
+reclaimed by exact physical identity. Creation holds the lease from before its
+tombstone check through genesis publication, so abandonment cannot linearize
+between any check and filesystem progress.
+Writers first retain one
+exact internal transaction claim, then atomically hard-link those same bytes
+into the external per-workspace operation slot used by deletion. A writer
+cannot mutate generation state until it owns that shared exclusive slot, and
+deletion cannot publish its intent while a writer owns it. If deletion wins
+after a writer's initial scan, the unadmitted internal claim is removed before
+unpublication and cannot advance. The admitted writer then writes append-only
+events and replayed canonical
+state in a staging generation, fsync those artifacts, and write the generation
+manifest last as the commit marker. Only a complete manifest-bound generation
+may be renamed into the immutable linear history. A missing marker, retained
+claim, crash after rename, or incomplete genesis is reported as uncertain and
+requires an explicit exact-transaction recovery decision; incomplete work is
+never guessed complete. The genesis transaction is itself frozen into the
+workspace identity. If a crash occurs after the complete static workspace is
+published but before the genesis writer claim exists, inspection reports
+`initialization_recovery_required`; the dedicated recovery action accepts only
+that already-bound transaction, the exact retained creator-claim digest, and an
+otherwise empty pre-genesis history.
+Abandoned transaction IDs cannot be reused.
+
+Proposals bind an admitted leaf and one or more returned E9E.3 chunk IDs. They
+persist only as `unverified/not_replayed`; this layer has no promotion or result
+path. Stable opaque cursors bind the workspace, retained generation, collection,
+complete collection digest, offset, and page limit. Every page reports exact
+total, returned, and omitted-before/after counts and fails if even one retained
+item exceeds the frozen byte ceiling. Generations are never silently pruned.
+Irreversible workspace deletion requires the exact workspace identity and
+current generation digest, rejects links or unexpected file types, and durably
+publishes a canonical external deletion intent before it unpublishes the
+pointer or removes data. The intent binds the private directory, workspace
+identity, final generation, and pointer bytes; it blocks republication and
+survives partial recursive removal. Exact completion can therefore resume from
+any remaining safe subset without rereading artifacts already removed, and
+clears the intent only after the data directory is durably absent. Completion
+requires the originally returned pointer digest; a complete intent resumes by
+validating and unpublishing an active matching pointer when necessary. Only a
+structurally incomplete intent, or one stale against the exact active
+generation, may be abandoned while that workspace remains authoritative; a
+complete current deletion authority cannot race deletion by taking that path.
+
+This contract performs no model call, provider egress, holdout-oracle access,
+candidate execution, scoring, publication, or benchmark claim. It remains
+experimental and excluded from release artifacts until a separately reviewed
+product-integration tranche authorizes that boundary change.
+
 ## Scoring contracts
 
 Accessibility claims have an additional fail-closed evidence ladder. The
