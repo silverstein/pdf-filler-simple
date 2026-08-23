@@ -1160,6 +1160,27 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
       ],
     });
 
+    const nearAxis = await runFake([fakeOperatorFixture(
+      [2, 2],
+      [
+        linePath(4, 10.0004, 40.0004, 30.0004, 39.5004),
+        linePath(4, 20.0004, 60.0004, 20.5004, 20.0004),
+      ],
+    )]);
+    expect(nearAxis.result.pages[0].ruling_segments.items).toEqual([
+      { orientation: "horizontal", x1: 10, y1: 752.25, x2: 30, y2: 752.25, source_operator_index: 0 },
+      { orientation: "vertical", x1: 20.25, y1: 732, x2: 20.25, y2: 772, source_operator_index: 1 },
+    ]);
+    for (const segment of nearAxis.result.pages[0].ruling_segments.items) {
+      if (segment.orientation === "horizontal") {
+        expect(segment.y1).toBe(segment.y2);
+        expect(segment.x2 - segment.x1).toBeGreaterThanOrEqual(2);
+      } else {
+        expect(segment.x1).toBe(segment.x2);
+        expect(segment.y2 - segment.y1).toBeGreaterThanOrEqual(2);
+      }
+    }
+
     const operations = [];
     const argsArray = [];
     for (let index = 0; index < 1025; index += 1) {
