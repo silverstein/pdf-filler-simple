@@ -2838,6 +2838,7 @@ describe("Extraction IR hostile reconstruction", () => {
     });
     expect(correctRuntime.state.document_options.cMapUrl).toContain("pdfjs-dist/cmaps/");
     expect(correctRuntime.state.document_options.standardFontDataUrl).toContain("pdfjs-dist/standard_fonts/");
+    expect(correctRuntime.state.document_options.wasmUrl).toContain("pdfjs-dist/wasm/");
   });
 
   it("cleans up the real PDF.js task, authenticated document, and page for the encrypted fail-soft oracle", async () => {

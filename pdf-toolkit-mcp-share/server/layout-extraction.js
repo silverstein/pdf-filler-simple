@@ -60,6 +60,7 @@ const PDFJS_DOCUMENT_ASSETS = Object.freeze({
   cMapUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url))),
   cMapPacked: true,
   standardFontDataUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/standard_fonts/", import.meta.url))),
+  wasmUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/wasm/", import.meta.url))),
 });
 const ITEM_SPACE = Object.freeze({
   origin: "top_left",
