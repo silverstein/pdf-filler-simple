@@ -45,6 +45,14 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
+Filesystem scope applies to direct PDF Tools calls. In Agent Plugin mode, a
+fresh install directly accesses only its private `${PLUGIN_DATA}/workspace`.
+A desktop host with broader operating-system permission may copy a file into
+that workspace; this is host-authorized import and is not prevented by the PDF
+Tools path policy. Consequently the active folder list is defense in depth, not
+a source-confidentiality boundary against a Full Access host. Content returned
+through MCP remains subject to the host and model provider's data terms.
+
 Forty tool handlers advertise strict `outputSchema` contracts and return
 `structuredContent`. They also return a human-readable `content` text block so
 non-Apps and older clients remain usable. Successful structured output is
