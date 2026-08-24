@@ -245,28 +245,88 @@ describe("first-run bootstrap", () => {
     await removeTestTempDirectory(tempDirectory);
   });
 
-  it("writes the well-known home template on first run and names it in the refusal", async () => {
+  it("creates a private workspace and an optional direct-folder template on first run", async () => {
     const pluginData = path.join(tempDirectory, "fresh-install");
     const home = path.join(tempDirectory, "home");
     await fs.mkdir(pluginData, { recursive: true });
     const pluginConfigPath = path.join(pluginData, "config.json");
-    const configPath = path.join(home, ".pdf-tools", "config.json");
+    const workspace = path.join(pluginData, "workspace");
+    await fs.copyFile(EXAMPLE_PDF, path.join(pluginData, "to-import.pdf"));
 
-    const result = await withServer({
+    const observed = await withServer({
       name: "plugin-data-bootstrap",
       env: { HOME: home, PLUGIN_DATA: pluginData },
-    }, client => client.callTool({
-      name: "list_pdfs",
-      arguments: { directory: tempDirectory },
+    }, async client => ({
+      boundary: await client.callTool({ name: "get_allowed_directories", arguments: {} }),
+      outside: await client.callTool({ name: "list_pdfs", arguments: { directory: pluginData } }),
+      workspace: await client.callTool({ name: "list_pdfs", arguments: { directory: workspace } }),
     }));
 
-    expect(structuredErrorCode(result)).toBe("path_policy_denied");
-    // A fresh install must not merely refuse; it must say where to configure it.
-    expect(textFromToolResult(result)).toContain(configPath);
+    expect(observed.boundary.structuredContent).toMatchObject({
+      directories: [workspace],
+      configured: true,
+      source: "plugin_workspace",
+      config_path: pluginConfigPath,
+    });
+    expect(structuredErrorCode(observed.outside)).toBe("path_policy_denied");
+    expect(structuredErrorCode(observed.workspace)).toBeUndefined();
 
-    const written = JSON.parse(await fs.readFile(configPath, "utf8"));
+    const written = JSON.parse(await fs.readFile(pluginConfigPath, "utf8"));
     expect(written.allowedDirectories).toEqual([]);
-    await expect(fs.stat(pluginConfigPath)).rejects.toMatchObject({ code: "ENOENT" });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(workspace)).mode & 0o777).toBe(0o700);
+    }
+    await expect(fs.stat(path.join(home, ".pdf-tools", "config.json")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  }, 30_000);
+
+  it("fails closed when the workspace path is a symlink outside plugin data", async () => {
+    const pluginData = path.join(tempDirectory, "symlinked-workspace");
+    const outside = path.join(tempDirectory, "outside-workspace");
+    await fs.mkdir(pluginData, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(outside, "must-stay-hidden.pdf"));
+    await fs.symlink(outside, path.join(pluginData, "workspace"), process.platform === "win32" ? "junction" : "dir");
+
+    const observed = await withServer({
+      name: "plugin-data-workspace-symlink",
+      env: { HOME: path.join(tempDirectory, "symlink-home"), PLUGIN_DATA: pluginData },
+    }, async client => ({
+      boundary: await client.callTool({ name: "get_allowed_directories", arguments: {} }),
+      listing: await client.callTool({ name: "list_pdfs", arguments: { directory: outside } }),
+    }));
+
+    expect(observed.boundary.structuredContent).toMatchObject({
+      directories: [],
+      configured: false,
+      source: "none",
+    });
+    expect(structuredErrorCode(observed.listing)).toBe("path_policy_denied");
+    expect(textFromToolResult(observed.listing)).not.toContain("must-stay-hidden.pdf");
+  }, 30_000);
+
+  it("can process a host-imported copy without gaining direct access to its source folder", async () => {
+    const pluginData = path.join(tempDirectory, "host-import");
+    const workspace = path.join(pluginData, "workspace");
+    const source = path.join(tempDirectory, "host-import-source");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(source, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(source, "source.pdf"));
+    // This copy represents a separate action by a host that has permission to
+    // read the source. PDF Tools receives authority only over the destination.
+    await fs.copyFile(path.join(source, "source.pdf"), path.join(workspace, "imported.pdf"));
+
+    const observed = await withServer({
+      name: "plugin-data-host-import",
+      env: { HOME: path.join(tempDirectory, "import-home"), PLUGIN_DATA: pluginData },
+    }, async client => ({
+      imported: await client.callTool({ name: "list_pdfs", arguments: { directory: workspace } }),
+      source: await client.callTool({ name: "list_pdfs", arguments: { directory: source } }),
+    }));
+
+    expect(textFromToolResult(observed.imported)).toContain("imported.pdf");
+    expect(structuredErrorCode(observed.source)).toBe("path_policy_denied");
+    expect(textFromToolResult(observed.source)).not.toContain("source.pdf");
   }, 30_000);
 
   it("does not overwrite a config that already exists", async () => {

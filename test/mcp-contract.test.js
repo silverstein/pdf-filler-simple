@@ -153,7 +153,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // lowered smaller glyph run and writes it as Unicode subscript characters. No
 // tool name, description, input schema, or read-only annotation changes.
 // Previously cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d.
-const TOOL_CONTRACT_SHA256 = "e5328f44d1f1f01a2f015d756cb13c1980b84c8042cdd1d8470699b9931b67ad";
+const TOOL_CONTRACT_SHA256 = "54287c9c708f3a6db5f0f2a6aab6e03d01c3feb1ac4931a79b3f7e42a91b3afa";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

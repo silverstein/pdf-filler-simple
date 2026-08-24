@@ -101,7 +101,7 @@ describe("get_allowed_directories", () => {
     expect(structured.directories).toEqual([firstDirectory]);
   }, 30_000);
 
-  it("answers without a refusal when nothing is configured", async () => {
+  it("reports the private import workspace on a fresh plugin install", async () => {
     const emptyPluginData = path.join(tempDirectory, "empty-plugin-data");
     await fs.mkdir(emptyPluginData, { recursive: true });
 
@@ -110,14 +110,17 @@ describe("get_allowed_directories", () => {
       env: { HOME: path.join(tempDirectory, "home"), PLUGIN_DATA: emptyPluginData },
     }, client => client.callTool({ name: "get_allowed_directories", arguments: {} }));
 
-    // Reporting the boundary is not reaching past it, so an unconfigured
-    // server must still answer this question rather than deny it.
+    const workspace = path.join(emptyPluginData, "workspace");
     expect(result.isError).not.toBe(true);
-    expect(result.structuredContent.configured).toBe(false);
-    expect(result.structuredContent.directories).toEqual([]);
-    expect(result.structuredContent.config_path).toBe(
-      path.join(tempDirectory, "home", ".pdf-tools", "config.json"),
-    );
+    expect(result.structuredContent).toMatchObject({
+      configured: true,
+      directories: [workspace],
+      source: "plugin_workspace",
+      config_path: path.join(emptyPluginData, "config.json"),
+    });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(workspace)).mode & 0o777).toBe(0o700);
+    }
   }, 30_000);
 
   it("is annotated read-only and takes no arguments", async () => {

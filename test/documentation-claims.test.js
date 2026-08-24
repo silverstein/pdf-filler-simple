@@ -320,6 +320,21 @@ describe("documentation capability claims", () => {
     expect(sourceManifest.long_description).toMatch(/returned through MCP may be processed under the selected host or model provider's data terms/i);
     expect(violations).toEqual([]);
   });
+
+  it("keeps host import authority distinct from PDF Tools direct folder scope", async () => {
+    const readme = await readRepositoryFile("README.md");
+    const packaging = await readRepositoryFile("docs/agent-plugins-packaging.md");
+    const threatModel = await readRepositoryFile("docs/FOLDER_SCOPE_THREAT_MODEL.md");
+    const pluginBuilder = await readRepositoryFile("scripts/build-agent-plugin.mjs");
+    const joined = [readme, packaging, threatModel, pluginBuilder].join("\n");
+
+    expect(readme).toMatch(/private PDF Tools workspace/i);
+    expect(packaging).toMatch(/direct-call boundary, not a source-confidentiality boundary/i);
+    expect(threatModel).toMatch(/Full Access host may read an outside file and copy it into the[\s\S]{0,20}workspace/i);
+    expect(pluginBuilder).toMatch(/host's permissions govern which files it may import/i);
+    expect(joined).not.toMatch(/extension only opens folders you have listed/i);
+    expect(joined).not.toMatch(/fresh install allows no directories/i);
+  });
 });
 
 /*

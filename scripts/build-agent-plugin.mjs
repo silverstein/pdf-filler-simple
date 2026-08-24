@@ -77,7 +77,7 @@ const PLUGIN_MANIFEST_NAME = "pdf-tools";
 // request against this string before any tool is loaded, and the previous
 // wording ("inspect, fill, sign, merge...") shared no words with the request.
 const PLUGIN_DESCRIPTION =
-  "Open any PDF already on your computer and work with it: read and search it in an interactive viewer, fill and sign forms, extract text and data, merge, split, and compare documents. Your files never leave your machine.";
+  "Open PDFs on your computer and work with them: read and search, fill and sign forms, extract data, merge, split, and compare. File operations stay local; content returned to your host follows its data terms.";
 
 const PLUGIN_MANIFEST = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
@@ -120,7 +120,7 @@ const CODEX_MANIFEST = {
     displayName: "PDF Tools",
     shortDescription: "Local PDF workstation: read, fill, sign, compare, convert.",
     longDescription:
-      "Work with PDFs on your own machine. Read text and layout with real coordinates, convert to Markdown with evidence-backed tables, fill and validate forms, merge, split and reorder pages, compare two documents across several channels, place signatures, and inspect accessibility signals. Files are never uploaded, and the extension only opens folders you have listed.",
+      "Work with PDFs on your own machine. Read text and layout with real coordinates, convert to Markdown with evidence-backed tables, fill and validate forms, merge, split and reorder pages, compare two documents across several channels, place signatures, and inspect accessibility signals. PDF Tools uses a private import workspace by default; direct folder access is optional. Your host's permissions govern which files it may import, and content returned to the host follows its data terms.",
     developerName: "Open Document Alliance",
     category: "Productivity",
     capabilities: ["Document workflows", "Forms", "Extraction", "Safety checks"],
@@ -209,9 +209,9 @@ function smokeLaunch(pluginDir) {
     )));
     const child = spawn(command, args, {
       cwd,
-      // No allowed directories configured: the server starts and lists tools,
-      // and refuses file operations until configured. That is the intended
-      // fail-closed posture, and it is what a fresh install looks like.
+      // The smoke environment has no PLUGIN_DATA, so it exercises the generic
+      // stdio fail-closed posture. Agent Plugin hosts supply PLUGIN_DATA and get
+      // the private import workspace covered by the runtime tests.
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -294,9 +294,8 @@ async function main() {
     const { files, bytes } = directoryStats(outputDir);
     console.error(`[plugin] done: ${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MB uncompressed`);
     console.error(`[plugin] layout: plugin.json, mcp.json, .codex-plugin/, assets/, bin/, server/, skills/, node_modules/, dist-ui/`);
-    console.error(`[plugin] note: a fresh install allows no directories. On first run the server`);
-    console.error(`[plugin]       writes \${PLUGIN_DATA}/config.json and every refusal names that`);
-    console.error(`[plugin]       path; the user lists their folders there and restarts.`);
+    console.error(`[plugin] note: a fresh install uses \${PLUGIN_DATA}/workspace as a private import workspace.`);
+    console.error(`[plugin]       Optional direct folder access is configured in \${PLUGIN_DATA}/config.json.`);
   } finally {
     rmSync(stagingDir, { recursive: true, force: true });
   }

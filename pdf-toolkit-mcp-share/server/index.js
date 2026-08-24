@@ -24,7 +24,16 @@ import {
   degrees as pdfDegrees,
 } from "pdf-lib";
 import { fileURLToPath } from "url";
-import { constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  constants as fsConstants,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { homedir, platform as osPlatform } from "os";
@@ -1526,12 +1535,10 @@ function parsePathListValue(rawValue) {
     .filter(Boolean);
 }
 
-// The allowed set is established only by explicit configuration. A host that
-// substitutes nothing — every Agent Plugins 1.0.0 client, and any MCPB host
-// whose substitution failed — leaves this empty, and an empty set denies every
-// user path rather than silently granting the home folders. Failing closed is
-// the point: an unexpanded template means we were never configured, which is
-// not a reason to choose a boundary on the user's behalf.
+// Direct access to user folders is established only by explicit configuration.
+// A host that substitutes nothing never receives an implicit home-folder
+// grant. Agent Plugin installs instead get one private workspace under
+// PLUGIN_DATA; ordinary stdio installs without PLUGIN_DATA still fail closed.
 // Agent Plugins 1.0.0 has no user-configuration mechanism and expands only
 // ${PLUGIN_ROOT} and ${PLUGIN_DATA}, so a plugin install can reach neither the
 // CLI flag nor the environment variable a host would otherwise set. PLUGIN_DATA
@@ -1539,6 +1546,7 @@ function parsePathListValue(rawValue) {
 // survives plugin updates. A plugin data file outranks the well-known home file,
 // while host-supplied argument or environment configuration outranks both.
 const PLUGIN_DATA_CONFIG_NAME = "config.json";
+const PLUGIN_WORKSPACE_DIRECTORY_NAME = "workspace";
 const HOME_CONFIG_DIRECTORY_NAME = ".pdf-tools";
 
 function pluginDataConfigPath() {
@@ -1551,10 +1559,51 @@ function homeConfigPath() {
   return path.join(homedir(), HOME_CONFIG_DIRECTORY_NAME, PLUGIN_DATA_CONFIG_NAME);
 }
 
-// A fresh install has nothing configured and must refuse every path. Writing
-// the template turns "configure the allowed directories somehow" into a named
-// file the user can open. Editing it is a human action the agent cannot
-// perform, which is what keeps widening off the agent's own authority.
+function pluginWorkspacePath() {
+  const pluginData = process.env.PLUGIN_DATA;
+  if (!pluginData || pluginData.includes("${")) return null;
+  return path.join(path.resolve(pluginData), PLUGIN_WORKSPACE_DIRECTORY_NAME);
+}
+
+// Agent Plugin hosts guarantee a private writable PLUGIN_DATA directory but do
+// not currently pass a host-selected folder list to the MCP server. Give a
+// fresh install one useful, narrow place to work without granting the rest of
+// the user's home directory. A full-access host may intentionally import files
+// into this directory; that is host-authorized copying, not direct PDF Tools
+// access to the source path.
+function ensurePluginWorkspace(workspacePath) {
+  if (!workspacePath) return null;
+  const pluginData = path.dirname(workspacePath);
+  try {
+    mkdirSync(pluginData, { recursive: true, mode: 0o700 });
+    if (existsSync(workspacePath)) {
+      const stat = lstatSync(workspacePath);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw new Error("workspace is not a physical directory");
+      }
+    } else {
+      mkdirSync(workspacePath, { mode: 0o700 });
+    }
+    chmodSync(workspacePath, 0o700);
+    const canonicalPluginData = realpathSync.native(pluginData);
+    const canonicalWorkspace = realpathSync.native(workspacePath);
+    if (!isPathInsideDirectory(canonicalWorkspace, canonicalPluginData)
+      || canonicalWorkspace === canonicalPluginData) {
+      throw new Error("workspace resolves outside plugin data");
+    }
+    return { display: workspacePath, canonical: canonicalWorkspace };
+  } catch (error) {
+    console.error(
+      `[pdf-tools] Could not establish the private plugin workspace at ${workspacePath}: ${error.message}. `
+      + "No directories are allowed until the workspace or an explicit configuration is fixed.",
+    );
+    return null;
+  }
+}
+
+// The template is the optional direct-folder override. Editing it is a human
+// action the PDF Tools server cannot perform, which keeps direct path widening
+// off the server's own authority.
 function ensurePluginDataConfigTemplate(configPath) {
   if (!configPath || existsSync(configPath)) return;
   try {
@@ -1562,9 +1611,9 @@ function ensurePluginDataConfigTemplate(configPath) {
     writeFileSync(
       configPath,
       JSON.stringify({
-        _comment: "Folders this server may read and write. Absolute paths only. "
-          + "It replaces any built-in default rather than adding to it, so list every "
-          + "folder you need. Restart the server after editing.",
+        _comment: "Optional folders this server may read and write directly. Absolute paths only. "
+          + "A non-empty list replaces the private plugin workspace rather than adding to it, "
+          + "so list every direct folder you need. Restart the server after editing.",
         allowedDirectories: [],
       }, null, 2) + "\n",
       { mode: 0o600 },
@@ -1635,6 +1684,7 @@ function grantsAccessToOwnConfig(directories, configPath) {
 // get_allowed_directories so an operator can tell where to change it.
 let ALLOWED_DIRECTORY_SOURCE = "none";
 const PLUGIN_DATA_CONFIG_PATH = pluginDataConfigPath();
+const PLUGIN_WORKSPACE_PATH = pluginWorkspacePath();
 const HOME_CONFIG_PATH = homeConfigPath();
 let ALLOWED_DIRECTORY_CONFIG_PATH = PLUGIN_DATA_CONFIG_PATH;
 
@@ -1666,6 +1716,13 @@ function buildAllowedDirectories() {
       if (fromHomeConfig.status !== "absent") {
         configuredDirectories = fromHomeConfig.directories;
         ALLOWED_DIRECTORY_SOURCE = fromHomeConfig.directories.length ? "home_config_file" : "none";
+      } else if (PLUGIN_WORKSPACE_PATH) {
+        ensurePluginDataConfigTemplate(pluginConfigPath);
+        const workspace = ensurePluginWorkspace(PLUGIN_WORKSPACE_PATH);
+        configuredDirectories = workspace ? [workspace.display] : [];
+        boundaryConfigPath = pluginConfigPath;
+        ALLOWED_DIRECTORY_CONFIG_PATH = pluginConfigPath;
+        ALLOWED_DIRECTORY_SOURCE = workspace ? "plugin_workspace" : "none";
       } else {
         configuredDirectories = [];
         ALLOWED_DIRECTORY_SOURCE = "none";
@@ -6838,6 +6895,9 @@ async function handleToolCall(request) {
         const configured = directories.length > 0;
         const summary = configured
           ? `Allowed folders (${ALLOWED_DIRECTORY_SOURCE.replace(/_/g, " ")}):\n${directories.join("\n")}`
+            + (ALLOWED_DIRECTORY_SOURCE === "plugin_workspace"
+              ? "\nYour host may copy files you select into this private workspace. To grant PDF Tools direct access to other folders, edit the config file and restart."
+              : "")
           : `No folders are allowed yet. List them in ${HOME_CONFIG_PATH} under "allowedDirectories", then restart this server.`
             + (PLUGIN_DATA_CONFIG_PATH
               ? ` A plugin-specific file at ${PLUGIN_DATA_CONFIG_PATH} takes precedence when present.`

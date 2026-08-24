@@ -38,6 +38,18 @@ store and do not need to be added manually.
 }
 ```
 
+### ChatGPT / Codex Agent Plugin
+
+A fresh Agent Plugin install uses a private PDF Tools workspace. There is no
+folder setup step: when the host is allowed to read a file, it can copy the file
+into that workspace for PDF Tools to process. PDF Tools itself still refuses
+direct paths outside the workspace.
+
+This is a tool boundary, not a confidentiality boundary against the host. If
+ChatGPT is set to Full Access, its broader filesystem permission governs what it
+can import. Optional direct folder access can be configured separately in the
+plugin's `config.json`; a non-empty list replaces the private workspace.
+
 ## Why It's Different
 
 Claude already knows how to read PDFs in limited ways. PDF Tools goes much further:
@@ -49,7 +61,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - **Page organization:** merge, split, rotate, reorder, and apply full page plans in one pass
 - **Extraction and analysis:** page-bounded reads, text search, page/region rendering, CSV export, page-level analysis, metadata, and validation
 - **Local file operations:** PDF Tools reads, renders, edits, and saves files on your machine instead of uploading them to a separate PDF service
-- **Directory sandbox:** Claude Desktop users can choose which local folders PDF Tools may read from or write to
+- **Scoped file operations:** PDF Tools directly reads and writes only its active folders; a host with broader filesystem permission may import files into the private plugin workspace
 
 Text, images, and metadata returned by PDF Tools may be processed by Claude or
 another MCP host. Your host and model provider's data terms apply to that

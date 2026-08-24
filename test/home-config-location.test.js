@@ -346,7 +346,7 @@ describe("well-known home allowed-directories configuration", () => {
     await expect(fs.stat(path.join(outside, "config.json"))).rejects.toMatchObject({ code: "ENOENT" });
   }, 30_000);
 
-  it("names the friendly path before plugin data and emits no shell recipe", async () => {
+  it("names the private workspace on a plugin denial and emits no shell recipe", async () => {
     const home = path.join(tempDirectory, "refusal-home");
     const pluginData = path.join(tempDirectory, "refusal-plugin-data");
     await fs.mkdir(pluginData, { recursive: true });
@@ -357,8 +357,8 @@ describe("well-known home allowed-directories configuration", () => {
     }, client => client.callTool({ name: "list_pdfs", arguments: { directory: tempDirectory } }));
 
     const text = textFromToolResult(refusal);
-    expect(text.indexOf(homeConfigPath(home))).toBeGreaterThanOrEqual(0);
-    expect(text.indexOf(homeConfigPath(home))).toBeLessThan(text.indexOf(path.join(pluginData, "config.json")));
+    expect(text).toContain(path.join(pluginData, "workspace"));
+    expect(text).not.toContain(homeConfigPath(home));
     expect(text).not.toMatch(/(?:^|\s)(?:cat|echo|printf|mkdir|tee)\s/);
   }, 30_000);
 });

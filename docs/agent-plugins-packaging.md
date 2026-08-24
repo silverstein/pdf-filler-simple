@@ -154,26 +154,26 @@ Adding `mcp.json` is gated on the portable allowed-directories work and a publis
 
 ### Portable allowed-directories requirements
 
-**Implementation status.** Requirements 1, 2, 3, and 7 are implemented on this branch, along with the non-greedy argument parsing in requirement 8. The allowed set is now established only by explicit configuration, an unexpanded placeholder is treated as absent configuration rather than as a reason to substitute defaults, the private store is no longer a general user-path allowance, and refusals name neither the allowed set nor the attempted path.
+**Implementation status.** Direct user-folder access is established only by explicit configuration. An unexpanded placeholder never becomes a home-folder grant. When Agent Plugins supplies `PLUGIN_DATA` and no direct folders are configured, PDF Tools creates and uses only `${PLUGIN_DATA}/workspace`. This makes a fresh install useful without treating Documents, Downloads, Desktop, or the rest of `PLUGIN_DATA` as implicitly approved.
 
-The `${PLUGIN_DATA}` config-file layer is now implemented too, along with the self-escalation guard from requirement 5. `${PLUGIN_DATA}/config.json` is the lowest precedence layer, below the CLI flag and the environment variable, and layers are never merged. On first run the server writes a template with an empty list, and every refusal names that exact path, so a fresh install is actionable rather than merely safe. A set that would reach the config file is refused whole rather than trimmed, because an allowed set containing its own config lets a write tool rewrite the boundary on the next launch.
+`${PLUGIN_DATA}/config.json` remains the optional direct-folder layer, below the CLI flag and environment variable, and layers are never merged. A non-empty config replaces the private workspace. The workspace is a physical child directory (mode 0700 on POSIX; inherited plugin-data ACL on Windows); a symlink or other path that resolves outside `PLUGIN_DATA` fails closed. A configured set that reaches its own config file is refused whole rather than trimmed.
 
-Widening deliberately remains a human action: the config file is edited by the operator, not by a tool. A tool that can widen its own sandbox is a privilege-escalation path, and document text is untrusted input this server already refuses to take instructions from.
+Direct-path widening deliberately remains a human action: the config file is edited by the operator, not by a PDF Tools tool. Import is different. A host with filesystem permission may copy a user-selected file into the workspace. That does not widen PDF Tools' direct path boundary; it exercises the host's separate authority.
 
-Still unimplemented: a read-only tool reporting the active set and its source, runtime narrowing, and roots intersection (requirements 4 and 6). The read-only tool is the next useful increment; it was kept out of the config work because adding a tool moves the tool-contract digest and the pinned tool count, which deserves its own change.
+`get_allowed_directories` reports the active set and distinguishes `plugin_workspace` from explicit configuration. Runtime narrowing and MCP roots intersection remain separate future work.
 
-One consequence to carry into release notes: a host that previously relied on the implicit home-folder grant now receives a refusal until directories are configured. That is the intended behavior, and it is a behavior change for existing installs.
+One consequence to carry into release notes: Agent Plugin installs no longer need a folder allowlist merely to start. They use the private import workspace unless the operator opts into direct folders.
 
-1. Precedence, highest first: an explicit CLI flag, then `ALLOWED_DIRECTORIES` in the environment, then a config file under `${PLUGIN_DATA}`. The highest layer that supplies a set wins outright. Layers are never merged, because a union across sources produces a boundary nobody chose.
-2. **No implicit default grant.** When no layer supplies a set, the server serves no file tools and says so actionably. It does not fall back to the user's home folders. The Documents, Downloads, and Desktop defaults in the MCPB manifest are a *host-presented* default the user can see and edit before approving; a server-side constant on a host with no configuration UI is not the same thing and must not be treated as equivalent consent.
+1. Precedence, highest first: explicit CLI flag, `ALLOWED_DIRECTORIES`, non-empty `${PLUGIN_DATA}/config.json`, non-empty well-known home config, then the private plugin workspace. Layers are never merged.
+2. **No implicit user-folder grant.** The private workspace is not Documents, Downloads, Desktop, the home directory, or all of `PLUGIN_DATA`. Without `PLUGIN_DATA`, an unconfigured generic stdio launch still refuses all file paths.
 3. **Unresolved host configuration fails closed.** A value that still contains an unexpanded placeholder means the host did not configure us. That is a refusal, not a reason to substitute a default.
-4. A tool may read the allowed set and may narrow it at runtime. **Widening requires a restart and an edit the agent cannot perform.** A tool that can widen its own sandbox is a privilege-escalation path, and document text is untrusted input the server already refuses to take instructions from (`server/index.js:1238`). An in-process approval prompt is not an authorization boundary.
+4. A tool may read the active set. **Direct widening requires a restart and an edit PDF Tools cannot perform.** The host may independently import a file into the private workspace when its own permission model allows that operation.
 5. The config file and its directory are denied to every tool, compared by canonical path and by `(dev, ino)` rather than by string prefix, so a symlink alias cannot reach it.
 6. If MCP roots are honored, they **intersect** the established set and never replace it. Roots are client-declared, and the protocol constrains nothing about what a client may declare.
 7. Refusals are identical regardless of which precedence layer supplied the set, and identical across every tool.
-8. Tests cover each precedence layer, the empty-configuration refusal, the unexpanded-placeholder refusal, and the narrowing/widening asymmetry — on a host with no user-configuration mechanism at all.
+8. Tests cover each precedence layer, workspace creation and mode, direct access denial outside the workspace, self-configuration denial, symlink escape, and unresolved placeholders.
 
-This is a security boundary, not plumbing. It should carry its own bead and its own tests, and it must not be inferred from the MCPB behavior by analogy.
+This is a PDF Tools direct-call boundary, not a source-confidentiality boundary against the host. Host filesystem permission, PDF Tools path policy, and model-provider data handling are separate controls and must be described separately.
 
 ## Acceptance gates
 
