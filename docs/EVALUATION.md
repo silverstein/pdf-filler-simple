@@ -516,12 +516,30 @@ completely duplicated title block is admitted only when the parent, agency,
 and identical series line repeat in balanced counts, matching observed
 renderer duplication while preserving one exact citation value.
 
+Document-map version `1.1.0-experimental` preserves every retained first-page
+line even when the renderer's cross-page furniture detector recognizes the
+same masthead elsewhere. This keeps cover-page agency evidence source-citable
+without disabling bounded furniture removal on later pages.
+
 This helper supplies a source-supported candidate proposal; it does not weaken
 the measured schema, scorer, citation replay, or complete-result contract. It
 performs no model call, provider egress, holdout-oracle access, scoring,
 execution authorization, or benchmark claim. It remains internal and excluded
 from the MCP server and both package inventories. Any measured use requires a
 wholly new comparison authority with new trial and attempt identities.
+
+The same internal module also exposes a bounded publication-citation proposal.
+It accepts one exact page 1–4 document-map chunk containing the literal standard
+USGS public-domain disclaimer followed immediately by either the exact
+`Suggested citation:` marker or the standard unlabeled citation form. It retains
+the exact source bytes only through the first DOI-ending sentence and excludes
+associated-data material. Missing or normalized labels, later-page references,
+unsupported series, missing DOI evidence, ambiguous chunks, and non-map chunk
+identities fail closed. As with agency evidence, the helper only proposes; the
+candidate controller must explicitly invoke it and replay its exact citation.
+One labelled citation may follow the last of multiple byte-identical standard
+disclaimers because the sole exact marker makes that source block unambiguous;
+multiple unlabelled disclaimer blocks still reject.
 
 ## Scoring contracts
 

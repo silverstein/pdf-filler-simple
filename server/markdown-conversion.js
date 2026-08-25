@@ -3485,7 +3485,13 @@ export function analyzeValidatedPdfPagesForDocumentMap(pages) {
   return pages.map(page => {
     const headings = headingLevels(page);
     const headingContinuations = headingContinuationIds(page, headings);
-    const pageFurniture = furniturePlans.get(page.page) ?? [];
+    // A cover/title page is itself source evidence. Cross-page furniture
+    // planning can correctly recognize repeated masthead lines while still
+    // being wrong about their semantic role on page 1 (for example, the
+    // publishing agency on a report cover). Preserve every retained page-1
+    // line in the source-bound map; later pages continue to use the renderer's
+    // bounded furniture rules.
+    const pageFurniture = page.page === 1 ? [] : furniturePlans.get(page.page) ?? [];
     const furnitureLineIds = new Set(pageFurniture.map(entry => entry.lineId));
     const analysis = segmentPageLines(page);
     const linkState = analyzePageLinks(page, analysis, headings, furnitureLineIds);

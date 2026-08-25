@@ -10,7 +10,7 @@ import {
 
 export const DOCUMENT_MAP_IDENTITY = Object.freeze({
   name: "pdf-tools.source-bound-document-map",
-  version: "1.0.0-experimental",
+  version: "1.1.0-experimental",
 });
 
 export const DEFAULT_DOCUMENT_MAP_CHUNK_POLICY = Object.freeze({

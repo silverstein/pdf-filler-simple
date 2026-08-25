@@ -299,18 +299,23 @@ describe("source-bound document map and chunk contract", () => {
       schemaBytes: SCHEMA,
       layouts: furnitureLayouts,
     });
-    expect(map.coverage.furniture_omitted_items).toBeGreaterThanOrEqual(6);
+    expect(map.coverage.furniture_omitted_items).toBeGreaterThanOrEqual(4);
     expect(map.gaps.items.filter(gap => gap.code === "PAGE_FURNITURE_REMOVED"))
-      .toHaveLength(3);
-    const contents = map.chunks.descriptors.map(descriptor => readSourceBoundDocumentChunk({
+      .toHaveLength(2);
+    const chunks = map.chunks.descriptors.map(descriptor => readSourceBoundDocumentChunk({
       documentMap: map,
       chunkId: descriptor.chunk_id,
       sourceBytes: furnitureSourceBytes,
       schemaBytes: SCHEMA,
       layouts: furnitureLayouts,
-    }).content).join("\n");
-    expect(contents).not.toContain("Annual Report 2026");
-    expect(contents).not.toMatch(/Page [123]/u);
+    }));
+    const contents = chunks.map(chunk => chunk.content).join("\n");
+    expect(chunks.filter(chunk => chunk.page_range.start_page === 1)
+      .map(chunk => chunk.content).join("\n")).toContain("Annual Report 2026");
+    expect(chunks.filter(chunk => chunk.page_range.start_page > 1)
+      .map(chunk => chunk.content).join("\n")).not.toContain("Annual Report 2026");
+    expect(contents).toContain("Page 1");
+    expect(contents).not.toMatch(/Page [23]/u);
     expect(contents).toContain("OPERATING RESULTS");
   });
 
