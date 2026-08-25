@@ -497,6 +497,32 @@ E9E.5 performs no model call, provider egress, holdout scoring, candidate
 execution, release packaging, publication, or benchmark claim, and remains
 excluded from both package inventories.
 
+### Experimental source-supported agency evidence
+
+The failed E9E.6 candidate retained source-backed contributors, table regions,
+and occasional publication citations, but every valid model proposal left the
+required publication agency unset. The bounded repair in
+`scripts/verified-extraction-agency-evidence.mjs` does not infer an agency from
+the filename, corpus, report family, or a later-page organizational mention.
+It proposes an agency only when one page-one document-map chunk contains the
+literal parent organization, literal agency, and a recognized publication
+series line. The proposal cites the exact agency string in that same chunk.
+
+The current experimental policy admits only the exact U.S. Department of the
+Interior / U.S. Geological Survey title-page signature. Case changes,
+normalization, missing hierarchy or series evidence, later-page evidence,
+unbalanced duplicated lines, and more than one qualifying chunk reject. A
+completely duplicated title block is admitted only when the parent, agency,
+and identical series line repeat in balanced counts, matching observed
+renderer duplication while preserving one exact citation value.
+
+This helper supplies a source-supported candidate proposal; it does not weaken
+the measured schema, scorer, citation replay, or complete-result contract. It
+performs no model call, provider egress, holdout-oracle access, scoring,
+execution authorization, or benchmark claim. It remains internal and excluded
+from the MCP server and both package inventories. Any measured use requires a
+wholly new comparison authority with new trial and attempt identities.
+
 ## Scoring contracts
 
 Accessibility claims have an additional fail-closed evidence ladder. The
