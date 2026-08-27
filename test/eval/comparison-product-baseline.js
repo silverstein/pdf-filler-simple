@@ -40,7 +40,7 @@ function intersectionOverUnion(left, right) {
 }
 
 export function assertProductMatchesCanonicalAdapter(product, canonicalPair) {
-  if (product.status !== "complete"
+  if (!["complete", "partial"].includes(product.status)
     || product.before_source.sha256 !== canonicalPair.before_sha256
     || product.after_source.sha256 !== canonicalPair.after_sha256
     || !product.source_immutability.before.unchanged
@@ -61,8 +61,15 @@ export function assertProductMatchesCanonicalAdapter(product, canonicalPair) {
     throw new Error("compare_pdfs page relations do not match the canonical adapter");
   }
   for (const channel of COMPARISON_CHANNELS) {
-    if (product.coverage[channel].status !== "supported") {
-      throw new Error(`compare_pdfs ${channel} coverage is not complete in the seven-pair slice`);
+    // The frozen evaluation schema predates compare_pdfs' typed `partial`
+    // status, so it represents every less-than-supported product channel as
+    // `unavailable`. Require that projection to agree exactly instead of
+    // forcing the product to overstate coverage merely to enter the scorer.
+    const projectedStatus = product.coverage[channel].status === "supported"
+      ? "supported"
+      : "unavailable";
+    if (canonicalPair.channel_status[channel] !== projectedStatus) {
+      throw new Error(`compare_pdfs ${channel} coverage disagrees with the evaluation projection`);
     }
   }
   const productObservations = new Map(product.observations.map(item => [item.id, item]));
