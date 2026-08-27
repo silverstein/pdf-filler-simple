@@ -22,8 +22,8 @@ const MAPPER_CONTRACT = Object.freeze({
   path: "/signature_request/send",
   informational_reference_url: "https://developers.luminpdf.com/tabs/api-reference/api/signature-requests/send-signature-request",
   official_openapi_source_url: "https://developers.luminpdf.com/tabs/api-reference/openapi.json",
-  official_openapi_source_bytes: 121_913,
-  official_openapi_source_sha256: "d59ba4a27b0ce795c1d366a81735a3dc918619951ecc5ec3fb7a7f80d878d5bc",
+  official_openapi_source_bytes: 118_174,
+  official_openapi_source_sha256: "8842b7938870ea05b8c8d5869a33cc16b33b2eb0b8f2b1c60607203e39bfd037",
   official_openapi_projection_sha256: "8f3fb987391ce1552ff25c8784b9dc2725cac9b2f833abe005e9f2569a9b2701",
   official_reference_identity_status: "exact_snapshot_pinned",
   authentication_alternatives: [

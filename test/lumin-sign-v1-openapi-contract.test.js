@@ -111,8 +111,8 @@ describe("Lumin Sign v1 official OpenAPI contract", () => {
   it("pins the official source without embedding provider credentials or transport", () => {
     expect(LUMIN_SIGN_V1_OPENAPI_SOURCE).toEqual({
       url: "https://developers.luminpdf.com/tabs/api-reference/openapi.json",
-      bytes: 121_913,
-      sha256: "d59ba4a27b0ce795c1d366a81735a3dc918619951ecc5ec3fb7a7f80d878d5bc",
+      bytes: 118_174,
+      sha256: "8842b7938870ea05b8c8d5869a33cc16b33b2eb0b8f2b1c60607203e39bfd037",
     });
     expect(JSON.stringify(LUMIN_SIGN_V1_OPENAPI_PROJECTION)).not.toMatch(
       /credential|secret|access_token|refresh_token/i,

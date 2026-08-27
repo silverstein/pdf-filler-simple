@@ -168,7 +168,7 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(result.request).not.toHaveProperty("authorization");
     expect(result.request.body).not.toHaveProperty("api_key");
     expect(LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256).toBe(
-      "1c4c9ccff8f17e7317f280101cfa7a3df0850698edf8e8fdd57d376bf052657e",
+      "cb9f421e408d9388d6ea2ba553e8d2731aceed0fc5d7264c7cbafb630a528c39",
     );
   });
 
