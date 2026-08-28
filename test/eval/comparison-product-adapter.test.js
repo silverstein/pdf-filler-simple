@@ -50,6 +50,7 @@ function fixture() {
   const canonical = {
     before_sha256: BEFORE,
     after_sha256: AFTER,
+    channel_status: Object.fromEntries(COMPARISON_CHANNELS.map(channel => [channel, "supported"])),
     alignments: [{ before_page: 1, after_page: 1, relation: "same", anchor: "opaque" }],
     observations: [{
       id: "canonical.before",
@@ -100,5 +101,25 @@ describe("frozen-v1 compare_pdfs adapter", () => {
     const wrongRegion = structuredClone(product);
     wrongRegion.observations[0].display_region = [400, 400, 10, 10];
     expect(() => assertProductMatchesCanonicalAdapter(wrongRegion, canonical)).toThrow(/canonical event/);
+  });
+
+  it("projects typed partial coverage into frozen-v1 unavailable without accepting missing coverage", () => {
+    const { product, canonical } = fixture();
+    product.coverage.semantic = {
+      status: "partial",
+      reason_codes: ["REPEATED_PAGE_AMBIGUITY"],
+    };
+    canonical.channel_status.semantic = "unavailable";
+    expect(() => assertProductMatchesCanonicalAdapter(product, canonical)).not.toThrow();
+
+    const missingProductCoverage = structuredClone(product);
+    delete missingProductCoverage.coverage.semantic;
+    expect(() => assertProductMatchesCanonicalAdapter(missingProductCoverage, canonical))
+      .toThrow(/cannot be projected/);
+
+    const missingCanonicalCoverage = structuredClone(canonical);
+    delete missingCanonicalCoverage.channel_status.semantic;
+    expect(() => assertProductMatchesCanonicalAdapter(product, missingCanonicalCoverage))
+      .toThrow(/cannot be projected/);
   });
 });

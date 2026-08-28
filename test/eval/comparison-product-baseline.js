@@ -65,10 +65,16 @@ export function assertProductMatchesCanonicalAdapter(product, canonicalPair) {
     // status, so it represents every less-than-supported product channel as
     // `unavailable`. Require that projection to agree exactly instead of
     // forcing the product to overstate coverage merely to enter the scorer.
-    const projectedStatus = product.coverage[channel].status === "supported"
+    const productCoverage = product.coverage?.[channel];
+    const canonicalStatus = canonicalPair.channel_status?.[channel];
+    if (!productCoverage || !["supported", "partial", "unavailable"].includes(productCoverage.status)
+      || !["supported", "unavailable"].includes(canonicalStatus)) {
+      throw new Error(`compare_pdfs ${channel} coverage cannot be projected into the evaluation schema`);
+    }
+    const projectedStatus = productCoverage.status === "supported"
       ? "supported"
       : "unavailable";
-    if (canonicalPair.channel_status[channel] !== projectedStatus) {
+    if (canonicalStatus !== projectedStatus) {
       throw new Error(`compare_pdfs ${channel} coverage disagrees with the evaluation projection`);
     }
   }
