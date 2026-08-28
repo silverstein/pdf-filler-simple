@@ -116,6 +116,9 @@ export function prepareResponseAdmissionController({
       batchChunkIds: chunkIds,
     });
     const schema = buildVerifiedExtractionProposalSchema({ allowedFields: policy.allowed_fields });
+    const policyKinds = new Set(policy.chunk_policies.map(item => item.evidence_admission));
+    assertion(policyKinds.size === 1,
+      "a batch cannot cross the source-evidence/reference-section boundary");
     return {
       batch_ordinal: index + 1,
       chunk_ids: [...chunkIds],
@@ -211,11 +214,13 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         model_call_count: 0,
         raw_response_artifact: null,
         response_observation: null,
+        admission: null,
         admission_sha256: null,
       });
       continue;
     }
     let invoked;
+    let retainedRawArtifact = null;
     try {
       invoked = await invokeBatch({
         batch: structuredClone(batch),
@@ -228,6 +233,7 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         ? invoked.response_bytes
         : Buffer.from(invoked.response_bytes);
       validateRawResponseArtifact(invoked.raw_response_artifact, responseBytes);
+      retainedRawArtifact = structuredClone(invoked.raw_response_artifact);
       const admission = admitStructuredModelResponse({
         responseBytes,
         expectedModel: plan.expected_model,
@@ -247,8 +253,9 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         chunk_ids: batch.chunk_ids,
         status: "admitted",
         model_call_count: 1,
-        raw_response_artifact: invoked.raw_response_artifact,
+        raw_response_artifact: retainedRawArtifact,
         response_observation: admission.observation,
+        admission,
         admission_sha256: admissionSha256,
       });
     } catch (error) {
@@ -264,8 +271,9 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         chunk_ids: batch.chunk_ids,
         status: failure.reason_code,
         model_call_count: invoked ? 1 : 0,
-        raw_response_artifact: invoked?.raw_response_artifact ?? null,
+        raw_response_artifact: retainedRawArtifact,
         response_observation: typed ? error.observation : null,
+        admission: null,
         admission_sha256: null,
       });
       if (invoked) modelCalls += 1;

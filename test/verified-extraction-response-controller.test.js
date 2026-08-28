@@ -76,6 +76,7 @@ describe("verified extraction response controller", () => {
       benchmark_claim_ready: false,
     });
     expect(result.receipt.receipt_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.receipt.batch_outcomes[0].admission).toEqual(result.admissions[0]);
   });
 
   it.each([
@@ -145,6 +146,7 @@ describe("verified extraction response controller", () => {
     expect(result.receipt.outcome).toMatchObject({
       classification: "harness_failure", reason_code: "controller_failure",
     });
+    expect(result.receipt.batch_outcomes[0].raw_response_artifact).toBeNull();
   });
 
   it("remains internal experimental source with no execution authority", () => {
