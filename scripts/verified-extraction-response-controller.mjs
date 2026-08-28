@@ -44,7 +44,7 @@ function boundedString(value, label, maximum = 1024) {
 function validateDocumentValidation(value) {
   exactKeys(value, [
     "document_id", "document_map_sha256", "ordered_chunk_ids", "renderer_sha256", "schema_sha256",
-    "source_sha256",
+    "source_sha256", "table_regions",
   ], "documentValidation");
   boundedString(value.document_id, "documentValidation.document_id", 512);
   for (const field of ["document_map_sha256", "renderer_sha256", "schema_sha256", "source_sha256"]) {
@@ -113,6 +113,7 @@ export function prepareResponseAdmissionController({
       documentId: documentValidation.document_id,
       documentMapSha256: documentValidation.document_map_sha256,
       documentChunks,
+      documentTableRegions: documentValidation.table_regions,
       batchChunkIds: chunkIds,
     });
     const schema = buildVerifiedExtractionProposalSchema({ allowedFields: policy.allowed_fields });
@@ -137,7 +138,7 @@ export function prepareResponseAdmissionController({
   const modelBatches = batches.filter(batch => batch.action === "model_call");
   const referenceBatches = batches.filter(batch => batch.action === "skip_reference_section");
   const plan = {
-    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.0.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.1.0-experimental" },
     attempt_id: attemptId,
     trial_id: trialId,
     document_validation: structuredClone(documentValidation),
@@ -241,6 +242,7 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         documentId: plan.document_validation.document_id,
         documentMapSha256: plan.document_validation.document_map_sha256,
         documentChunks,
+        documentTableRegions: plan.document_validation.table_regions,
         batchChunkIds: batch.chunk_ids,
         batchPolicy: batch.policy,
       });
@@ -307,6 +309,6 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
-  version: "1.0.0-experimental",
+  version: "1.1.0-experimental",
   boundary: "The controller exact-binds one validated document map and its complete ordered chunk denominator, skips the reference-section suffix before invocation, admits only strict source-replayed batch responses, derives calculation evidence from admitted proposals, and retains one denominator-preserving receipt for typed model-output or controller failure. It performs no model or provider call by itself.",
 });

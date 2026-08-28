@@ -71,6 +71,16 @@ duplicate, stale, or overflowed contributor rejects the whole contributor field
 rather than creating an apparently complete shortened list. Malformed envelopes,
 duplicate JSON members, unknown top-level fields, and reference-section calls
 still reject the whole response.
+
+`first_table` has an additional source-topology gate. The cited chunk must be
+on the proposed source page, and that page must equal the first deterministic
+table-region page in the separately validated, document-map-bound region
+inventory. The admission retains the exact region object plus its digest and
+the complete region-inventory digest. A table-of-contents or index entry that
+mentions a printed destination page cannot satisfy this gate; absent, hidden,
+reordered, stale, or substituted region evidence produces a typed rejected
+`first_table` field rather than an invented table location.
+
 The caller must supply chunks from a separately validated, SHA-bound document
 map; the helper rehashes each chunk and binds the complete ordered chunk scope
 but does not replace document-map source/schema/renderer validation.

@@ -42,6 +42,24 @@ const chunks = [
     content: "Suggested citation: River, A.B., 2025, A public-safe report.",
   }),
 ];
+const tableRegions = {
+  observed: 1,
+  returned: 1,
+  omitted: 0,
+  items: [{
+    region_id: "p1-t1",
+    page: 1,
+    reason: "TABLE_TOPOLOGY_UNKNOWN",
+    coordinate_space: "pdfjs_viewport_top_left_points",
+    bbox: { x: 10, y: 20, width: 300, height: 120 },
+    text_item_count: 8,
+    evidence_truncation: {
+      text_items: "complete", ruled_rects: "complete", ruling_segments: "complete",
+      painted_rectangles: "complete",
+    },
+  }],
+  all_items_sha256: "8".repeat(64),
+};
 
 const proposal = () => ({
   agency: {
@@ -75,7 +93,8 @@ function response({ content = JSON.stringify(proposal()), finishReason = "stop",
 
 const batchChunkIds = chunks.map(chunk => chunk.chunk_id);
 const policy = () => classifySourceBoundBatch({
-  documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks, batchChunkIds,
+  documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
+  documentTableRegions: tableRegions, batchChunkIds,
 });
 const admit = overrides => admitStructuredModelResponse({
   responseBytes: response(),
@@ -84,6 +103,7 @@ const admit = overrides => admitStructuredModelResponse({
   documentId: DOCUMENT,
   documentMapSha256: DOCUMENT_MAP_SHA256,
   documentChunks: chunks,
+  documentTableRegions: tableRegions,
   batchChunkIds,
   batchPolicy: policy(),
   ...overrides,
@@ -123,6 +143,7 @@ describe("verified extraction response admission", () => {
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: whitespaceChunks,
+      documentTableRegions: tableRegions,
       batchChunkIds,
     });
     const result = admit({
@@ -130,7 +151,12 @@ describe("verified extraction response admission", () => {
       batchPolicy: whitespacePolicy,
       responseBytes: response({ content: JSON.stringify(candidate) }),
     });
-    expect(result.contract.version).toBe("1.2.0-experimental");
+    expect(result.contract.version).toBe("1.3.0-experimental");
+    expect(result.first_table_evidence).toMatchObject({
+      document_table_regions_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      region: { region_id: "p1-t1", page: 1 },
+      region_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
     expect(result.source_replay.citations).toMatchObject([
       {
         field: "agency",
@@ -195,6 +221,7 @@ describe("verified extraction response admission", () => {
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: duplicateChunks,
+      documentTableRegions: tableRegions,
       batchChunkIds,
     });
     const result = admit({
@@ -216,6 +243,7 @@ describe("verified extraction response admission", () => {
         documentId: DOCUMENT,
         documentMapSha256: DOCUMENT_MAP_SHA256,
         documentChunks: overlappingChunks,
+        documentTableRegions: tableRegions,
         batchChunkIds,
       }),
       responseBytes: response({ content: JSON.stringify(candidate) }),
@@ -232,6 +260,7 @@ describe("verified extraction response admission", () => {
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: longChunks,
+      documentTableRegions: tableRegions,
       batchChunkIds,
     });
     expect(admit({ documentChunks: longChunks, batchPolicy: longPolicy }).source_replay.citation_count).toBe(4);
@@ -320,6 +349,7 @@ describe("verified extraction response admission", () => {
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: fullDocument,
+      documentTableRegions: tableRegions,
       batchChunkIds: [id("e")],
     });
     expect(referencePolicy).toMatchObject({
@@ -341,6 +371,7 @@ describe("verified extraction response admission", () => {
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: fullDocument,
+      documentTableRegions: tableRegions,
       batchChunkIds: [id("e")],
       batchPolicy: referencePolicy,
     })).toThrow(/not admitted for a reference-section batch/u);
@@ -366,6 +397,104 @@ describe("verified extraction response admission", () => {
     expect(result.proposal[field]).toEqual(field === "contributors" ? [] : null);
     expect(result.source_replay.citation_count).toBe(3);
     expect(() => compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })).not.toThrow();
+  });
+
+  it("rejects a contents-page table reference even when its cited chunk and proposed source page agree", () => {
+    const contentsChunk = chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("c"),
+      page_range: { start_page: 7, end_page: 7 },
+      starts_at_heading: true,
+      content: "Contents\nTable 1. Summary values .......... 12",
+    });
+    const actualTableChunk = chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("d"),
+      page_range: { start_page: 6, end_page: 6 },
+      starts_at_heading: false,
+      content: "Table 1. Summary values\nColumn A Column B",
+    });
+    const scopedChunks = [actualTableChunk, contentsChunk];
+    const scopedRegions = structuredClone(tableRegions);
+    scopedRegions.items[0].region_id = "p6-t1";
+    scopedRegions.items[0].page = 6;
+    const candidate = {
+      agency: null,
+      publication_citation_excerpt: null,
+      contributors: [],
+      first_table: {
+        page_one_based: 7,
+        anchor_excerpt: "Table 1. Summary values",
+        citation: { chunk_id: id("c"), quote: "Table 1. Summary values .......... 12" },
+      },
+    };
+    const scopedPolicy = classifySourceBoundBatch({
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      documentChunks: scopedChunks,
+      documentTableRegions: scopedRegions,
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+    });
+    const result = admitStructuredModelResponse({
+      responseBytes: response({ content: JSON.stringify(candidate) }),
+      expectedModel: MODEL,
+      maxOutputTokens: 4096,
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      documentChunks: scopedChunks,
+      documentTableRegions: scopedRegions,
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+      batchPolicy: scopedPolicy,
+    });
+    expect(result.proposal.first_table).toBeNull();
+    expect(result.first_table_evidence).toBeNull();
+    expect(result.field_outcomes.first_table).toMatchObject({
+      status: "rejected",
+      message: expect.stringMatching(/first deterministic table region/u),
+    });
+
+    candidate.first_table.page_one_based = 6;
+    candidate.first_table.citation = { chunk_id: id("d"), quote: "Table 1. Summary values" };
+    const actual = admitStructuredModelResponse({
+      responseBytes: response({ content: JSON.stringify(candidate) }),
+      expectedModel: MODEL,
+      maxOutputTokens: 4096,
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      documentChunks: scopedChunks,
+      documentTableRegions: scopedRegions,
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+      batchPolicy: scopedPolicy,
+    });
+    expect(actual.proposal.first_table.page_one_based).toBe(6);
+    expect(actual.first_table_evidence).toMatchObject({ region: { region_id: "p6-t1", page: 6 } });
+    expect(() => compareAdmittedCitationEvidence({ admission: actual, oracleCitations: [] })).not.toThrow();
+  });
+
+  it("fails closed on missing, reordered, or drifted table-region evidence", () => {
+    const hidden = { ...structuredClone(tableRegions), observed: 1, returned: 0, omitted: 1, items: [] };
+    const hiddenPolicy = classifySourceBoundBatch({
+      documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
+      documentTableRegions: hidden, batchChunkIds,
+    });
+    const hiddenResult = admit({ documentTableRegions: hidden, batchPolicy: hiddenPolicy });
+    expect(hiddenResult.field_outcomes.first_table).toMatchObject({
+      status: "rejected", message: expect.stringMatching(/returned deterministic table region/u),
+    });
+
+    const reordered = structuredClone(tableRegions);
+    reordered.observed = 2;
+    reordered.returned = 2;
+    reordered.items.push({ ...structuredClone(reordered.items[0]), region_id: "p1-t2" });
+    reordered.items.reverse();
+    expect(() => classifySourceBoundBatch({
+      documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
+      documentTableRegions: reordered, batchChunkIds,
+    })).toThrow(/deterministic page\/ordinal order/u);
+
+    const drifted = structuredClone(tableRegions);
+    drifted.items[0].page = 2;
+    expect(() => admit({ documentTableRegions: drifted })).toThrow(/identity is invalid/u);
   });
 
   it("rejects a cross-document chunk before field admission", () => {
@@ -460,6 +589,11 @@ describe("verified extraction response admission", () => {
     submittedDrift.submitted_proposal.agency.value = "drift";
     expect(() => compareAdmittedCitationEvidence({ admission: submittedDrift, oracleCitations: [] }))
       .toThrow(/submitted-proposal digest drifted/u);
+
+    const regionDrift = admit();
+    regionDrift.first_table_evidence.region.page = 2;
+    expect(() => compareAdmittedCitationEvidence({ admission: regionDrift, oracleCitations: [] }))
+      .toThrow(/first-table region evidence is invalid/u);
   });
 
   it("rejects cross-document and duplicate oracle citations", () => {

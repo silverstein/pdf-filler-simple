@@ -4,6 +4,7 @@ import { parseStrictJson } from "./eval-strict-json.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
+const TABLE_REGION_ID = /^p([1-9][0-9]*)-t([1-9][0-9]*)$/u;
 const REFERENCE_HEADINGS = new Set([
   "bibliography",
   "literature cited",
@@ -70,13 +71,67 @@ function firstLine(content) {
   return content.split(/\r?\n/u, 1)[0].trim().replace(/[.:]$/u, "").toLocaleLowerCase("en-US");
 }
 
-export function classifySourceBoundBatch({ documentId, documentMapSha256, documentChunks, batchChunkIds }) {
+function validateDocumentTableRegions(value) {
+  exactKeys(value, ["all_items_sha256", "items", "observed", "omitted", "returned"],
+    "documentTableRegions");
+  for (const field of ["observed", "omitted", "returned"]) {
+    nonnegativeInteger(value[field], `documentTableRegions.${field}`);
+  }
+  assertion(value.returned <= 5000 && value.observed <= 1000000,
+    "documentTableRegions exceeds its bounded inventory");
+  assertion(value.observed === value.returned + value.omitted,
+    "documentTableRegions denominator is inconsistent");
+  assertion(Array.isArray(value.items) && value.items.length === value.returned,
+    "documentTableRegions returned inventory is inconsistent");
+  assertion(SHA256.test(value.all_items_sha256 ?? "") && value.all_items_sha256 !== "0".repeat(64),
+    "documentTableRegions complete inventory digest is invalid");
+  const seen = new Set();
+  let precedingPage = 0;
+  let precedingOrdinal = 0;
+  value.items.forEach((item, index) => {
+    exactKeys(item, ["bbox", "coordinate_space", "evidence_truncation", "page", "reason", "region_id",
+      "text_item_count"], `documentTableRegions.items[${index}]`);
+    const match = typeof item.region_id === "string" ? item.region_id.match(TABLE_REGION_ID) : null;
+    boundedString(item.region_id, `documentTableRegions.items[${index}].region_id`, 64);
+    nonnegativeInteger(item.page, `documentTableRegions.items[${index}].page`);
+    const ordinal = match ? Number(match[2]) : NaN;
+    assertion(match && item.page >= 1 && Number(match[1]) === item.page
+      && Number.isSafeInteger(ordinal) && ordinal >= 1 && !seen.has(item.region_id),
+      `documentTableRegions.items[${index}] identity is invalid`);
+    seen.add(item.region_id);
+    nonnegativeInteger(item.text_item_count, `documentTableRegions.items[${index}].text_item_count`);
+    assertion(item.text_item_count > 0, `documentTableRegions.items[${index}] is empty`);
+    boundedString(item.reason, `documentTableRegions.items[${index}].reason`, 256);
+    boundedString(item.coordinate_space, `documentTableRegions.items[${index}].coordinate_space`, 256);
+    exactKeys(item.bbox, ["height", "width", "x", "y"], `documentTableRegions.items[${index}].bbox`);
+    assertion(Object.values(item.bbox).every(Number.isFinite) && item.bbox.width > 0 && item.bbox.height > 0,
+      `documentTableRegions.items[${index}].bbox is invalid`);
+    exactKeys(item.evidence_truncation, ["painted_rectangles", "ruled_rects", "ruling_segments", "text_items"],
+      `documentTableRegions.items[${index}].evidence_truncation`);
+    assertion(Object.values(item.evidence_truncation)
+      .every(status => status === "complete" || status === "truncated"),
+    `documentTableRegions.items[${index}].evidence_truncation is invalid`);
+    assertion(item.page > precedingPage || (item.page === precedingPage && ordinal > precedingOrdinal),
+      "documentTableRegions items are not in deterministic page/ordinal order");
+    precedingPage = item.page;
+    precedingOrdinal = ordinal;
+  });
+  return {
+    sha256: sha256(Buffer.from(canonicalJson(value), "utf8")),
+    first: value.items[0] ?? null,
+  };
+}
+
+export function classifySourceBoundBatch({
+  documentId, documentMapSha256, documentChunks, documentTableRegions, batchChunkIds,
+}) {
   boundedString(documentId, "documentId", 512);
   assertion(SHA256.test(documentMapSha256 ?? ""), "documentMapSha256 is invalid");
   assertion(Array.isArray(documentChunks) && documentChunks.length > 0,
     "documentChunks must be a non-empty array");
   assertion(Array.isArray(batchChunkIds) && batchChunkIds.length > 0,
     "batchChunkIds must be a non-empty array");
+  const tableRegions = validateDocumentTableRegions(documentTableRegions);
   const seen = new Set();
   let inReferenceSection = false;
   const allPolicies = documentChunks.map((chunk, index) => {
@@ -109,6 +164,7 @@ export function classifySourceBoundBatch({ documentId, documentMapSha256, docume
   return {
     document_id: documentId,
     document_map_sha256: documentMapSha256,
+    document_table_regions_sha256: tableRegions.sha256,
     document_chunk_scope_sha256: documentChunkScopeSha256,
     batch_chunk_ids: [...batchChunkIds],
     allowed_fields: containsReferenceSection ? [] : [...ALL_FIELDS],
@@ -306,15 +362,20 @@ function validateCitation(citation, chunksById, claimedValue, label) {
 
 export function compareAdmittedCitationEvidence({ admission, oracleCitations = [] }) {
   exactKeys(admission, ["batch_policy_sha256", "benchmark_claim_ready", "contract", "document_id", "observation",
-    "field_outcomes", "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay",
+    "document_table_regions", "document_table_regions_sha256", "field_outcomes", "first_table_evidence",
+    "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay",
     "submitted_proposal", "submitted_proposal_sha256"], "admission");
   exactKeys(admission.contract, ["name", "version"], "admission.contract");
   assertion(admission.contract.name === "pdf-tools.verified-extraction-response-admission"
-    && admission.contract.version === "1.2.0-experimental", "admission contract is invalid");
+    && admission.contract.version === "1.3.0-experimental", "admission contract is invalid");
   assertion(admission.benchmark_claim_ready === false && admission.package_inclusion === "disabled_experimental",
     "admission readiness boundary is invalid");
   assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256),
     "admission document-map or batch-policy binding is invalid");
+  const tableRegions = validateDocumentTableRegions(admission.document_table_regions);
+  assertion(SHA256.test(admission.document_table_regions_sha256)
+    && admission.document_table_regions_sha256 === tableRegions.sha256,
+  "admission table-region binding is invalid");
   exactKeys(admission.observation, ["batch_policy_sha256", "content_sha256", "document_id",
     "document_map_sha256", "finish_reason", "max_output_tokens", "output_truncated", "response_sha256", "usage"],
   "admission.observation");
@@ -393,6 +454,27 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
   assertion(ALL_FIELDS.reduce((total, field) => total + admission.field_outcomes[field].citation_count, 0)
     === admission.source_replay.citation_count,
   "admission field-outcome and source-replay citation denominators disagree");
+  if (admission.field_outcomes.first_table.status === "admitted") {
+    exactKeys(admission.first_table_evidence,
+      ["document_table_regions_sha256", "region", "region_sha256"], "admission.first_table_evidence");
+    exactKeys(admission.first_table_evidence.region,
+      ["bbox", "coordinate_space", "evidence_truncation", "page", "reason", "region_id", "text_item_count"],
+    "admission.first_table_evidence.region");
+    const region = admission.first_table_evidence.region;
+    const match = typeof region.region_id === "string" ? region.region_id.match(TABLE_REGION_ID) : null;
+    assertion(admission.first_table_evidence.document_table_regions_sha256
+      === admission.document_table_regions_sha256
+      && SHA256.test(admission.first_table_evidence.region_sha256)
+      && admission.first_table_evidence.region_sha256
+        === sha256(Buffer.from(canonicalJson(region), "utf8"))
+      && canonicalJson(region) === canonicalJson(tableRegions.first)
+      && match && Number(match[1]) === region.page
+      && region.page === admission.proposal.first_table.page_one_based,
+    "admission first-table region evidence is invalid");
+  } else {
+    assertion(admission.first_table_evidence === null,
+      "admission retains table-region evidence for a non-admitted first_table field");
+  }
   const expectedCitationClaims = [
     admission.proposal.agency === null ? null : ["agency", admission.proposal.agency?.value],
     admission.proposal.publication_citation_excerpt === null ? null
@@ -500,12 +582,13 @@ function fieldOutcome({ status, submitted, admitted, citationCount = 0, error = 
   };
 }
 
-function admitProposal(submittedProposal, chunksById, allowedFields) {
+function admitProposal(submittedProposal, chunksById, allowedFields, tableRegions) {
   exactKeys(submittedProposal, PROPOSAL_KEYS, "proposal");
   const allowed = new Set(allowedFields);
   const proposal = { agency: null, publication_citation_excerpt: null, contributors: [], first_table: null };
   const citations = [];
   const fieldOutcomes = {};
+  let firstTableEvidence = null;
   for (const field of ["agency", "publication_citation_excerpt"]) {
     const submitted = submittedProposal[field];
     try {
@@ -567,8 +650,17 @@ function admitProposal(submittedProposal, chunksById, allowedFields) {
         submittedTable.anchor_excerpt, "first_table");
       assertion(replay.page_one_based === submittedTable.page_one_based,
         "first_table page does not match its exact chunk");
+      assertion(tableRegions.first !== null,
+        "first_table is not supported by a returned deterministic table region");
+      assertion(tableRegions.first.page === submittedTable.page_one_based,
+        "first_table page does not match the first deterministic table region");
       proposal.first_table = structuredClone(submittedTable);
       citations.push({ field: "first_table", ...replay });
+      firstTableEvidence = {
+        document_table_regions_sha256: tableRegions.sha256,
+        region: structuredClone(tableRegions.first),
+        region_sha256: sha256(Buffer.from(canonicalJson(tableRegions.first), "utf8")),
+      };
     }
     fieldOutcomes.first_table = fieldOutcome({
       status: submittedTable === null ? "not_proposed" : "admitted",
@@ -579,7 +671,7 @@ function admitProposal(submittedProposal, chunksById, allowedFields) {
   } catch (error) {
     fieldOutcomes.first_table = fieldOutcome({ status: "rejected", submitted: submittedTable, admitted: null, error });
   }
-  return { proposal, citations, fieldOutcomes };
+  return { proposal, citations, fieldOutcomes, firstTableEvidence };
 }
 
 function observationFor({
@@ -612,6 +704,7 @@ export function admitStructuredModelResponse({
   documentId,
   documentMapSha256,
   documentChunks,
+  documentTableRegions,
   batchChunkIds,
   batchPolicy,
 }) {
@@ -629,13 +722,16 @@ export function admitStructuredModelResponse({
     assertion(!documentChunksById.has(chunk.chunk_id), "documentChunks contain a duplicate chunk identity");
     documentChunksById.set(chunk.chunk_id, chunk);
   });
+  const tableRegions = validateDocumentTableRegions(documentTableRegions);
   exactKeys(batchPolicy, ["allowed_fields", "batch_chunk_ids", "chunk_policies", "document_chunk_scope_sha256",
-    "document_id", "document_map_sha256", "model_call_recommended"], "batchPolicy");
+    "document_id", "document_map_sha256", "document_table_regions_sha256", "model_call_recommended"],
+  "batchPolicy");
   assertion(batchPolicy.document_id === documentId, "batchPolicy belongs to another document");
   const recomputedPolicy = classifySourceBoundBatch({
     documentId,
     documentMapSha256,
     documentChunks,
+    documentTableRegions,
     batchChunkIds,
   });
   assertion(canonicalJson(batchPolicy) === canonicalJson(recomputedPolicy), "batchPolicy drifted from exact chunks");
@@ -709,21 +805,24 @@ export function admitStructuredModelResponse({
   }
   let admitted;
   try {
-    admitted = admitProposal(submittedProposal, chunksById, batchPolicy.allowed_fields);
+    admitted = admitProposal(submittedProposal, chunksById, batchPolicy.allowed_fields, tableRegions);
   } catch (error) {
     throw new ModelOutputAdmissionError(error.message, "model_proposal_not_source_bound", observation);
   }
   return {
-    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.2.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.3.0-experimental" },
     document_id: documentId,
     document_map_sha256: documentMapSha256,
     batch_policy_sha256: batchPolicySha256,
+    document_table_regions: structuredClone(documentTableRegions),
+    document_table_regions_sha256: tableRegions.sha256,
     observation,
     submitted_proposal: submittedProposal,
     submitted_proposal_sha256: sha256(Buffer.from(canonicalJson(submittedProposal), "utf8")),
     proposal: admitted.proposal,
     proposal_sha256: sha256(Buffer.from(canonicalJson(admitted.proposal), "utf8")),
     field_outcomes: admitted.fieldOutcomes,
+    first_table_evidence: admitted.firstTableEvidence,
     source_replay: {
       citation_count: admitted.citations.length,
       citations: admitted.citations,
@@ -737,6 +836,6 @@ export function admitStructuredModelResponse({
 
 export const VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-admission",
-  version: "1.2.0-experimental",
-  boundary: "Only strict proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. A source-invalid known field is replaced by its schema-safe null or empty value with a digest-bound typed rejection while independently valid fields remain admitted; malformed envelopes, duplicate members, and top-level field smuggling still reject the whole response. This helper rehashes chunks but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
+  version: "1.3.0-experimental",
+  boundary: "Only strict proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. A first_table proposal additionally binds the exact cited page to the first deterministic table-region signal in the validated document map; contents-page destination references cannot satisfy that boundary. A source-invalid known field is replaced by its schema-safe null or empty value with a digest-bound typed rejection while independently valid fields remain admitted; malformed envelopes, duplicate members, and top-level field smuggling still reject the whole response. This helper rehashes chunks and binds table-region inventory but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
 });

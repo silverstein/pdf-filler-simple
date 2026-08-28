@@ -24,6 +24,24 @@ const chunks = [
   chunk({ document_id: documentId, chunk_id: chunkId("c"), page_range: { start_page: 3, end_page: 3 },
     starts_at_heading: true, content: "References\nOther, A., 2024, An unrelated cited work." }),
 ];
+const tableRegions = {
+  observed: 1,
+  returned: 1,
+  omitted: 0,
+  items: [{
+    region_id: "p1-t1",
+    page: 1,
+    reason: "TABLE_TOPOLOGY_UNKNOWN",
+    coordinate_space: "pdfjs_viewport_top_left_points",
+    bbox: { x: 10, y: 20, width: 300, height: 120 },
+    text_item_count: 8,
+    evidence_truncation: {
+      text_items: "complete", ruled_rects: "complete", ruling_segments: "complete",
+      painted_rectangles: "complete",
+    },
+  }],
+  all_items_sha256: "8".repeat(64),
+};
 const documentValidation = {
   document_id: documentId,
   document_map_sha256: documentMapSha256,
@@ -31,6 +49,7 @@ const documentValidation = {
   schema_sha256: "2".repeat(64),
   renderer_sha256: "3".repeat(64),
   ordered_chunk_ids: chunks.map(item => item.chunk_id),
+  table_regions: tableRegions,
 };
 const proposal = () => ({
   agency: { value: "U.S. Geological Survey", citation: { chunk_id: chunkId("a"), quote: "U.S. Geological Survey" } },
