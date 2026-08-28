@@ -73,6 +73,17 @@ chunk-scope digest. Zero-inference verification of those bindings precedes any
 new local-model authorization; this source-only tranche creates no such
 authorization.
 
+The matching internal `scripts/verified-extraction-response-controller.mjs`
+composes that admission boundary over one separately validated document map.
+It freezes the complete ordered chunk denominator, partitions it into
+contiguous batches, stops model-call eligibility at the first
+bibliography/references heading, and retains one attempt receipt for complete,
+truncated, malformed, source-replay-rejected, or controller-failure outcomes.
+Contributor count is derived from unique exact admitted names and admission
+digests rather than accepted from the caller. The controller accepts an
+invocation callback but performs no model/provider call itself, remains absent
+from server/share inventories, and keeps `benchmark_claim_ready: false`.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that
