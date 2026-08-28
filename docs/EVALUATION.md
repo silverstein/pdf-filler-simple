@@ -44,6 +44,35 @@ Passing a lower layer does not imply a higher-layer pass. In particular, direct
 stdio success does not prove Claude Desktop integration, and a screenshot does
 not prove the output file is correct.
 
+### Experimental structured-output admission
+
+The internal `scripts/verified-extraction-response-admission.mjs` helper is a
+zero-inference preparation contract for a successor to the private long-document
+evaluation. It is deliberately absent from the MCP server and release packages.
+It treats output-token-cap termination as typed truncation evidence, rejects
+duplicate JSON members before object construction, bounds contributor output,
+and admits citations only when the claimed value replays byte-for-byte inside an
+exact current-document chunk. Reference, bibliography, and works-cited sections
+are evidence-ineligible and should not receive a model call.
+The caller must supply chunks from a separately validated, SHA-bound document
+map; the helper rehashes each chunk and binds the complete ordered chunk scope
+but does not replace document-map source/schema/renderer validation.
+
+Source replay is the primary evidence property. Exact equality to one retained
+oracle quote is a separate secondary evaluation signal because a source can
+contain multiple valid literal spans. Derived counts are recomputed from admitted
+objects rather than accepted as model arithmetic. These controls do not repair
+or authorize an already-consumed campaign, invoke a model, expose the helper as
+a product feature, or make a benchmark/public claim.
+
+A measured successor must freeze a new comparison and campaign authority before
+execution. Its trial and attempt identities must be disjoint from the consumed
+V13 campaign, and it must bind the exact response-admission source, proposal
+schema, reference-section policy, document-map identity, and complete ordered
+chunk-scope digest. Zero-inference verification of those bindings precedes any
+new local-model authorization; this source-only tranche creates no such
+authorization.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that
