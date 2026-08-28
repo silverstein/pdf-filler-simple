@@ -130,16 +130,20 @@ describe("verified extraction response controller", () => {
     ["stale chunk", candidate => { candidate.agency.citation.chunk_id = chunkId("f"); }],
     ["cross-document chunk", candidate => { candidate.agency.citation.chunk_id = chunkId("c"); }],
     ["extra citation", candidate => { candidate.agency.citation.quote = "Table 1. Summary values"; }],
-  ])("rejects %s in the typed product-failure receipt", async (_label, mutate) => {
+  ])("retains safe fields while typing %s in the admitted batch", async (_label, mutate) => {
     const candidate = proposal();
     mutate(candidate);
     const bytes = response({ content: JSON.stringify(candidate) });
     const result = await runResponseAdmissionControllerAttempt({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => artifact(bytes),
     });
-    expect(result.receipt.outcome).toMatchObject({
-      classification: "product_failure", reason_code: "model_proposal_not_source_bound",
+    expect(result.receipt.outcome).toMatchObject({ classification: "completed", reason_code: "none" });
+    expect(result.admissions[0].proposal.agency).toBeNull();
+    expect(result.admissions[0].field_outcomes.agency).toMatchObject({
+      status: "rejected", reason_code: "not_source_bound", citation_count: 0,
     });
+    expect(result.admissions[0].proposal.publication_citation_excerpt)
+      .toEqual(proposal().publication_citation_excerpt);
     expect(result.receipt.denominator.document_chunks).toBe(3);
   });
 

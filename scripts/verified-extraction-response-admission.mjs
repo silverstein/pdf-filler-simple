@@ -306,10 +306,11 @@ function validateCitation(citation, chunksById, claimedValue, label) {
 
 export function compareAdmittedCitationEvidence({ admission, oracleCitations = [] }) {
   exactKeys(admission, ["batch_policy_sha256", "benchmark_claim_ready", "contract", "document_id", "observation",
-    "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay"], "admission");
+    "field_outcomes", "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay",
+    "submitted_proposal", "submitted_proposal_sha256"], "admission");
   exactKeys(admission.contract, ["name", "version"], "admission.contract");
   assertion(admission.contract.name === "pdf-tools.verified-extraction-response-admission"
-    && admission.contract.version === "1.1.0-experimental", "admission contract is invalid");
+    && admission.contract.version === "1.2.0-experimental", "admission contract is invalid");
   assertion(admission.benchmark_claim_ready === false && admission.package_inclusion === "disabled_experimental",
     "admission readiness boundary is invalid");
   assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256),
@@ -338,6 +339,10 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
   assertion(SHA256.test(admission.proposal_sha256)
     && admission.proposal_sha256 === sha256(Buffer.from(canonicalJson(admission.proposal), "utf8")),
   "admission proposal digest drifted");
+  assertion(SHA256.test(admission.submitted_proposal_sha256)
+    && admission.submitted_proposal_sha256
+      === sha256(Buffer.from(canonicalJson(admission.submitted_proposal), "utf8")),
+  "admission submitted-proposal digest drifted");
   exactKeys(admission.source_replay, ["citation_count", "citations", "contributor_count",
     "contributor_count_derivation"], "admission.source_replay");
   assertion(Array.isArray(admission.source_replay.citations)
@@ -348,7 +353,46 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
       === "derived_from_admitted_contributors_not_model_arithmetic",
   "admission contributor derivation is invalid");
   exactKeys(admission.proposal, PROPOSAL_KEYS, "admission.proposal");
+  exactKeys(admission.submitted_proposal, PROPOSAL_KEYS, "admission.submitted_proposal");
   assertion(Array.isArray(admission.proposal.contributors), "admission proposal contributors are invalid");
+  exactKeys(admission.field_outcomes, ALL_FIELDS, "admission.field_outcomes");
+  for (const field of ALL_FIELDS) {
+    const outcome = admission.field_outcomes[field];
+    exactKeys(outcome, ["admitted_sha256", "citation_count", "message", "reason_code", "status",
+      "submitted_sha256"], `admission.field_outcomes.${field}`);
+    const submitted = admission.submitted_proposal[field];
+    const admitted = admission.proposal[field];
+    assertion(SHA256.test(outcome.submitted_sha256)
+      && outcome.submitted_sha256 === sha256(Buffer.from(canonicalJson(submitted), "utf8"))
+      && SHA256.test(outcome.admitted_sha256)
+      && outcome.admitted_sha256 === sha256(Buffer.from(canonicalJson(admitted), "utf8"))
+      && Number.isSafeInteger(outcome.citation_count) && outcome.citation_count >= 0,
+    `admission.field_outcomes.${field} digest or count is invalid`);
+    const emptyValue = field === "contributors" ? [] : null;
+    const admittedCitationCount = field === "contributors"
+      ? (Array.isArray(admitted) ? admitted.length : -1)
+      : admitted === null ? 0 : 1;
+    if (outcome.status === "admitted") {
+      assertion(canonicalJson(submitted) === canonicalJson(admitted)
+        && outcome.reason_code === "none" && outcome.message === null
+        && outcome.citation_count === admittedCitationCount && admittedCitationCount > 0,
+      `admission.field_outcomes.${field} admitted state is invalid`);
+    } else if (outcome.status === "not_proposed") {
+      assertion(canonicalJson(submitted) === canonicalJson(emptyValue)
+        && canonicalJson(admitted) === canonicalJson(emptyValue)
+        && outcome.reason_code === "none" && outcome.message === null && outcome.citation_count === 0,
+      `admission.field_outcomes.${field} not-proposed state is invalid`);
+    } else {
+      assertion(outcome.status === "rejected" && canonicalJson(admitted) === canonicalJson(emptyValue)
+        && outcome.reason_code === "not_source_bound" && typeof outcome.message === "string"
+        && outcome.message.length > 0 && Buffer.byteLength(outcome.message, "utf8") <= 4096
+        && outcome.citation_count === 0,
+      `admission.field_outcomes.${field} rejection state is invalid`);
+    }
+  }
+  assertion(ALL_FIELDS.reduce((total, field) => total + admission.field_outcomes[field].citation_count, 0)
+    === admission.source_replay.citation_count,
+  "admission field-outcome and source-replay citation denominators disagree");
   const expectedCitationClaims = [
     admission.proposal.agency === null ? null : ["agency", admission.proposal.agency?.value],
     admission.proposal.publication_citation_excerpt === null ? null
@@ -445,48 +489,97 @@ function validateCitedString(item, chunksById, label) {
   return validateCitation(item.citation, chunksById, item.value, label);
 }
 
-function validateProposal(proposal, chunksById, allowedFields) {
-  exactKeys(proposal, PROPOSAL_KEYS, "proposal");
-  const allowed = new Set(allowedFields);
-  for (const field of ["agency", "publication_citation_excerpt"]) {
-    if (!allowed.has(field)) assertion(proposal[field] === null, `${field} is forbidden for this source section`);
-  }
-  if (!allowed.has("contributors")) {
-    assertion(Array.isArray(proposal.contributors) && proposal.contributors.length === 0,
-      "contributors are forbidden for this source section");
-  }
-  if (!allowed.has("first_table")) assertion(proposal.first_table === null,
-    "first_table is forbidden for this source section");
+function fieldOutcome({ status, submitted, admitted, citationCount = 0, error = null }) {
+  return {
+    status,
+    reason_code: error ? "not_source_bound" : "none",
+    message: error ? String(error?.message ?? error) : null,
+    citation_count: citationCount,
+    submitted_sha256: sha256(Buffer.from(canonicalJson(submitted), "utf8")),
+    admitted_sha256: sha256(Buffer.from(canonicalJson(admitted), "utf8")),
+  };
+}
 
+function admitProposal(submittedProposal, chunksById, allowedFields) {
+  exactKeys(submittedProposal, PROPOSAL_KEYS, "proposal");
+  const allowed = new Set(allowedFields);
+  const proposal = { agency: null, publication_citation_excerpt: null, contributors: [], first_table: null };
   const citations = [];
+  const fieldOutcomes = {};
   for (const field of ["agency", "publication_citation_excerpt"]) {
-    const replay = validateCitedString(proposal[field], chunksById, field);
-    if (replay) citations.push({ field, ...replay });
+    const submitted = submittedProposal[field];
+    try {
+      if (!allowed.has(field)) assertion(submitted === null, `${field} is forbidden for this source section`);
+      const replay = validateCitedString(submitted, chunksById, field);
+      proposal[field] = structuredClone(submitted);
+      if (replay) citations.push({ field, ...replay });
+      fieldOutcomes[field] = fieldOutcome({
+        status: replay ? "admitted" : "not_proposed",
+        submitted,
+        admitted: proposal[field],
+        citationCount: replay ? 1 : 0,
+      });
+    } catch (error) {
+      fieldOutcomes[field] = fieldOutcome({ status: "rejected", submitted, admitted: null, error });
+    }
   }
-  assertion(Array.isArray(proposal.contributors), "contributors must be an array");
-  assertion(proposal.contributors.length <= MAX_ADMITTED_CONTRIBUTORS,
-    `contributors exceeds maxItems ${MAX_ADMITTED_CONTRIBUTORS}`);
-  const contributorNames = new Set();
-  proposal.contributors.forEach((contributor, index) => {
-    exactKeys(contributor, ["citation", "name"], `contributors[${index}]`);
-    boundedString(contributor.name, `contributors[${index}].name`, 512);
-    assertion(!contributorNames.has(contributor.name), "contributors contains a duplicate exact name");
-    contributorNames.add(contributor.name);
-    citations.push({ field: `contributors[${index}]`,
-      ...validateCitation(contributor.citation, chunksById, contributor.name, `contributors[${index}]`) });
-  });
-  if (proposal.first_table !== null) {
-    exactKeys(proposal.first_table, ["anchor_excerpt", "citation", "page_one_based"], "first_table");
-    nonnegativeInteger(proposal.first_table.page_one_based, "first_table.page_one_based");
-    assertion(proposal.first_table.page_one_based >= 1, "first_table.page_one_based must be positive");
-    boundedString(proposal.first_table.anchor_excerpt, "first_table.anchor_excerpt");
-    const replay = validateCitation(proposal.first_table.citation, chunksById,
-      proposal.first_table.anchor_excerpt, "first_table");
-    assertion(replay.page_one_based === proposal.first_table.page_one_based,
-      "first_table page does not match its exact chunk");
-    citations.push({ field: "first_table", ...replay });
+
+  const submittedContributors = submittedProposal.contributors;
+  try {
+    assertion(Array.isArray(submittedContributors), "contributors must be an array");
+    if (!allowed.has("contributors")) assertion(submittedContributors.length === 0,
+      "contributors are forbidden for this source section");
+    assertion(submittedContributors.length <= MAX_ADMITTED_CONTRIBUTORS,
+      `contributors exceeds maxItems ${MAX_ADMITTED_CONTRIBUTORS}`);
+    const contributorNames = new Set();
+    const contributorCitations = submittedContributors.map((contributor, index) => {
+      exactKeys(contributor, ["citation", "name"], `contributors[${index}]`);
+      boundedString(contributor.name, `contributors[${index}].name`, 512);
+      assertion(!contributorNames.has(contributor.name), "contributors contains a duplicate exact name");
+      contributorNames.add(contributor.name);
+      return { field: `contributors[${index}]`,
+        ...validateCitation(contributor.citation, chunksById, contributor.name, `contributors[${index}]`) };
+    });
+    proposal.contributors = structuredClone(submittedContributors);
+    citations.push(...contributorCitations);
+    fieldOutcomes.contributors = fieldOutcome({
+      status: submittedContributors.length > 0 ? "admitted" : "not_proposed",
+      submitted: submittedContributors,
+      admitted: proposal.contributors,
+      citationCount: contributorCitations.length,
+    });
+  } catch (error) {
+    fieldOutcomes.contributors = fieldOutcome({
+      status: "rejected", submitted: submittedContributors, admitted: [], error,
+    });
   }
-  return citations;
+
+  const submittedTable = submittedProposal.first_table;
+  try {
+    if (!allowed.has("first_table")) assertion(submittedTable === null,
+      "first_table is forbidden for this source section");
+    if (submittedTable !== null) {
+      exactKeys(submittedTable, ["anchor_excerpt", "citation", "page_one_based"], "first_table");
+      nonnegativeInteger(submittedTable.page_one_based, "first_table.page_one_based");
+      assertion(submittedTable.page_one_based >= 1, "first_table.page_one_based must be positive");
+      boundedString(submittedTable.anchor_excerpt, "first_table.anchor_excerpt");
+      const replay = validateCitation(submittedTable.citation, chunksById,
+        submittedTable.anchor_excerpt, "first_table");
+      assertion(replay.page_one_based === submittedTable.page_one_based,
+        "first_table page does not match its exact chunk");
+      proposal.first_table = structuredClone(submittedTable);
+      citations.push({ field: "first_table", ...replay });
+    }
+    fieldOutcomes.first_table = fieldOutcome({
+      status: submittedTable === null ? "not_proposed" : "admitted",
+      submitted: submittedTable,
+      admitted: proposal.first_table,
+      citationCount: submittedTable === null ? 0 : 1,
+    });
+  } catch (error) {
+    fieldOutcomes.first_table = fieldOutcome({ status: "rejected", submitted: submittedTable, admitted: null, error });
+  }
+  return { proposal, citations, fieldOutcomes };
 }
 
 function observationFor({
@@ -608,30 +701,33 @@ export function admitStructuredModelResponse({
     throw new ModelOutputAdmissionError("model call was not admitted for a reference-section batch",
       "model_call_unplanned_reference_section", observation);
   }
-  let proposal;
+  let submittedProposal;
   try {
-    proposal = parseStrictJson(content, "model response content");
+    submittedProposal = parseStrictJson(content, "model response content");
   } catch (error) {
     throw new ModelOutputAdmissionError(error.message, "model_response_ambiguous_or_malformed", observation);
   }
-  let citations;
+  let admitted;
   try {
-    citations = validateProposal(proposal, chunksById, batchPolicy.allowed_fields);
+    admitted = admitProposal(submittedProposal, chunksById, batchPolicy.allowed_fields);
   } catch (error) {
     throw new ModelOutputAdmissionError(error.message, "model_proposal_not_source_bound", observation);
   }
   return {
-    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.1.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.2.0-experimental" },
     document_id: documentId,
     document_map_sha256: documentMapSha256,
     batch_policy_sha256: batchPolicySha256,
     observation,
-    proposal,
-    proposal_sha256: sha256(Buffer.from(canonicalJson(proposal), "utf8")),
+    submitted_proposal: submittedProposal,
+    submitted_proposal_sha256: sha256(Buffer.from(canonicalJson(submittedProposal), "utf8")),
+    proposal: admitted.proposal,
+    proposal_sha256: sha256(Buffer.from(canonicalJson(admitted.proposal), "utf8")),
+    field_outcomes: admitted.fieldOutcomes,
     source_replay: {
-      citation_count: citations.length,
-      citations,
-      contributor_count: proposal.contributors.length,
+      citation_count: admitted.citations.length,
+      citations: admitted.citations,
+      contributor_count: admitted.proposal.contributors.length,
       contributor_count_derivation: "derived_from_admitted_contributors_not_model_arithmetic",
     },
     benchmark_claim_ready: false,
@@ -641,6 +737,6 @@ export function admitStructuredModelResponse({
 
 export const VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-admission",
-  version: "1.1.0-experimental",
-  boundary: "Only strict, complete proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. This helper rehashes chunks but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
+  version: "1.2.0-experimental",
+  boundary: "Only strict proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. A source-invalid known field is replaced by its schema-safe null or empty value with a digest-bound typed rejection while independently valid fields remain admitted; malformed envelopes, duplicate members, and top-level field smuggling still reject the whole response. This helper rehashes chunks but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
 });

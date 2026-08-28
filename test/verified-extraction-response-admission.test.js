@@ -130,7 +130,7 @@ describe("verified extraction response admission", () => {
       batchPolicy: whitespacePolicy,
       responseBytes: response({ content: JSON.stringify(candidate) }),
     });
-    expect(result.contract.version).toBe("1.1.0-experimental");
+    expect(result.contract.version).toBe("1.2.0-experimental");
     expect(result.source_replay.citations).toMatchObject([
       {
         field: "agency",
@@ -173,10 +173,17 @@ describe("verified extraction response admission", () => {
     ["whitespace inserted where the source has none", candidate => {
       candidate.agency.value = "U.S. Geo logical Survey";
     }],
-  ])("rejects %s instead of normalizing it", (_label, mutate) => {
+  ])("types %s as a field rejection instead of normalizing it", (_label, mutate) => {
     const candidate = proposal();
     mutate(candidate);
-    expect(() => admit({ responseBytes: response({ content: JSON.stringify(candidate) }) })).toThrow();
+    const result = admit({ responseBytes: response({ content: JSON.stringify(candidate) }) });
+    expect(result.proposal.agency).toBeNull();
+    expect(result.field_outcomes.agency).toMatchObject({
+      status: "rejected", reason_code: "not_source_bound", citation_count: 0,
+    });
+    expect(result.proposal.publication_citation_excerpt).toEqual(proposal().publication_citation_excerpt);
+    expect(compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })
+      .primary_source_replay.denominator).toBe(3);
   });
 
   it("rejects a citation that has more than one exact or whitespace-equivalent source span", () => {
@@ -190,18 +197,20 @@ describe("verified extraction response admission", () => {
       documentChunks: duplicateChunks,
       batchChunkIds,
     });
-    expect(() => admit({
+    const result = admit({
       documentChunks: duplicateChunks,
       batchPolicy: duplicatePolicy,
       responseBytes: response(),
-    })).toThrow(/ambiguous/u);
+    });
+    expect(result.field_outcomes.agency).toMatchObject({ status: "rejected", message: expect.stringMatching(/ambiguous/u) });
+    expect(result.proposal.agency).toBeNull();
   });
 
   it("counts overlapping source spans as ambiguity", () => {
     const overlappingChunks = [chunk({ ...chunks[0], content: `${chunks[0].content}\nA A A` }), chunks[1]];
     const candidate = proposal();
     candidate.agency = { value: "A A", citation: { chunk_id: id("a"), quote: "A A" } };
-    expect(() => admit({
+    const result = admit({
       documentChunks: overlappingChunks,
       batchPolicy: classifySourceBoundBatch({
         documentId: DOCUMENT,
@@ -210,7 +219,8 @@ describe("verified extraction response admission", () => {
         batchChunkIds,
       }),
       responseBytes: response({ content: JSON.stringify(candidate) }),
-    })).toThrow(/ambiguous/u);
+    });
+    expect(result.field_outcomes.agency).toMatchObject({ status: "rejected", message: expect.stringMatching(/ambiguous/u) });
   });
 
   it("searches a bounded full chunk without applying the smaller submitted-quote limit", () => {
@@ -337,30 +347,37 @@ describe("verified extraction response admission", () => {
   });
 
   it.each([
-    ["stale chunk", candidate => { candidate.agency.citation.chunk_id = id("f"); }],
-    ["quote absent from exact chunk", candidate => { candidate.agency.citation.quote = "USGS"; }],
-    ["extra citation unrelated to value", candidate => {
+    ["stale chunk", "agency", candidate => { candidate.agency.citation.chunk_id = id("f"); }],
+    ["quote absent from exact chunk", "agency", candidate => { candidate.agency.citation.quote = "USGS"; }],
+    ["extra citation unrelated to value", "agency", candidate => {
       candidate.agency.citation.quote = "Table 1. Summary values";
     }],
-    ["cross-document chunk", candidate => {
-      candidate.agency.citation.chunk_id = id("d");
-    }, [chunk({ document_id: "another-document", chunk_id: id("d"),
-      page_range: { start_page: 1, end_page: 1 }, starts_at_heading: false,
-      content: "U.S. Geological Survey" })]],
-    ["table page drift", candidate => { candidate.first_table.page_one_based = 2; }],
-  ])("rejects %s", (_label, mutate, extraChunks = []) => {
+    ["table page drift", "first_table", candidate => { candidate.first_table.page_one_based = 2; }],
+  ])("retains safe fields while typing %s", (_label, field, mutate) => {
     const candidate = proposal();
     mutate(candidate);
-    const currentChunks = [...chunks, ...extraChunks];
-    expect(() => admit({
-      documentChunks: currentChunks,
+    const result = admit({
+      documentChunks: chunks,
       batchChunkIds,
-      batchPolicy: extraChunks.length ? classifySourceBoundBatch({
-        documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256,
-        documentChunks: currentChunks, batchChunkIds,
-      }) : policy(),
+      batchPolicy: policy(),
       responseBytes: response({ content: JSON.stringify(candidate) }),
-    })).toThrow();
+    });
+    expect(result.field_outcomes[field]).toMatchObject({ status: "rejected", reason_code: "not_source_bound" });
+    expect(result.proposal[field]).toEqual(field === "contributors" ? [] : null);
+    expect(result.source_replay.citation_count).toBe(3);
+    expect(() => compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })).not.toThrow();
+  });
+
+  it("rejects a cross-document chunk before field admission", () => {
+    const candidate = proposal();
+    candidate.agency.citation.chunk_id = id("d");
+    const crossDocument = chunk({ document_id: "another-document", chunk_id: id("d"),
+      page_range: { start_page: 1, end_page: 1 }, starts_at_heading: false,
+      content: "U.S. Geological Survey" });
+    expect(() => admit({
+      documentChunks: [...chunks, crossDocument],
+      responseBytes: response({ content: JSON.stringify(candidate) }),
+    })).toThrow(/another document/u);
   });
 
   it("rejects contributor overflow and caller-supplied arithmetic", () => {
@@ -369,12 +386,33 @@ describe("verified extraction response admission", () => {
       name: `Author ${index}`,
       citation: { chunk_id: id("a"), quote: "River, A.B." },
     }));
-    expect(() => admit({ responseBytes: response({ content: JSON.stringify(candidate) }) }))
-      .toThrow(/maxItems 32/u);
+    const overflow = admit({ responseBytes: response({ content: JSON.stringify(candidate) }) });
+    expect(overflow.proposal.contributors).toEqual([]);
+    expect(overflow.field_outcomes.contributors).toMatchObject({
+      status: "rejected", message: expect.stringMatching(/maxItems 32/u),
+    });
 
     const arithmetic = { ...proposal(), contributor_count: 1 };
     expect(() => admit({ responseBytes: response({ content: JSON.stringify(arithmetic) }) }))
       .toThrow(/proposal keys are invalid/u);
+  });
+
+  it("rejects the whole contributor field when one member is stale without erasing safe scalar fields", () => {
+    const candidate = proposal();
+    candidate.contributors.push({
+      name: "Stale, S.T.",
+      citation: { chunk_id: id("f"), quote: "Stale, S.T." },
+    });
+    const result = admit({ responseBytes: response({ content: JSON.stringify(candidate) }) });
+    expect(result.submitted_proposal.contributors).toHaveLength(2);
+    expect(result.proposal.contributors).toEqual([]);
+    expect(result.field_outcomes.contributors).toMatchObject({
+      status: "rejected", reason_code: "not_source_bound", citation_count: 0,
+    });
+    expect(result.proposal.agency).toEqual(proposal().agency);
+    expect(result.source_replay.citations.map(citation => citation.field))
+      .toEqual(["agency", "publication_citation_excerpt", "first_table"]);
+    expect(() => compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })).not.toThrow();
   });
 
   it("rejects response identity, usage, finish-reason, and policy drift", () => {
@@ -407,6 +445,21 @@ describe("verified extraction response admission", () => {
     admission.source_replay.citations[0].projection.claim_match = "unique_internal_whitespace_projection";
     expect(() => compareAdmittedCitationEvidence({ admission, oracleCitations: [] }))
       .toThrow(/projection drifted/u);
+  });
+
+  it("rejects typed field-outcome and submitted-proposal drift before secondary comparison", () => {
+    const candidate = proposal();
+    candidate.first_table.page_one_based = 2;
+    const partial = admit({ responseBytes: response({ content: JSON.stringify(candidate) }) });
+    expect(partial.field_outcomes.first_table.status).toBe("rejected");
+    partial.field_outcomes.first_table.message = null;
+    expect(() => compareAdmittedCitationEvidence({ admission: partial, oracleCitations: [] }))
+      .toThrow(/rejection state is invalid/u);
+
+    const submittedDrift = admit();
+    submittedDrift.submitted_proposal.agency.value = "drift";
+    expect(() => compareAdmittedCitationEvidence({ admission: submittedDrift, oracleCitations: [] }))
+      .toThrow(/submitted-proposal digest drifted/u);
   });
 
   it("rejects cross-document and duplicate oracle citations", () => {

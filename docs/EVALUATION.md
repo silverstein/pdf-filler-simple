@@ -60,6 +60,17 @@ admitted citation retains both the submitted quote and the exact source quote,
 the exact source claim excerpt, UTF-8 byte ranges, digests, and the projection
 method. Reference, bibliography, and works-cited sections are
 evidence-ineligible and should not receive a model call.
+
+A structurally known field that fails source replay is not allowed to erase
+independently valid fields or masquerade as valid. The admitted proposal replaces
+that field with its schema-safe `null` or empty-array value and retains a
+digest-bound `rejected/not_source_bound` field outcome and message. The original
+strictly parsed proposal and its digest remain separate from the admitted partial
+proposal and its digest. Contributor arrays are all-or-nothing: one invalid,
+duplicate, stale, or overflowed contributor rejects the whole contributor field
+rather than creating an apparently complete shortened list. Malformed envelopes,
+duplicate JSON members, unknown top-level fields, and reference-section calls
+still reject the whole response.
 The caller must supply chunks from a separately validated, SHA-bound document
 map; the helper rehashes each chunk and binds the complete ordered chunk scope
 but does not replace document-map source/schema/renderer validation.
