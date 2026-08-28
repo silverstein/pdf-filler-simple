@@ -107,6 +107,126 @@ describe("verified extraction response admission", () => {
     expect(result.source_replay.citations.every(item => item.document_id === DOCUMENT)).toBe(true);
   });
 
+  it("retains submitted text and the unique exact source bytes for internal-whitespace projection", () => {
+    const whitespaceChunks = [
+      chunk({
+        ...chunks[0],
+        content: "TITLE\nU.S. Geological\n\tSurvey\nRiver,\nA.B.\nTable 1.\tSummary values",
+      }),
+      chunk({
+        ...chunks[1],
+        content: "Suggested citation:\nRiver, A.B., 2025,\nA public-safe report.",
+      }),
+    ];
+    const candidate = proposal();
+    const whitespacePolicy = classifySourceBoundBatch({
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      documentChunks: whitespaceChunks,
+      batchChunkIds,
+    });
+    const result = admit({
+      documentChunks: whitespaceChunks,
+      batchPolicy: whitespacePolicy,
+      responseBytes: response({ content: JSON.stringify(candidate) }),
+    });
+    expect(result.contract.version).toBe("1.1.0-experimental");
+    expect(result.source_replay.citations).toMatchObject([
+      {
+        field: "agency",
+        quote: "U.S. Geological\n\tSurvey",
+        submitted_quote: "U.S. Geological Survey",
+        claim_source_excerpt: "U.S. Geological\n\tSurvey",
+        projection: {
+          policy: "exact-or-unique-internal-whitespace.v1",
+          quote_match: "unique_internal_whitespace_projection",
+          claim_match: "unique_internal_whitespace_projection",
+        },
+      },
+      {
+        field: "publication_citation_excerpt",
+        quote: "River, A.B., 2025,\nA public-safe report.",
+        submitted_quote: "River, A.B., 2025, A public-safe report.",
+      },
+      {
+        field: "contributors[0]",
+        quote: "River,\nA.B.",
+        submitted_quote: "River, A.B.",
+      },
+      {
+        field: "first_table",
+        quote: "Table 1.\tSummary values",
+        submitted_quote: "Table 1. Summary values",
+      },
+    ]);
+    expect(compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })
+      .primary_source_replay).toEqual({ numerator: 4, denominator: 4, complete: true });
+  });
+
+  it.each([
+    ["non-whitespace claim drift", candidate => {
+      candidate.agency.value = "U.S. Geologic Survey";
+    }],
+    ["leading submitted whitespace", candidate => {
+      candidate.agency.citation.quote = " U.S. Geological Survey";
+    }],
+    ["whitespace inserted where the source has none", candidate => {
+      candidate.agency.value = "U.S. Geo logical Survey";
+    }],
+  ])("rejects %s instead of normalizing it", (_label, mutate) => {
+    const candidate = proposal();
+    mutate(candidate);
+    expect(() => admit({ responseBytes: response({ content: JSON.stringify(candidate) }) })).toThrow();
+  });
+
+  it("rejects a citation that has more than one exact or whitespace-equivalent source span", () => {
+    const duplicateChunks = [
+      chunk({ ...chunks[0], content: `${chunks[0].content}\nU.S. Geological\nSurvey` }),
+      chunks[1],
+    ];
+    const duplicatePolicy = classifySourceBoundBatch({
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      documentChunks: duplicateChunks,
+      batchChunkIds,
+    });
+    expect(() => admit({
+      documentChunks: duplicateChunks,
+      batchPolicy: duplicatePolicy,
+      responseBytes: response(),
+    })).toThrow(/ambiguous/u);
+  });
+
+  it("counts overlapping source spans as ambiguity", () => {
+    const overlappingChunks = [chunk({ ...chunks[0], content: `${chunks[0].content}\nA A A` }), chunks[1]];
+    const candidate = proposal();
+    candidate.agency = { value: "A A", citation: { chunk_id: id("a"), quote: "A A" } };
+    expect(() => admit({
+      documentChunks: overlappingChunks,
+      batchPolicy: classifySourceBoundBatch({
+        documentId: DOCUMENT,
+        documentMapSha256: DOCUMENT_MAP_SHA256,
+        documentChunks: overlappingChunks,
+        batchChunkIds,
+      }),
+      responseBytes: response({ content: JSON.stringify(candidate) }),
+    })).toThrow(/ambiguous/u);
+  });
+
+  it("searches a bounded full chunk without applying the smaller submitted-quote limit", () => {
+    const longChunks = [
+      chunk({ ...chunks[0], content: `${"x".repeat(5000)}\n${chunks[0].content}` }),
+      chunks[1],
+    ];
+    const longPolicy = classifySourceBoundBatch({
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      documentChunks: longChunks,
+      batchChunkIds,
+    });
+    expect(admit({ documentChunks: longChunks, batchPolicy: longPolicy }).source_replay.citation_count).toBe(4);
+  });
+
   it("scores source replay as primary and exact oracle span equality as secondary", () => {
     const candidate = proposal();
     candidate.agency.citation.quote = "TITLE\nU.S. Geological Survey";
@@ -280,6 +400,13 @@ describe("verified extraction response admission", () => {
     admission.source_replay.contributor_count = 99;
     expect(() => compareAdmittedCitationEvidence({ admission, oracleCitations: [] }))
       .toThrow(/contributor derivation is invalid/u);
+  });
+
+  it("rejects source-projection metadata drift before secondary oracle comparison", () => {
+    const admission = admit();
+    admission.source_replay.citations[0].projection.claim_match = "unique_internal_whitespace_projection";
+    expect(() => compareAdmittedCitationEvidence({ admission, oracleCitations: [] }))
+      .toThrow(/projection drifted/u);
   });
 
   it("rejects cross-document and duplicate oracle citations", () => {

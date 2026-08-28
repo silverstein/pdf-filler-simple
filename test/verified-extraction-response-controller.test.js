@@ -79,6 +79,37 @@ describe("verified extraction response controller", () => {
     expect(result.receipt.batch_outcomes[0].admission).toEqual(result.admissions[0]);
   });
 
+  it("retains exact source spans when an admitted batch uniquely projects internal whitespace", async () => {
+    const projectedChunks = [
+      chunk({ ...chunks[0], content: "TITLE\nU.S. Geological\nSurvey\nRiver,\nA.B.\nTable 1.\tSummary values" }),
+      chunk({ ...chunks[1], content: "Suggested citation: River, A.B., 2025,\nA public-safe report." }),
+      chunks[2],
+    ];
+    const projectedPlan = prepareResponseAdmissionController({
+      attemptId: "successor-attempt-projection",
+      trialId: "successor-trial-projection",
+      predecessorRoleIds: ["v13-attempt-0001"],
+      documentValidation,
+      documentChunks: projectedChunks,
+      batchChunkIds: [[chunkId("a"), chunkId("b")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+    });
+    const result = await runResponseAdmissionControllerAttempt({
+      plan: projectedPlan,
+      documentChunks: projectedChunks,
+      invokeBatch: async () => artifact(response()),
+    });
+    expect(result.receipt.outcome.classification).toBe("completed");
+    expect(result.admissions[0].source_replay.citations).toMatchObject([
+      { field: "agency", quote: "U.S. Geological\nSurvey",
+        projection: { quote_match: "unique_internal_whitespace_projection" } },
+      { field: "publication_citation_excerpt", quote: "River, A.B., 2025,\nA public-safe report." },
+      { field: "contributors[0]", quote: "River,\nA.B." },
+      { field: "first_table", quote: "Table 1.\tSummary values" },
+    ]);
+  });
+
   it.each([
     ["model_output_truncated", response({ content: "{\"agency\":", finishReason: "length" })],
     ["model_response_ambiguous_or_malformed", response({ content: "{\"agency\":null" })],

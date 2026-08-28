@@ -14,6 +14,7 @@ const REFERENCE_HEADINGS = new Set([
 ]);
 const PROPOSAL_KEYS = ["agency", "contributors", "first_table", "publication_citation_excerpt"];
 const ALL_FIELDS = ["agency", "publication_citation_excerpt", "contributors", "first_table"];
+const SOURCE_PROJECTION_POLICY = "exact-or-unique-internal-whitespace.v1";
 
 export const MAX_ADMITTED_CONTRIBUTORS = 32;
 
@@ -186,26 +187,120 @@ export class ModelOutputAdmissionError extends Error {
   }
 }
 
+function whitespaceWidthAt(value, offset) {
+  const point = value.codePointAt(offset);
+  if (point === undefined) return 0;
+  const character = String.fromCodePoint(point);
+  return /^\s$/u.test(character) ? character.length : 0;
+}
+
+function whitespaceProjectionMatches(source, pieces) {
+  const matches = [];
+  let searchOffset = 0;
+  while (searchOffset <= source.length - pieces[0].length) {
+    const start = source.indexOf(pieces[0], searchOffset);
+    if (start < 0) break;
+    let cursor = start + pieces[0].length;
+    let matched = true;
+    for (const piece of pieces.slice(1)) {
+      let whitespace = whitespaceWidthAt(source, cursor);
+      if (whitespace === 0) {
+        matched = false;
+        break;
+      }
+      while (whitespace > 0) {
+        cursor += whitespace;
+        whitespace = whitespaceWidthAt(source, cursor);
+      }
+      if (!source.startsWith(piece, cursor)) {
+        matched = false;
+        break;
+      }
+      cursor += piece.length;
+    }
+    if (matched) matches.push({ index: start, source_excerpt: source.slice(start, cursor) });
+    searchOffset = start + 1;
+  }
+  return matches;
+}
+
+function uniqueSourceProjection(source, submitted, label) {
+  boundedString(source, `${label}.source`, 1024 * 1024);
+  boundedString(submitted, `${label}.submitted`);
+  assertion(submitted === submitted.trim(), `${label} has leading or trailing whitespace`);
+
+  const exactOffsets = [];
+  let offset = 0;
+  while ((offset = source.indexOf(submitted, offset)) >= 0) {
+    exactOffsets.push(offset);
+    offset += 1;
+  }
+  if (exactOffsets.length > 1) throw new Error(`${label} is ambiguous in the exact source`);
+
+  const pieces = submitted.split(/\s+/u);
+  const projectionMatches = pieces.length > 1 && pieces.every(piece => piece.length > 0)
+    ? whitespaceProjectionMatches(source, pieces)
+    : [];
+  if (exactOffsets.length === 1) {
+    assertion(projectionMatches.length <= 1, `${label} is ambiguous after whitespace projection`);
+    return {
+      method: "exact",
+      source_excerpt: submitted,
+      start_utf16: exactOffsets[0],
+      end_utf16: exactOffsets[0] + submitted.length,
+    };
+  }
+
+  assertion(pieces.length > 1 && pieces.every(piece => piece.length > 0),
+    `${label} does not replay from the exact source`);
+  assertion(projectionMatches.length > 0, `${label} does not replay from the exact source`);
+  assertion(projectionMatches.length === 1, `${label} is ambiguous after whitespace projection`);
+  const match = projectionMatches[0];
+  return {
+    method: "unique_internal_whitespace_projection",
+    source_excerpt: match.source_excerpt,
+    start_utf16: match.index,
+    end_utf16: match.index + match.source_excerpt.length,
+  };
+}
+
+function byteOffset(value, utf16Offset) {
+  return Buffer.byteLength(value.slice(0, utf16Offset), "utf8");
+}
+
 function validateCitation(citation, chunksById, claimedValue, label) {
   exactKeys(citation, ["chunk_id", "quote"], `${label}.citation`);
   assertion(CHUNK_ID.test(citation.chunk_id), `${label}.citation.chunk_id is invalid`);
   boundedString(citation.quote, `${label}.citation.quote`);
   const chunk = chunksById.get(citation.chunk_id);
   assertion(chunk, `${label}.citation references a stale or cross-document chunk`);
-  const content = Buffer.from(chunk.content, "utf8");
-  const quote = Buffer.from(citation.quote, "utf8");
-  const claimed = Buffer.from(claimedValue, "utf8");
-  const offset = content.indexOf(quote);
-  assertion(offset >= 0, `${label}.citation quote does not replay from the exact chunk`);
-  assertion(quote.includes(claimed), `${label}.citation does not contain the claimed value`);
+  const quoteProjection = uniqueSourceProjection(chunk.content, citation.quote, `${label}.citation quote`);
+  const claimProjection = uniqueSourceProjection(quoteProjection.source_excerpt, claimedValue,
+    `${label}.citation claimed value`);
+  const quoteStart = byteOffset(chunk.content, quoteProjection.start_utf16);
+  const quoteBytes = Buffer.from(quoteProjection.source_excerpt, "utf8");
+  const claimStart = quoteStart + byteOffset(quoteProjection.source_excerpt, claimProjection.start_utf16);
+  const claimBytes = Buffer.from(claimProjection.source_excerpt, "utf8");
+  const submittedQuote = Buffer.from(citation.quote, "utf8");
   return {
     document_id: chunk.document_id,
     chunk_id: chunk.chunk_id,
     page_one_based: chunk.page_range.start_page,
-    quote: citation.quote,
-    start_utf8_byte: offset,
-    end_utf8_byte: offset + quote.length,
-    quote_sha256: sha256(quote),
+    quote: quoteProjection.source_excerpt,
+    start_utf8_byte: quoteStart,
+    end_utf8_byte: quoteStart + quoteBytes.length,
+    quote_sha256: sha256(quoteBytes),
+    submitted_quote: citation.quote,
+    submitted_quote_sha256: sha256(submittedQuote),
+    claim_source_excerpt: claimProjection.source_excerpt,
+    claim_source_excerpt_sha256: sha256(claimBytes),
+    claim_start_utf8_byte: claimStart,
+    claim_end_utf8_byte: claimStart + claimBytes.length,
+    projection: {
+      policy: SOURCE_PROJECTION_POLICY,
+      quote_match: quoteProjection.method,
+      claim_match: claimProjection.method,
+    },
   };
 }
 
@@ -214,7 +309,7 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
     "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay"], "admission");
   exactKeys(admission.contract, ["name", "version"], "admission.contract");
   assertion(admission.contract.name === "pdf-tools.verified-extraction-response-admission"
-    && admission.contract.version === "1.0.0-experimental", "admission contract is invalid");
+    && admission.contract.version === "1.1.0-experimental", "admission contract is invalid");
   assertion(admission.benchmark_claim_ready === false && admission.package_inclusion === "disabled_experimental",
     "admission readiness boundary is invalid");
   assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256),
@@ -265,20 +360,47 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
   assertion(expectedCitationClaims.length === admission.source_replay.citations.length,
     "admission proposal and citation denominator disagree");
   admission.source_replay.citations.forEach((citation, index) => {
-    exactKeys(citation, ["chunk_id", "document_id", "end_utf8_byte", "field", "page_one_based", "quote",
-      "quote_sha256", "start_utf8_byte"], `admission.source_replay.citations[${index}]`);
+    exactKeys(citation, ["chunk_id", "claim_end_utf8_byte", "claim_source_excerpt",
+      "claim_source_excerpt_sha256", "claim_start_utf8_byte", "document_id", "end_utf8_byte", "field",
+      "page_one_based", "projection", "quote", "quote_sha256", "start_utf8_byte", "submitted_quote",
+      "submitted_quote_sha256"], `admission.source_replay.citations[${index}]`);
+    exactKeys(citation.projection, ["claim_match", "policy", "quote_match"],
+      `admission.source_replay.citations[${index}].projection`);
     assertion(citation.document_id === admission.document_id && CHUNK_ID.test(citation.chunk_id)
       && Number.isSafeInteger(citation.page_one_based) && citation.page_one_based >= 1
       && Number.isSafeInteger(citation.start_utf8_byte) && citation.start_utf8_byte >= 0
       && Number.isSafeInteger(citation.end_utf8_byte)
       && citation.end_utf8_byte === citation.start_utf8_byte + Buffer.byteLength(citation.quote, "utf8")
       && SHA256.test(citation.quote_sha256)
-      && citation.quote_sha256 === sha256(Buffer.from(citation.quote, "utf8")),
+      && citation.quote_sha256 === sha256(Buffer.from(citation.quote, "utf8"))
+      && SHA256.test(citation.submitted_quote_sha256)
+      && citation.submitted_quote_sha256 === sha256(Buffer.from(citation.submitted_quote, "utf8"))
+      && Number.isSafeInteger(citation.claim_start_utf8_byte)
+      && Number.isSafeInteger(citation.claim_end_utf8_byte)
+      && citation.claim_start_utf8_byte >= citation.start_utf8_byte
+      && citation.claim_end_utf8_byte <= citation.end_utf8_byte
+      && citation.claim_end_utf8_byte === citation.claim_start_utf8_byte
+        + Buffer.byteLength(citation.claim_source_excerpt, "utf8")
+      && SHA256.test(citation.claim_source_excerpt_sha256)
+      && citation.claim_source_excerpt_sha256
+        === sha256(Buffer.from(citation.claim_source_excerpt, "utf8"))
+      && citation.projection.policy === SOURCE_PROJECTION_POLICY,
     `admission.source_replay.citations[${index}] binding is invalid`);
     const [expectedField, expectedClaim] = expectedCitationClaims[index];
-    assertion(citation.field === expectedField && typeof expectedClaim === "string"
-      && Buffer.from(citation.quote, "utf8").includes(Buffer.from(expectedClaim, "utf8")),
-    `admission.source_replay.citations[${index}] does not bind its proposal field`);
+    assertion(citation.field === expectedField && typeof expectedClaim === "string",
+      `admission.source_replay.citations[${index}] does not bind its proposal field`);
+    const replayedQuote = uniqueSourceProjection(citation.quote, citation.submitted_quote,
+      `admission.source_replay.citations[${index}].submitted_quote`);
+    const replayedClaim = uniqueSourceProjection(citation.quote, expectedClaim,
+      `admission.source_replay.citations[${index}].claim`);
+    assertion(replayedQuote.start_utf16 === 0 && replayedQuote.end_utf16 === citation.quote.length
+      && replayedQuote.source_excerpt === citation.quote
+      && replayedQuote.method === citation.projection.quote_match
+      && replayedClaim.source_excerpt === citation.claim_source_excerpt
+      && citation.start_utf8_byte + byteOffset(citation.quote, replayedClaim.start_utf16)
+        === citation.claim_start_utf8_byte
+      && replayedClaim.method === citation.projection.claim_match,
+    `admission.source_replay.citations[${index}] projection drifted`);
   });
   assertion(Array.isArray(oracleCitations), "oracleCitations must be an array");
   const seenOracleCitations = new Set();
@@ -499,7 +621,7 @@ export function admitStructuredModelResponse({
     throw new ModelOutputAdmissionError(error.message, "model_proposal_not_source_bound", observation);
   }
   return {
-    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.0.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.1.0-experimental" },
     document_id: documentId,
     document_map_sha256: documentMapSha256,
     batch_policy_sha256: batchPolicySha256,
@@ -519,6 +641,6 @@ export function admitStructuredModelResponse({
 
 export const VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-admission",
-  version: "1.0.0-experimental",
-  boundary: "Only strict, complete, source-replayed proposals from a separately validated SHA-bound document map and current batch are admitted. This helper rehashes chunks but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
+  version: "1.1.0-experimental",
+  boundary: "Only strict, complete proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. This helper rehashes chunks but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
 });

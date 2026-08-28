@@ -51,14 +51,23 @@ zero-inference preparation contract for a successor to the private long-document
 evaluation. It is deliberately absent from the MCP server and release packages.
 It treats output-token-cap termination as typed truncation evidence, rejects
 duplicate JSON members before object construction, bounds contributor output,
-and admits citations only when the claimed value replays byte-for-byte inside an
-exact current-document chunk. Reference, bibliography, and works-cited sections
-are evidence-ineligible and should not receive a model call.
+and admits citations only when both the submitted quote and claimed value map
+uniquely to exact bytes in one current-document chunk. Literal matches remain
+literal. The only non-literal projection collapses internal Unicode whitespace;
+it rejects leading or trailing whitespace, non-whitespace drift, multiple exact
+or whitespace-equivalent matches, stale chunks, and cross-batch chunks. Every
+admitted citation retains both the submitted quote and the exact source quote,
+the exact source claim excerpt, UTF-8 byte ranges, digests, and the projection
+method. Reference, bibliography, and works-cited sections are
+evidence-ineligible and should not receive a model call.
 The caller must supply chunks from a separately validated, SHA-bound document
 map; the helper rehashes each chunk and binds the complete ordered chunk scope
 but does not replace document-map source/schema/renderer validation.
 
-Source replay is the primary evidence property. Exact equality to one retained
+Source replay is the primary evidence property. Whitespace projection does not
+silently rewrite the submitted proposal: its submitted strings remain bound by
+the parsed proposal and response digests while the exact source spans remain the
+primary replay evidence. Exact equality to one retained
 oracle quote is a separate secondary evaluation signal because a source can
 contain multiple valid literal spans. Derived counts are recomputed from admitted
 objects rather than accepted as model arithmetic. These controls do not repair
