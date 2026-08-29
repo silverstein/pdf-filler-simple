@@ -151,6 +151,24 @@ digests rather than accepted from the caller. The controller accepts an
 invocation callback but performs no model/provider call itself, remains absent
 from server/share inventories, and keeps `benchmark_claim_ready: false`.
 
+The internal `scripts/verified-extraction-response-pipeline.mjs` is the required
+composition boundary for a measured caller. It derives the controller's exact
+document-validation object from the retained document map and canonical
+source-page bundle, carries that same bundle through plan replay and response
+admission, and constructs each request from the controller-frozen batch policy.
+Callers therefore do not independently author the map, source-page, table,
+renderer, schema, chunk-scope, or batch-policy bindings at each handoff. Missing,
+duplicated, substituted, or drifted bindings reject before the invocation
+callback. The helper remains internal experimental source, performs no model or
+provider call, and grants no execution or benchmark authority.
+
+This boundary closes the integration failure measured in the consumed V19
+campaign: all 30 candidate documents retained their source layouts and maps,
+then failed before inference because the caller omitted the newly mandatory
+source-page digest/object at the response-controller handoff. V19 remains
+immutable failure evidence; this source repair neither retries nor retroactively
+changes that campaign.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that
