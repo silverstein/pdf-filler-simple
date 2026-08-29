@@ -92,6 +92,19 @@ Only strictly admitted proposals contribute to the aggregate, while invocation
 or controller failures remain fatal. These changes add no retry, repair
 malformed JSON, weaken citation replay, or authorize a model/provider call.
 
+The V17 retained run then isolated a representation-only boundary: 184 of 185
+model responses contained duplicate-key-safe strict JSON inside exactly one
+lowercase `json` Markdown fence, while the sole direct JSON response was
+admitted. Admission now recognizes only that one finite wrapper grammar—three
+backticks plus lowercase `json`, one LF, the strict JSON payload, one LF, and
+the closing three backticks—with no surrounding bytes. Generic or uppercase
+fences, missing boundaries, prose, multiple or nested fences, malformed JSON,
+and duplicate members still fail closed. The admission retains the exact
+payload, its digest, the raw-content digest, and an explicit representation
+kind so downstream replay can reconstruct the original content before scoring.
+This does not normalize arbitrary Markdown or weaken any source, citation,
+table, schema, chunk, or cross-document check.
+
 The caller must supply chunks from a separately validated, SHA-bound document
 map; the helper rehashes each chunk and binds the complete ordered chunk scope
 but does not replace document-map source/schema/renderer validation.

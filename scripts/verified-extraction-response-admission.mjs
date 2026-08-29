@@ -16,6 +16,8 @@ const REFERENCE_HEADINGS = new Set([
 const PROPOSAL_KEYS = ["agency", "contributors", "first_table", "publication_citation_excerpt"];
 const ALL_FIELDS = ["agency", "publication_citation_excerpt", "contributors", "first_table"];
 const SOURCE_PROJECTION_POLICY = "exact-or-unique-internal-whitespace.v1";
+const JSON_FENCE_PREFIX = "```json\n";
+const JSON_FENCE_SUFFIX = "\n```";
 
 export const MAX_ADMITTED_CONTRIBUTORS = 32;
 
@@ -250,6 +252,39 @@ export class ModelOutputAdmissionError extends Error {
   }
 }
 
+export function parseModelResponseProposalContent(content) {
+  boundedString(content, "model response content", 1024 * 1024);
+  try {
+    return {
+      proposal: parseStrictJson(content, "model response content"),
+      representation: {
+        kind: "direct_strict_json",
+        raw_content_sha256: sha256(Buffer.from(content, "utf8")),
+        strict_json_payload: content,
+        strict_json_payload_sha256: sha256(Buffer.from(content, "utf8")),
+      },
+    };
+  } catch (directError) {
+    const hasExactFence = content.startsWith(JSON_FENCE_PREFIX)
+      && content.endsWith(JSON_FENCE_SUFFIX)
+      && content.length > JSON_FENCE_PREFIX.length + JSON_FENCE_SUFFIX.length;
+    if (!hasExactFence) throw directError;
+    const payload = content.slice(JSON_FENCE_PREFIX.length, -JSON_FENCE_SUFFIX.length);
+    if (payload.includes("```")) {
+      throw new Error("model response content contains a nested or multiple Markdown fence");
+    }
+    return {
+      proposal: parseStrictJson(payload, "model response fenced JSON payload"),
+      representation: {
+        kind: "single_lowercase_json_markdown_fence.v1",
+        raw_content_sha256: sha256(Buffer.from(content, "utf8")),
+        strict_json_payload: payload,
+        strict_json_payload_sha256: sha256(Buffer.from(payload, "utf8")),
+      },
+    };
+  }
+}
+
 function whitespaceWidthAt(value, offset) {
   const point = value.codePointAt(offset);
   if (point === undefined) return 0;
@@ -368,13 +403,13 @@ function validateCitation(citation, chunksById, claimedValue, label) {
 }
 
 export function compareAdmittedCitationEvidence({ admission, oracleCitations = [] }) {
-  exactKeys(admission, ["batch_policy_sha256", "benchmark_claim_ready", "contract", "document_id", "observation",
+  exactKeys(admission, ["batch_policy_sha256", "benchmark_claim_ready", "content_representation", "contract", "document_id", "observation",
     "document_table_regions", "document_table_regions_sha256", "field_outcomes", "first_table_evidence",
     "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay",
     "submitted_proposal", "submitted_proposal_sha256"], "admission");
   exactKeys(admission.contract, ["name", "version"], "admission.contract");
   assertion(admission.contract.name === "pdf-tools.verified-extraction-response-admission"
-    && admission.contract.version === "1.3.0-experimental", "admission contract is invalid");
+    && admission.contract.version === "1.4.0-experimental", "admission contract is invalid");
   assertion(admission.benchmark_claim_ready === false && admission.package_inclusion === "disabled_experimental",
     "admission readiness boundary is invalid");
   assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256),
@@ -396,6 +431,27 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
     && Number.isSafeInteger(admission.observation.max_output_tokens)
     && admission.observation.max_output_tokens > 0,
   "admission observation binding is invalid");
+  exactKeys(admission.content_representation,
+    ["kind", "raw_content_sha256", "strict_json_payload", "strict_json_payload_sha256"],
+    "admission.content_representation");
+  assertion(["direct_strict_json", "single_lowercase_json_markdown_fence.v1"]
+    .includes(admission.content_representation.kind)
+    && admission.content_representation.raw_content_sha256 === admission.observation.content_sha256
+    && SHA256.test(admission.content_representation.strict_json_payload_sha256),
+  "admission content representation binding is invalid");
+  boundedString(admission.content_representation.strict_json_payload,
+    "admission.content_representation.strict_json_payload", 1024 * 1024);
+  const replayedSubmittedProposal = parseStrictJson(admission.content_representation.strict_json_payload,
+    "admission.content_representation.strict_json_payload");
+  const reconstructedContent = admission.content_representation.kind === "direct_strict_json"
+    ? admission.content_representation.strict_json_payload
+    : `${JSON_FENCE_PREFIX}${admission.content_representation.strict_json_payload}${JSON_FENCE_SUFFIX}`;
+  assertion(admission.content_representation.strict_json_payload_sha256
+    === sha256(Buffer.from(admission.content_representation.strict_json_payload, "utf8"))
+    && admission.content_representation.raw_content_sha256
+      === sha256(Buffer.from(reconstructedContent, "utf8"))
+    && canonicalJson(replayedSubmittedProposal) === canonicalJson(admission.submitted_proposal),
+  "admission content representation replay is invalid");
   exactKeys(admission.observation.usage, ["input_tokens", "output_tokens", "total_tokens"],
     "admission.observation.usage");
   assertion([admission.observation.usage.input_tokens, admission.observation.usage.output_tokens,
@@ -804,12 +860,13 @@ export function admitStructuredModelResponse({
     throw new ModelOutputAdmissionError("model call was not admitted for a reference-section batch",
       "model_call_unplanned_reference_section", observation);
   }
-  let submittedProposal;
+  let parsedContent;
   try {
-    submittedProposal = parseStrictJson(content, "model response content");
+    parsedContent = parseModelResponseProposalContent(content);
   } catch (error) {
     throw new ModelOutputAdmissionError(error.message, "model_response_ambiguous_or_malformed", observation);
   }
+  const submittedProposal = parsedContent.proposal;
   let admitted;
   try {
     admitted = admitProposal(submittedProposal, chunksById, batchPolicy.allowed_fields, tableRegions);
@@ -817,13 +874,14 @@ export function admitStructuredModelResponse({
     throw new ModelOutputAdmissionError(error.message, "model_proposal_not_source_bound", observation);
   }
   return {
-    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.3.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.4.0-experimental" },
     document_id: documentId,
     document_map_sha256: documentMapSha256,
     batch_policy_sha256: batchPolicySha256,
     document_table_regions: structuredClone(documentTableRegions),
     document_table_regions_sha256: tableRegions.sha256,
     observation,
+    content_representation: parsedContent.representation,
     submitted_proposal: submittedProposal,
     submitted_proposal_sha256: sha256(Buffer.from(canonicalJson(submittedProposal), "utf8")),
     proposal: admitted.proposal,
@@ -843,6 +901,6 @@ export function admitStructuredModelResponse({
 
 export const VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-admission",
-  version: "1.3.0-experimental",
-  boundary: "Only strict proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. A first_table proposal additionally binds the exact cited page to the first deterministic table-region signal in the validated document map; contents-page destination references cannot satisfy that boundary. A source-invalid known field is replaced by its schema-safe null or empty value with a digest-bound typed rejection while independently valid fields remain admitted; malformed envelopes, duplicate members, and top-level field smuggling still reject the whole response. This helper rehashes chunks and binds table-region inventory but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
+  version: "1.4.0-experimental",
+  boundary: "Only strict proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Proposal representation is either direct strict JSON or one exact lowercase-json Markdown fence with no surrounding bytes, nested fence, prose, or alternate wrapper; the raw content and strict payload digests are both retained. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. A first_table proposal additionally binds the exact cited page to the first deterministic table-region signal in the validated document map; contents-page destination references cannot satisfy that boundary. A source-invalid known field is replaced by its schema-safe null or empty value with a digest-bound typed rejection while independently valid fields remain admitted; malformed envelopes, duplicate members, and top-level field smuggling still reject the whole response. This helper rehashes chunks and binds table-region inventory but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
 });

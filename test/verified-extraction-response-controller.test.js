@@ -129,6 +129,24 @@ describe("verified extraction response controller", () => {
     ]);
   });
 
+  it("admits the one exact fenced-JSON representation through the controller", async () => {
+    const payload = JSON.stringify(proposal());
+    const bytes = response({ content: `\`\`\`json\n${payload}\n\`\`\`` });
+    const result = await runResponseAdmissionControllerAttempt({
+      plan: plan(), documentChunks: chunks, invokeBatch: async () => artifact(bytes),
+    });
+    expect(result.receipt).toMatchObject({
+      observed: { admitted_batches: 1, typed_rejected_batches: 0, model_calls: 1 },
+      outcome: { classification: "completed", reason_code: "none" },
+    });
+    expect(result.admissions[0].content_representation).toEqual({
+      kind: "single_lowercase_json_markdown_fence.v1",
+      raw_content_sha256: sha(`\`\`\`json\n${payload}\n\`\`\``),
+      strict_json_payload: payload,
+      strict_json_payload_sha256: sha(payload),
+    });
+  });
+
   it.each([
     ["model_output_truncated", response({ content: "{\"agency\":", finishReason: "length" })],
     ["model_response_ambiguous_or_malformed", response({ content: "{\"agency\":null" })],

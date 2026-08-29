@@ -13,6 +13,7 @@ import {
   compareAdmittedCitationEvidence,
   MAX_ADMITTED_CONTRIBUTORS,
   ModelOutputAdmissionError,
+  parseModelResponseProposalContent,
   VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY,
 } from "../scripts/verified-extraction-response-admission.mjs";
 
@@ -125,6 +126,53 @@ describe("verified extraction response admission", () => {
       package_inclusion: "disabled_experimental",
     });
     expect(result.source_replay.citations.every(item => item.document_id === DOCUMENT)).toBe(true);
+    expect(result.content_representation).toEqual({
+      kind: "direct_strict_json",
+      raw_content_sha256: contentSha(JSON.stringify(proposal())),
+      strict_json_payload: JSON.stringify(proposal()),
+      strict_json_payload_sha256: contentSha(JSON.stringify(proposal())),
+    });
+  });
+
+  it("admits one exact lowercase-json fence and binds raw and payload representations", () => {
+    const payload = JSON.stringify(proposal());
+    const content = `\`\`\`json\n${payload}\n\`\`\``;
+    const result = admit({ responseBytes: response({ content }) });
+    expect(result.proposal).toEqual(proposal());
+    expect(result.content_representation).toEqual({
+      kind: "single_lowercase_json_markdown_fence.v1",
+      raw_content_sha256: contentSha(content),
+      strict_json_payload: payload,
+      strict_json_payload_sha256: contentSha(payload),
+    });
+    expect(result.observation.content_sha256).toBe(contentSha(content));
+  });
+
+  it.each([
+    ["generic fence", payload => `\`\`\`\n${payload}\n\`\`\``],
+    ["uppercase language", payload => `\`\`\`JSON\n${payload}\n\`\`\``],
+    ["leading whitespace", payload => ` \`\`\`json\n${payload}\n\`\`\``],
+    ["trailing whitespace", payload => `\`\`\`json\n${payload}\n\`\`\`\n`],
+    ["missing opening newline", payload => `\`\`\`json${payload}\n\`\`\``],
+    ["missing closing newline", payload => `\`\`\`json\n${payload}\`\`\``],
+    ["trailing prose", payload => `\`\`\`json\n${payload}\n\`\`\`\nDone`],
+    ["multiple fences", payload => `\`\`\`json\n${payload}\n\`\`\`\n\`\`\`json\n${payload}\n\`\`\``],
+    ["nested fence", payload => `\`\`\`json\n${payload.slice(0, -1)},"note":"\`\`\`"}\n\`\`\``],
+  ])("rejects %s as an unsupported response representation", (_label, wrap) => {
+    const content = wrap(JSON.stringify(proposal()));
+    expect(() => parseModelResponseProposalContent(content)).toThrow();
+    expect(() => admit({ responseBytes: response({ content }) })).toThrow();
+  });
+
+  it("rejects duplicate members and malformed JSON inside the exact fence", () => {
+    const duplicate = JSON.stringify(proposal()).replace(
+      `"name":"River, A.B."`,
+      `"name":"Unsupported","name":"River, A.B."`,
+    );
+    expect(() => parseModelResponseProposalContent(`\`\`\`json\n${duplicate}\n\`\`\``))
+      .toThrow(/duplicate object key "name"/u);
+    expect(() => parseModelResponseProposalContent("```json\n{\"agency\":null\n```"))
+      .toThrow();
   });
 
   it("retains submitted text and the unique exact source bytes for internal-whitespace projection", () => {
@@ -151,7 +199,7 @@ describe("verified extraction response admission", () => {
       batchPolicy: whitespacePolicy,
       responseBytes: response({ content: JSON.stringify(candidate) }),
     });
-    expect(result.contract.version).toBe("1.3.0-experimental");
+    expect(result.contract.version).toBe("1.4.0-experimental");
     expect(result.first_table_evidence).toMatchObject({
       document_table_regions_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       region: { region_id: "p1-t1", page: 1 },
@@ -569,6 +617,19 @@ describe("verified extraction response admission", () => {
       .toThrow(/contributor derivation is invalid/u);
   });
 
+  it("replays and rejects drift in the retained response representation", () => {
+    const direct = admit();
+    direct.content_representation.strict_json_payload += " ";
+    expect(() => compareAdmittedCitationEvidence({ admission: direct, oracleCitations: [] }))
+      .toThrow(/content representation replay is invalid/u);
+
+    const payload = JSON.stringify(proposal());
+    const fenced = admit({ responseBytes: response({ content: `\`\`\`json\n${payload}\n\`\`\`` }) });
+    fenced.content_representation.kind = "direct_strict_json";
+    expect(() => compareAdmittedCitationEvidence({ admission: fenced, oracleCitations: [] }))
+      .toThrow(/content representation replay is invalid/u);
+  });
+
   it("rejects source-projection metadata drift before secondary oracle comparison", () => {
     const admission = admit();
     admission.source_replay.citations[0].projection.claim_match = "unique_internal_whitespace_projection";
@@ -588,7 +649,7 @@ describe("verified extraction response admission", () => {
     const submittedDrift = admit();
     submittedDrift.submitted_proposal.agency.value = "drift";
     expect(() => compareAdmittedCitationEvidence({ admission: submittedDrift, oracleCitations: [] }))
-      .toThrow(/submitted-proposal digest drifted/u);
+      .toThrow(/content representation replay is invalid/u);
 
     const regionDrift = admit();
     regionDrift.first_table_evidence.region.page = 2;
