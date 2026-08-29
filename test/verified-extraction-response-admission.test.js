@@ -8,6 +8,7 @@ import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
   admitStructuredModelResponse,
+  buildNormalizedSourcePageBundle,
   buildVerifiedExtractionProposalSchema,
   classifySourceBoundBatch,
   compareAdmittedCitationEvidence,
@@ -24,8 +25,14 @@ const shapes = JSON.parse(fs.readFileSync(path.join(
 const MODEL = "oda-local-model";
 const DOCUMENT = "public-safe-document";
 const DOCUMENT_MAP_SHA256 = "9".repeat(64);
+const SOURCE_SHA256 = "1".repeat(64);
+const PUBLICATION = "Suggested citation: River, A.B., 2025, A public-safe report. https://doi.org/10.1234/example";
 const id = character => `chunk.${character.repeat(64)}`;
 const contentSha = content => createHash("sha256").update(content).digest("hex");
+const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
+  : value && typeof value === "object"
+    ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
 const chunk = value => ({ ...value, content_sha256: contentSha(value.content) });
 const chunks = [
   chunk({
@@ -40,7 +47,7 @@ const chunks = [
     chunk_id: id("b"),
     page_range: { start_page: 2, end_page: 2 },
     starts_at_heading: false,
-    content: "Suggested citation: River, A.B., 2025, A public-safe report.",
+    content: PUBLICATION,
   }),
 ];
 const tableRegions = {
@@ -61,6 +68,29 @@ const tableRegions = {
   }],
   all_items_sha256: "8".repeat(64),
 };
+const sourcePages = (pageTexts = [
+  "TITLE U.S. Geological Survey River, A.B. Table 1. Summary values",
+  PUBLICATION,
+]) => {
+  const body = {
+    version: 1,
+    scheme: "verified-extraction-normalized-source-pages.v1",
+    document_id: DOCUMENT,
+    source_identity: {
+      pdf_sha256: SOURCE_SHA256,
+      page_count: pageTexts.length,
+      pdfjs_package_sha256: "7".repeat(64),
+      normalization: "unicode_whitespace_runs_to_ascii_space_then_trim",
+    },
+    pages: pageTexts.map((normalizedText, index) => ({
+      page_one_based: index + 1,
+      normalized_text: normalizedText,
+      normalized_text_sha256: contentSha(normalizedText),
+    })),
+  };
+  return { ...body, source_page_text_bundle_sha256: contentSha(canonical(body)) };
+};
+const SOURCE_PAGES = sourcePages();
 
 const proposal = () => ({
   agency: {
@@ -68,8 +98,8 @@ const proposal = () => ({
     citation: { chunk_id: id("a"), quote: "U.S. Geological Survey" },
   },
   publication_citation_excerpt: {
-    value: "River, A.B., 2025, A public-safe report.",
-    citation: { chunk_id: id("b"), quote: "River, A.B., 2025, A public-safe report." },
+    value: PUBLICATION,
+    citation: { chunk_id: id("b"), quote: PUBLICATION },
   },
   contributors: [{
     name: "River, A.B.",
@@ -93,24 +123,86 @@ function response({ content = JSON.stringify(proposal()), finishReason = "stop",
 }
 
 const batchChunkIds = chunks.map(chunk => chunk.chunk_id);
-const policy = () => classifySourceBoundBatch({
-  documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
-  documentTableRegions: tableRegions, batchChunkIds,
+const classification = (overrides = {}) => classifySourceBoundBatch({
+  documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, sourceSha256: SOURCE_SHA256,
+  documentChunks: chunks, documentTableRegions: tableRegions, documentSourcePages: SOURCE_PAGES,
+  batchChunkIds,
+  ...overrides,
 });
+const policy = () => classification();
 const admit = overrides => admitStructuredModelResponse({
   responseBytes: response(),
   expectedModel: MODEL,
   maxOutputTokens: 4096,
   documentId: DOCUMENT,
   documentMapSha256: DOCUMENT_MAP_SHA256,
+  sourceSha256: SOURCE_SHA256,
   documentChunks: chunks,
   documentTableRegions: tableRegions,
+  documentSourcePages: SOURCE_PAGES,
   batchChunkIds,
+  batchPolicy: policy(),
+  ...overrides,
+});
+const compare = overrides => compareAdmittedCitationEvidence({
+  documentChunks: chunks,
+  documentSourcePages: SOURCE_PAGES,
   batchPolicy: policy(),
   ...overrides,
 });
 
 describe("verified extraction response admission", () => {
+  it("derives the scorer-compatible canonical source-page bundle from complete retained PDF.js items", () => {
+    const sourceBytes = Buffer.from("synthetic-pdf-bytes");
+    const pdfjsPackageBytes = Buffer.from(JSON.stringify({ name: "pdfjs-dist", version: "5.4.624" }));
+    const derived = buildNormalizedSourcePageBundle({
+      documentId: DOCUMENT,
+      sourceBytes,
+      pdfjsPackageBytes,
+      layouts: [{
+        source: { sha256: contentSha(sourceBytes) },
+        parser: { name: "pdfjs-dist", version: "5.4.624" },
+        page_range: { total_pages: 3 },
+        pages: [
+          { page: 1, raw_items: [
+            { source_index: 0, text: "U.S. Geological Survey" },
+            { source_index: 1, text: " , " },
+            { source_index: 2, text: "Report" },
+          ], counts: { observed_items: 3, returned_items: 3 }, truncation: { omitted_items: 0 } },
+          { page: 2, raw_items: [
+            { source_index: 0, text: "recovered", source_text: "original" },
+          ], counts: { observed_items: 1, returned_items: 1 }, truncation: { omitted_items: 0 } },
+          { page: 3, raw_items: [], counts: { observed_items: 0, returned_items: 0 },
+            truncation: { omitted_items: 0 } },
+        ],
+      }],
+    });
+    expect(derived).toMatchObject({
+      document_id: DOCUMENT,
+      source_identity: {
+        pdf_sha256: contentSha(sourceBytes),
+        pdfjs_package_sha256: contentSha(pdfjsPackageBytes),
+        page_count: 3,
+      },
+      pages: [
+        { page_one_based: 1, normalized_text: "U.S. Geological Survey , Report" },
+        { page_one_based: 2, normalized_text: "original" },
+        { page_one_based: 3, normalized_text: "" },
+      ],
+      source_page_text_bundle_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const truncated = structuredClone({
+      source: { sha256: contentSha(sourceBytes) },
+      parser: { name: "pdfjs-dist", version: "5.4.624" },
+      page_range: { total_pages: 1 },
+      pages: [{ page: 1, raw_items: [], counts: { observed_items: 1, returned_items: 0 },
+        truncation: { omitted_items: 1 } }],
+    });
+    expect(() => buildNormalizedSourcePageBundle({
+      documentId: DOCUMENT, sourceBytes, pdfjsPackageBytes, layouts: [truncated],
+    })).toThrow(/complete PDF\.js text-item denominator/u);
+  });
+
   it("admits one strict complete source-replayed proposal and derives its count", () => {
     const result = admit();
     expect(result).toMatchObject({
@@ -183,11 +275,11 @@ describe("verified extraction response admission", () => {
       }),
       chunk({
         ...chunks[1],
-        content: "Suggested citation:\nRiver, A.B., 2025,\nA public-safe report.",
+        content: "Suggested citation:\nRiver, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example",
       }),
     ];
     const candidate = proposal();
-    const whitespacePolicy = classifySourceBoundBatch({
+    const whitespacePolicy = classification({
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: whitespaceChunks,
@@ -199,7 +291,7 @@ describe("verified extraction response admission", () => {
       batchPolicy: whitespacePolicy,
       responseBytes: response({ content: JSON.stringify(candidate) }),
     });
-    expect(result.contract.version).toBe("1.4.0-experimental");
+    expect(result.contract.version).toBe("1.5.0-experimental");
     expect(result.first_table_evidence).toMatchObject({
       document_table_regions_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       region: { region_id: "p1-t1", page: 1 },
@@ -208,33 +300,65 @@ describe("verified extraction response admission", () => {
     expect(result.source_replay.citations).toMatchObject([
       {
         field: "agency",
-        quote: "U.S. Geological\n\tSurvey",
+        quote: "U.S. Geological Survey",
         submitted_quote: "U.S. Geological Survey",
-        claim_source_excerpt: "U.S. Geological\n\tSurvey",
+        claim_source_excerpt: "U.S. Geological Survey",
         projection: {
-          policy: "exact-or-unique-internal-whitespace.v1",
-          quote_match: "unique_internal_whitespace_projection",
-          claim_match: "unique_internal_whitespace_projection",
+          policy: "chunk-plus-canonical-source-page-token-projection.v1",
+          canonical_page_quote_match: "exact",
+          canonical_page_claim_match: "exact",
+          chunk_quote_match: "unique_source_token_projection",
+          chunk_claim_match: "unique_source_token_projection",
         },
       },
       {
         field: "publication_citation_excerpt",
-        quote: "River, A.B., 2025,\nA public-safe report.",
-        submitted_quote: "River, A.B., 2025, A public-safe report.",
+        quote: PUBLICATION,
+        submitted_quote: PUBLICATION,
       },
       {
         field: "contributors[0]",
-        quote: "River,\nA.B.",
+        quote: "River, A.B.",
         submitted_quote: "River, A.B.",
       },
       {
         field: "first_table",
-        quote: "Table 1.\tSummary values",
+        quote: "Table 1. Summary values",
         submitted_quote: "Table 1. Summary values",
       },
     ]);
-    expect(compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })
+    expect(compare({ admission: result, batchPolicy: whitespacePolicy,
+      documentChunks: whitespaceChunks, oracleCitations: [] })
       .primary_source_replay).toEqual({ numerator: 4, denominator: 4, complete: true });
+  });
+
+  it("canonicalizes renderer punctuation spacing to the exact source-page span", () => {
+    const canonicalPublication = "Suggested citation: River , A.B., 2025, A public-safe report. https://doi.org/10.1234/example";
+    const punctuationPages = sourcePages([
+      SOURCE_PAGES.pages[0].normalized_text,
+      canonicalPublication,
+    ]);
+    const punctuationPolicy = classification({ documentSourcePages: punctuationPages });
+    const result = admit({
+      documentSourcePages: punctuationPages,
+      batchPolicy: punctuationPolicy,
+    });
+    expect(result.submitted_proposal.publication_citation_excerpt.value).toBe(PUBLICATION);
+    expect(result.proposal.publication_citation_excerpt).toEqual({
+      value: canonicalPublication,
+      citation: { chunk_id: id("b"), quote: canonicalPublication },
+    });
+    expect(result.source_replay.citations[1]).toMatchObject({
+      quote: canonicalPublication,
+      submitted_quote: PUBLICATION,
+      projection: { canonical_page_quote_match: "unique_source_token_projection" },
+    });
+    expect(() => compare({
+      admission: result,
+      batchPolicy: punctuationPolicy,
+      documentSourcePages: punctuationPages,
+      oracleCitations: [],
+    })).not.toThrow();
   });
 
   it.each([
@@ -256,7 +380,7 @@ describe("verified extraction response admission", () => {
       status: "rejected", reason_code: "not_source_bound", citation_count: 0,
     });
     expect(result.proposal.publication_citation_excerpt).toEqual(proposal().publication_citation_excerpt);
-    expect(compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })
+    expect(compare({ admission: result, oracleCitations: [] })
       .primary_source_replay.denominator).toBe(3);
   });
 
@@ -265,7 +389,7 @@ describe("verified extraction response admission", () => {
       chunk({ ...chunks[0], content: `${chunks[0].content}\nU.S. Geological\nSurvey` }),
       chunks[1],
     ];
-    const duplicatePolicy = classifySourceBoundBatch({
+    const duplicatePolicy = classification({
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: duplicateChunks,
@@ -287,7 +411,7 @@ describe("verified extraction response admission", () => {
     candidate.agency = { value: "A A", citation: { chunk_id: id("a"), quote: "A A" } };
     const result = admit({
       documentChunks: overlappingChunks,
-      batchPolicy: classifySourceBoundBatch({
+      batchPolicy: classification({
         documentId: DOCUMENT,
         documentMapSha256: DOCUMENT_MAP_SHA256,
         documentChunks: overlappingChunks,
@@ -304,7 +428,7 @@ describe("verified extraction response admission", () => {
       chunk({ ...chunks[0], content: `${"x".repeat(5000)}\n${chunks[0].content}` }),
       chunks[1],
     ];
-    const longPolicy = classifySourceBoundBatch({
+    const longPolicy = classification({
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: longChunks,
@@ -318,13 +442,13 @@ describe("verified extraction response admission", () => {
     const candidate = proposal();
     candidate.agency.citation.quote = "TITLE\nU.S. Geological Survey";
     const admission = admit({ responseBytes: response({ content: JSON.stringify(candidate) }) });
-    const comparison = compareAdmittedCitationEvidence({
+    const comparison = compare({
       admission,
       oracleCitations: [
         { document_id: DOCUMENT, document_map_sha256: DOCUMENT_MAP_SHA256,
           page_one_based: 1, quote: "U.S. Geological Survey" },
         { document_id: DOCUMENT, document_map_sha256: DOCUMENT_MAP_SHA256,
-          page_one_based: 2, quote: "River, A.B., 2025, A public-safe report." },
+          page_one_based: 2, quote: PUBLICATION },
         { document_id: DOCUMENT, document_map_sha256: DOCUMENT_MAP_SHA256,
           page_one_based: 1, quote: "River, A.B." },
         { document_id: DOCUMENT, document_map_sha256: DOCUMENT_MAP_SHA256,
@@ -393,11 +517,18 @@ describe("verified extraction response admission", () => {
       starts_at_heading: false,
       content: "Other, B., 2023, A second unrelated cited work.",
     })];
-    const referencePolicy = classifySourceBoundBatch({
+    const referencePolicy = classification({
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: fullDocument,
       documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages(Array.from({ length: 10 }, (_, index) => (
+        index === 0 ? SOURCE_PAGES.pages[0].normalized_text
+          : index === 1 ? PUBLICATION
+            : index === 8 ? "References Cited Other, A., 2024, An unrelated cited work."
+              : index === 9 ? "Other, B., 2023, A second unrelated cited work."
+                : `Source page ${index + 1}`
+      ))),
       batchChunkIds: [id("e")],
     });
     expect(referencePolicy).toMatchObject({
@@ -418,8 +549,16 @@ describe("verified extraction response admission", () => {
       maxOutputTokens: 4096,
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
+      sourceSha256: SOURCE_SHA256,
       documentChunks: fullDocument,
       documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages(Array.from({ length: 10 }, (_, index) => (
+        index === 0 ? SOURCE_PAGES.pages[0].normalized_text
+          : index === 1 ? PUBLICATION
+            : index === 8 ? "References Cited Other, A., 2024, An unrelated cited work."
+              : index === 9 ? "Other, B., 2023, A second unrelated cited work."
+                : `Source page ${index + 1}`
+      ))),
       batchChunkIds: [id("e")],
       batchPolicy: referencePolicy,
     })).toThrow(/not admitted for a reference-section batch/u);
@@ -444,7 +583,7 @@ describe("verified extraction response admission", () => {
     expect(result.field_outcomes[field]).toMatchObject({ status: "rejected", reason_code: "not_source_bound" });
     expect(result.proposal[field]).toEqual(field === "contributors" ? [] : null);
     expect(result.source_replay.citation_count).toBe(3);
-    expect(() => compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })).not.toThrow();
+    expect(() => compare({ admission: result, oracleCitations: [] })).not.toThrow();
   });
 
   it("rejects a contents-page table reference even when its cited chunk and proposed source page agree", () => {
@@ -476,11 +615,16 @@ describe("verified extraction response admission", () => {
         citation: { chunk_id: id("c"), quote: "Table 1. Summary values .......... 12" },
       },
     };
-    const scopedPolicy = classifySourceBoundBatch({
+    const scopedPolicy = classification({
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
       documentChunks: scopedChunks,
       documentTableRegions: scopedRegions,
+      documentSourcePages: sourcePages(Array.from({ length: 7 }, (_, index) => (
+        index === 5 ? "Table 1. Summary values Column A Column B"
+          : index === 6 ? "Contents Table 1. Summary values .......... 12"
+            : `Source page ${index + 1}`
+      ))),
       batchChunkIds: scopedChunks.map(item => item.chunk_id),
     });
     const result = admitStructuredModelResponse({
@@ -489,8 +633,14 @@ describe("verified extraction response admission", () => {
       maxOutputTokens: 4096,
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
+      sourceSha256: SOURCE_SHA256,
       documentChunks: scopedChunks,
       documentTableRegions: scopedRegions,
+      documentSourcePages: sourcePages(Array.from({ length: 7 }, (_, index) => (
+        index === 5 ? "Table 1. Summary values Column A Column B"
+          : index === 6 ? "Contents Table 1. Summary values .......... 12"
+            : `Source page ${index + 1}`
+      ))),
       batchChunkIds: scopedChunks.map(item => item.chunk_id),
       batchPolicy: scopedPolicy,
     });
@@ -498,7 +648,7 @@ describe("verified extraction response admission", () => {
     expect(result.first_table_evidence).toBeNull();
     expect(result.field_outcomes.first_table).toMatchObject({
       status: "rejected",
-      message: expect.stringMatching(/first deterministic table region/u),
+      message: expect.stringMatching(/first classified actual data table/u),
     });
 
     candidate.first_table.page_one_based = 6;
@@ -509,19 +659,115 @@ describe("verified extraction response admission", () => {
       maxOutputTokens: 4096,
       documentId: DOCUMENT,
       documentMapSha256: DOCUMENT_MAP_SHA256,
+      sourceSha256: SOURCE_SHA256,
       documentChunks: scopedChunks,
       documentTableRegions: scopedRegions,
+      documentSourcePages: sourcePages(Array.from({ length: 7 }, (_, index) => (
+        index === 5 ? "Table 1. Summary values Column A Column B"
+          : index === 6 ? "Contents Table 1. Summary values .......... 12"
+            : `Source page ${index + 1}`
+      ))),
       batchChunkIds: scopedChunks.map(item => item.chunk_id),
       batchPolicy: scopedPolicy,
     });
     expect(actual.proposal.first_table.page_one_based).toBe(6);
     expect(actual.first_table_evidence).toMatchObject({ region: { region_id: "p6-t1", page: 6 } });
-    expect(() => compareAdmittedCitationEvidence({ admission: actual, oracleCitations: [] })).not.toThrow();
+    expect(() => compare({
+      admission: actual,
+      batchPolicy: scopedPolicy,
+      documentChunks: scopedChunks,
+      documentSourcePages: sourcePages(Array.from({ length: 7 }, (_, index) => (
+        index === 5 ? "Table 1. Summary values Column A Column B"
+          : index === 6 ? "Contents Table 1. Summary values .......... 12"
+            : `Source page ${index + 1}`
+      ))),
+      oracleCitations: [],
+    })).not.toThrow();
+  });
+
+  it("skips an earlier contents-page table region and selects the first actual Table 1 heading", () => {
+    const contentsChunk = chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("c"),
+      page_range: { start_page: 6, end_page: 6 },
+      starts_at_heading: true,
+      content: "Contents\nTable 1. Summary values .......... 12",
+    });
+    const actualChunk = chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("d"),
+      page_range: { start_page: 7, end_page: 7 },
+      starts_at_heading: true,
+      content: "Table 1. Actual measurements and sample totals\nColumn A Column B",
+    });
+    const scopedChunks = [contentsChunk, actualChunk];
+    const scopedRegions = structuredClone(tableRegions);
+    scopedRegions.observed = 2;
+    scopedRegions.returned = 2;
+    scopedRegions.items = [
+      { ...scopedRegions.items[0], region_id: "p6-t1", page: 6 },
+      { ...scopedRegions.items[0], region_id: "p7-t1", page: 7 },
+    ];
+    const scopedPages = sourcePages(Array.from({ length: 7 }, (_, index) => (
+      index === 5 ? "Contents Table 1. Summary values .......... 12"
+        : index === 6 ? "Table 1. Actual measurements and sample totals Column A Column B"
+          : `Source page ${index + 1}`
+    )));
+    const scopedPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: scopedRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+    });
+    expect(scopedPolicy.first_actual_table).toMatchObject({
+      page_one_based: 7,
+      chunk_id: id("d"),
+      region_id: "p7-t1",
+      classification: "actual_data_table",
+    });
+    const candidate = {
+      agency: null,
+      publication_citation_excerpt: null,
+      contributors: [],
+      first_table: {
+        page_one_based: 7,
+        anchor_excerpt: "Table 1. Actual measurements and sample totals",
+        citation: { chunk_id: id("d"), quote: "Table 1. Actual measurements and sample totals" },
+      },
+    };
+    const result = admitStructuredModelResponse({
+      responseBytes: response({ content: JSON.stringify(candidate) }),
+      expectedModel: MODEL,
+      maxOutputTokens: 4096,
+      documentId: DOCUMENT,
+      documentMapSha256: DOCUMENT_MAP_SHA256,
+      sourceSha256: SOURCE_SHA256,
+      documentChunks: scopedChunks,
+      documentTableRegions: scopedRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+      batchPolicy: scopedPolicy,
+    });
+    expect(result.proposal.first_table).toMatchObject({ page_one_based: 7 });
+    expect(result.first_table_evidence).toMatchObject({
+      region: { region_id: "p7-t1", page: 7 },
+      selection: { classification: "actual_data_table", page_one_based: 7 },
+    });
+    expect(() => compare({ admission: result, batchPolicy: scopedPolicy, documentChunks: scopedChunks,
+      documentSourcePages: scopedPages })).not.toThrow();
+
+    const reversed = [...scopedChunks].reverse();
+    expect(() => classification({
+      documentChunks: reversed,
+      documentTableRegions: scopedRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: reversed.map(item => item.chunk_id),
+    })).toThrow(/deterministic page order/u);
   });
 
   it("fails closed on missing, reordered, or drifted table-region evidence", () => {
     const hidden = { ...structuredClone(tableRegions), observed: 1, returned: 0, omitted: 1, items: [] };
-    const hiddenPolicy = classifySourceBoundBatch({
+    const hiddenPolicy = classification({
       documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
       documentTableRegions: hidden, batchChunkIds,
     });
@@ -535,7 +781,7 @@ describe("verified extraction response admission", () => {
     reordered.returned = 2;
     reordered.items.push({ ...structuredClone(reordered.items[0]), region_id: "p1-t2" });
     reordered.items.reverse();
-    expect(() => classifySourceBoundBatch({
+    expect(() => classification({
       documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
       documentTableRegions: reordered, batchChunkIds,
     })).toThrow(/deterministic page\/ordinal order/u);
@@ -543,6 +789,15 @@ describe("verified extraction response admission", () => {
     const drifted = structuredClone(tableRegions);
     drifted.items[0].page = 2;
     expect(() => admit({ documentTableRegions: drifted })).toThrow(/identity is invalid/u);
+  });
+
+  it("rejects canonical source-page byte or self-digest drift before admission", () => {
+    const pageDrift = structuredClone(SOURCE_PAGES);
+    pageDrift.pages[0].normalized_text += " drift";
+    expect(() => classification({ documentSourcePages: pageDrift })).toThrow(/page.*digest drifted/u);
+    const bundleDrift = structuredClone(SOURCE_PAGES);
+    bundleDrift.source_page_text_bundle_sha256 = "f".repeat(64);
+    expect(() => classification({ documentSourcePages: bundleDrift })).toThrow(/self-digest drifted/u);
   });
 
   it("rejects a cross-document chunk before field admission", () => {
@@ -589,7 +844,7 @@ describe("verified extraction response admission", () => {
     expect(result.proposal.agency).toEqual(proposal().agency);
     expect(result.source_replay.citations.map(citation => citation.field))
       .toEqual(["agency", "publication_citation_excerpt", "first_table"]);
-    expect(() => compareAdmittedCitationEvidence({ admission: result, oracleCitations: [] })).not.toThrow();
+    expect(() => compare({ admission: result, oracleCitations: [] })).not.toThrow();
   });
 
   it("rejects response identity, usage, finish-reason, and policy drift", () => {
@@ -613,27 +868,35 @@ describe("verified extraction response admission", () => {
   it("rejects a tampered admission before secondary oracle comparison", () => {
     const admission = admit();
     admission.source_replay.contributor_count = 99;
-    expect(() => compareAdmittedCitationEvidence({ admission, oracleCitations: [] }))
+    expect(() => compare({ admission, oracleCitations: [] }))
       .toThrow(/contributor derivation is invalid/u);
+
+    const narrowedPolicy = classification({ batchChunkIds: [id("a")] });
+    const narrowed = admit();
+    narrowed.batch_policy_sha256 = contentSha(canonical(narrowedPolicy));
+    narrowed.observation.batch_policy_sha256 = narrowed.batch_policy_sha256;
+    expect(() => compare({ admission: narrowed, batchPolicy: narrowedPolicy, oracleCitations: [] }))
+      .toThrow(/binding is invalid/u);
   });
 
   it("replays and rejects drift in the retained response representation", () => {
     const direct = admit();
     direct.content_representation.strict_json_payload += " ";
-    expect(() => compareAdmittedCitationEvidence({ admission: direct, oracleCitations: [] }))
+    expect(() => compare({ admission: direct, oracleCitations: [] }))
       .toThrow(/content representation replay is invalid/u);
 
     const payload = JSON.stringify(proposal());
     const fenced = admit({ responseBytes: response({ content: `\`\`\`json\n${payload}\n\`\`\`` }) });
     fenced.content_representation.kind = "direct_strict_json";
-    expect(() => compareAdmittedCitationEvidence({ admission: fenced, oracleCitations: [] }))
+    expect(() => compare({ admission: fenced, oracleCitations: [] }))
       .toThrow(/content representation replay is invalid/u);
   });
 
   it("rejects source-projection metadata drift before secondary oracle comparison", () => {
     const admission = admit();
-    admission.source_replay.citations[0].projection.claim_match = "unique_internal_whitespace_projection";
-    expect(() => compareAdmittedCitationEvidence({ admission, oracleCitations: [] }))
+    admission.source_replay.citations[0].projection.canonical_page_claim_match
+      = "unique_source_token_projection";
+    expect(() => compare({ admission, oracleCitations: [] }))
       .toThrow(/projection drifted/u);
   });
 
@@ -643,17 +906,17 @@ describe("verified extraction response admission", () => {
     const partial = admit({ responseBytes: response({ content: JSON.stringify(candidate) }) });
     expect(partial.field_outcomes.first_table.status).toBe("rejected");
     partial.field_outcomes.first_table.message = null;
-    expect(() => compareAdmittedCitationEvidence({ admission: partial, oracleCitations: [] }))
+    expect(() => compare({ admission: partial, oracleCitations: [] }))
       .toThrow(/rejection state is invalid/u);
 
     const submittedDrift = admit();
     submittedDrift.submitted_proposal.agency.value = "drift";
-    expect(() => compareAdmittedCitationEvidence({ admission: submittedDrift, oracleCitations: [] }))
+    expect(() => compare({ admission: submittedDrift, oracleCitations: [] }))
       .toThrow(/content representation replay is invalid/u);
 
     const regionDrift = admit();
     regionDrift.first_table_evidence.region.page = 2;
-    expect(() => compareAdmittedCitationEvidence({ admission: regionDrift, oracleCitations: [] }))
+    expect(() => compare({ admission: regionDrift, oracleCitations: [] }))
       .toThrow(/first-table region evidence is invalid/u);
   });
 
@@ -665,11 +928,11 @@ describe("verified extraction response admission", () => {
       page_one_based: 1,
       quote: "U.S. Geological Survey",
     };
-    expect(() => compareAdmittedCitationEvidence({
+    expect(() => compare({
       admission,
       oracleCitations: [{ ...oracle, document_id: "other-document" }],
     })).toThrow(/document, map, or page binding is invalid/u);
-    expect(() => compareAdmittedCitationEvidence({ admission, oracleCitations: [oracle, oracle] }))
+    expect(() => compare({ admission, oracleCitations: [oracle, oracle] }))
       .toThrow(/duplicate exact citation/u);
   });
 
@@ -679,7 +942,7 @@ describe("verified extraction response admission", () => {
     const referenceSchema = buildVerifiedExtractionProposalSchema({ allowedFields: [] });
     expect(referenceSchema.properties.contributors.maxItems).toBe(0);
     expect(referenceSchema.properties.agency).toEqual({ type: "null" });
-    expect(VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY.boundary).toContain("Exact oracle-span equality");
+    expect(VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY.boundary).toContain("secondary diagnostic");
     expect(SERVER_FILES).not.toContain("verified-extraction-response-admission.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-admission.mjs");
   });

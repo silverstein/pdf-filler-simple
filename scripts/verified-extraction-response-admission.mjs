@@ -15,7 +15,15 @@ const REFERENCE_HEADINGS = new Set([
 ]);
 const PROPOSAL_KEYS = ["agency", "contributors", "first_table", "publication_citation_excerpt"];
 const ALL_FIELDS = ["agency", "publication_citation_excerpt", "contributors", "first_table"];
-const SOURCE_PROJECTION_POLICY = "exact-or-unique-internal-whitespace.v1";
+const SOURCE_PROJECTION_POLICY = "chunk-plus-canonical-source-page-token-projection.v1";
+const SOURCE_PAGE_SCHEME = "verified-extraction-normalized-source-pages.v1";
+const SOURCE_PAGE_NORMALIZATION = "unicode_whitespace_runs_to_ascii_space_then_trim";
+const MIN_CITATION_CHARACTERS = 3;
+const MAX_CITATION_CHARACTERS = 700;
+const MIN_PUBLICATION_CHARACTERS = 50;
+const MAX_PUBLICATION_CHARACTERS = 700;
+const MIN_TABLE_ANCHOR_CHARACTERS = 20;
+const MAX_TABLE_ANCHOR_CHARACTERS = 360;
 const JSON_FENCE_PREFIX = "```json\n";
 const JSON_FENCE_SUFFIX = "\n```";
 
@@ -41,6 +49,11 @@ function boundedString(value, label, maximum = 4096) {
   assertion(Buffer.byteLength(value, "utf8") <= maximum, `${label} exceeds its UTF-8 byte limit`);
 }
 
+function boundedStringAllowEmpty(value, label, maximum = 4096) {
+  assertion(typeof value === "string", `${label} must be a string`);
+  assertion(Buffer.byteLength(value, "utf8") <= maximum, `${label} exceeds its UTF-8 byte limit`);
+}
+
 function nonnegativeInteger(value, label) {
   assertion(Number.isSafeInteger(value) && value >= 0, `${label} must be a non-negative integer`);
 }
@@ -51,6 +64,143 @@ function canonicalJson(value) {
     return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function normalizeSourceText(value) {
+  assertion(typeof value === "string", "source text must be a string");
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function withoutKey(value, key) {
+  const copy = structuredClone(value);
+  delete copy[key];
+  return copy;
+}
+
+export function validateNormalizedSourcePageBundle(value, { documentId, sourceSha256 } = {}) {
+  exactKeys(value, ["document_id", "pages", "scheme", "source_identity", "source_page_text_bundle_sha256",
+    "version"], "documentSourcePages");
+  assertion(value.version === 1 && value.scheme === SOURCE_PAGE_SCHEME,
+    "documentSourcePages contract is unsupported");
+  boundedString(value.document_id, "documentSourcePages.document_id", 512);
+  if (documentId !== undefined) assertion(value.document_id === documentId,
+    "documentSourcePages belongs to another document");
+  exactKeys(value.source_identity,
+    ["normalization", "page_count", "pdf_sha256", "pdfjs_package_sha256"],
+    "documentSourcePages.source_identity");
+  assertion(SHA256.test(value.source_identity.pdf_sha256 ?? "")
+    && value.source_identity.pdf_sha256 !== "0".repeat(64),
+  "documentSourcePages PDF identity is invalid");
+  if (sourceSha256 !== undefined) assertion(value.source_identity.pdf_sha256 === sourceSha256,
+    "documentSourcePages PDF identity drifted");
+  assertion(SHA256.test(value.source_identity.pdfjs_package_sha256 ?? "")
+    && value.source_identity.pdfjs_package_sha256 !== "0".repeat(64),
+  "documentSourcePages PDF.js identity is invalid");
+  assertion(value.source_identity.normalization === SOURCE_PAGE_NORMALIZATION,
+    "documentSourcePages normalization drifted");
+  assertion(Number.isSafeInteger(value.source_identity.page_count)
+    && value.source_identity.page_count >= 1 && value.source_identity.page_count <= 10000,
+  "documentSourcePages page count is invalid");
+  assertion(Array.isArray(value.pages)
+    && value.pages.length === value.source_identity.page_count,
+  "documentSourcePages page denominator is incomplete");
+  const pagesByNumber = new Map();
+  value.pages.forEach((page, index) => {
+    exactKeys(page, ["normalized_text", "normalized_text_sha256", "page_one_based"],
+      `documentSourcePages.pages[${index}]`);
+    assertion(page.page_one_based === index + 1,
+      "documentSourcePages pages are omitted, duplicated, or out of order");
+    boundedStringAllowEmpty(page.normalized_text, `documentSourcePages.pages[${index}].normalized_text`,
+      16 * 1024 * 1024);
+    assertion(page.normalized_text === normalizeSourceText(page.normalized_text),
+      `documentSourcePages.pages[${index}] is not canonical`);
+    assertion(SHA256.test(page.normalized_text_sha256 ?? "")
+      && page.normalized_text_sha256 === sha256(Buffer.from(page.normalized_text, "utf8")),
+    `documentSourcePages.pages[${index}] digest drifted`);
+    pagesByNumber.set(page.page_one_based, page);
+  });
+  assertion(SHA256.test(value.source_page_text_bundle_sha256 ?? "")
+    && value.source_page_text_bundle_sha256
+      === sha256(Buffer.from(canonicalJson(withoutKey(value, "source_page_text_bundle_sha256")), "utf8")),
+  "documentSourcePages self-digest drifted");
+  return { pagesByNumber, sha256: value.source_page_text_bundle_sha256 };
+}
+
+export function buildNormalizedSourcePageBundle({
+  documentId, sourceBytes, pdfjsPackageBytes, layouts,
+}) {
+  boundedString(documentId, "documentId", 512);
+  assertion(Buffer.isBuffer(sourceBytes) || sourceBytes instanceof Uint8Array,
+    "sourceBytes must be exact bytes");
+  assertion(Buffer.isBuffer(pdfjsPackageBytes) || pdfjsPackageBytes instanceof Uint8Array,
+    "pdfjsPackageBytes must be exact bytes");
+  const exactSourceBytes = Buffer.from(sourceBytes);
+  const exactPdfjsPackageBytes = Buffer.from(pdfjsPackageBytes);
+  assertion(exactSourceBytes.length > 0 && exactSourceBytes.length <= 250 * 1024 * 1024,
+    "sourceBytes is outside the supported bound");
+  assertion(exactPdfjsPackageBytes.length > 0 && exactPdfjsPackageBytes.length <= 1024 * 1024,
+    "pdfjsPackageBytes is outside the supported bound");
+  let pdfjsPackage;
+  try {
+    pdfjsPackage = parseStrictJson(exactPdfjsPackageBytes, "pdfjsPackageBytes");
+  } catch (error) {
+    throw new Error(`pdfjsPackageBytes is invalid: ${error.message}`);
+  }
+  assertion(pdfjsPackage?.name === "pdfjs-dist" && pdfjsPackage.version === "5.4.624",
+    "PDF.js package identity is unsupported");
+  assertion(Array.isArray(layouts) && layouts.length > 0, "layouts must be a non-empty array");
+  const sourceSha256 = sha256(exactSourceBytes);
+  const totalPages = layouts[0]?.page_range?.total_pages;
+  assertion(Number.isSafeInteger(totalPages) && totalPages >= 1 && totalPages <= 10000,
+    "layout page denominator is invalid");
+  const pages = layouts.flatMap((layout, layoutIndex) => {
+    assertion(layout?.source?.sha256 === sourceSha256,
+      `layouts[${layoutIndex}] source identity drifted`);
+    assertion(layout?.parser?.name === "pdfjs-dist" && layout.parser.version === "5.4.624",
+      `layouts[${layoutIndex}] parser identity drifted`);
+    assertion(layout?.page_range?.total_pages === totalPages && Array.isArray(layout.pages),
+      `layouts[${layoutIndex}] page denominator drifted`);
+    return layout.pages;
+  }).sort((left, right) => left.page - right.page);
+  assertion(pages.length === totalPages,
+    "layouts omit or duplicate canonical source pages");
+  const retainedPages = pages.map((page, index) => {
+    assertion(page?.page === index + 1 && Array.isArray(page.raw_items),
+      "layouts contain an omitted, duplicated, substituted, or out-of-order page");
+    assertion(page?.truncation?.omitted_items === 0
+      && page?.counts?.observed_items === page.raw_items.length
+      && page?.counts?.returned_items === page.raw_items.length,
+    `layout page ${page.page} does not retain the complete PDF.js text-item denominator`);
+    const sourceItems = [...page.raw_items].sort((left, right) => left.source_index - right.source_index);
+    sourceItems.forEach((item, itemIndex) => {
+      assertion(item.source_index === itemIndex && typeof (item.source_text ?? item.text) === "string",
+        `layout page ${page.page} raw item order is incomplete`);
+    });
+    const normalizedText = normalizeSourceText(sourceItems.map(item => item.source_text ?? item.text).join(" "));
+    return {
+      page_one_based: page.page,
+      normalized_text: normalizedText,
+      normalized_text_sha256: sha256(Buffer.from(normalizedText, "utf8")),
+    };
+  });
+  const body = {
+    version: 1,
+    scheme: SOURCE_PAGE_SCHEME,
+    document_id: documentId,
+    source_identity: {
+      pdf_sha256: sourceSha256,
+      page_count: totalPages,
+      pdfjs_package_sha256: sha256(exactPdfjsPackageBytes),
+      normalization: SOURCE_PAGE_NORMALIZATION,
+    },
+    pages: retainedPages,
+  };
+  const bundle = {
+    ...body,
+    source_page_text_bundle_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
+  };
+  validateNormalizedSourcePageBundle(bundle, { documentId, sourceSha256 });
+  return bundle;
 }
 
 function validateChunk(chunk, expectedDocumentId, index) {
@@ -120,12 +270,54 @@ function validateDocumentTableRegions(value) {
   });
   return {
     sha256: sha256(Buffer.from(canonicalJson(value), "utf8")),
+    items: value.items,
     first: value.items[0] ?? null,
   };
 }
 
+function looksLikeContentsPage(pageText) {
+  const lead = pageText.slice(0, 500);
+  return /^(?:contents|table of contents|list of (?:figures|tables)|figures|tables)\b/iu.test(lead)
+    || /\bcontents\b/iu.test(lead) && /(?:\.{3,}|\bTable\s+2\b.*\bTable\s+3\b)/iu.test(pageText);
+}
+
+function selectFirstActualTable({ documentChunks, tableRegions, sourcePages }) {
+  const regionPages = new Set(tableRegions.items.map(item => item.page));
+  for (const chunk of documentChunks) {
+    const pageOneBased = chunk.page_range.start_page;
+    if (!regionPages.has(pageOneBased)) continue;
+    const page = sourcePages.pagesByNumber.get(pageOneBased);
+    if (!page || looksLikeContentsPage(page.normalized_text)) continue;
+    const tableLine = chunk.content.split(/\r?\n/gu).find(line => (
+      /^\s*Table\s+1(?:\.\d+)?(?:[.\s:—-])+\S/iu.test(line)
+    ));
+    if (!tableLine) continue;
+    let projected;
+    try {
+      projected = uniqueTokenProjection(page.normalized_text, tableLine.trim(), "first actual table heading");
+    } catch {
+      continue;
+    }
+    const anchorExcerpt = page.normalized_text.slice(projected.start_utf16,
+      Math.min(page.normalized_text.length, projected.start_utf16 + MAX_TABLE_ANCHOR_CHARACTERS));
+    if (anchorExcerpt.length < MIN_TABLE_ANCHOR_CHARACTERS) continue;
+    const region = tableRegions.items.find(item => item.page === pageOneBased);
+    const supportAnchor = anchorExcerpt.slice(0, Math.min(80, anchorExcerpt.length));
+    return {
+      page_one_based: pageOneBased,
+      chunk_id: chunk.chunk_id,
+      region_id: region.region_id,
+      support_anchor: supportAnchor,
+      support_anchor_sha256: sha256(Buffer.from(supportAnchor, "utf8")),
+      classification: "actual_data_table",
+    };
+  }
+  return null;
+}
+
 export function classifySourceBoundBatch({
-  documentId, documentMapSha256, documentChunks, documentTableRegions, batchChunkIds,
+  documentId, documentMapSha256, sourceSha256, documentChunks, documentTableRegions,
+  documentSourcePages, batchChunkIds,
 }) {
   boundedString(documentId, "documentId", 512);
   assertion(SHA256.test(documentMapSha256 ?? ""), "documentMapSha256 is invalid");
@@ -133,11 +325,20 @@ export function classifySourceBoundBatch({
     "documentChunks must be a non-empty array");
   assertion(Array.isArray(batchChunkIds) && batchChunkIds.length > 0,
     "batchChunkIds must be a non-empty array");
+  assertion(SHA256.test(sourceSha256 ?? "") && sourceSha256 !== "0".repeat(64),
+    "sourceSha256 is invalid");
   const tableRegions = validateDocumentTableRegions(documentTableRegions);
+  const sourcePages = validateNormalizedSourcePageBundle(documentSourcePages, { documentId, sourceSha256 });
   const seen = new Set();
   let inReferenceSection = false;
+  let precedingChunkPage = 0;
   const allPolicies = documentChunks.map((chunk, index) => {
     validateChunk(chunk, documentId, index);
+    assertion(chunk.page_range.start_page >= precedingChunkPage,
+      "documentChunks are not in deterministic page order");
+    precedingChunkPage = chunk.page_range.start_page;
+    assertion(sourcePages.pagesByNumber.has(chunk.page_range.start_page),
+      `chunks[${index}] page is absent from documentSourcePages`);
     assertion(!seen.has(chunk.chunk_id), "documentChunks contain a duplicate chunk identity");
     seen.add(chunk.chunk_id);
     if (chunk.starts_at_heading && REFERENCE_HEADINGS.has(firstLine(chunk.content))) inReferenceSection = true;
@@ -156,9 +357,10 @@ export function classifySourceBoundBatch({
   const batchChunks = indices.map(index => documentChunks[index]);
   const containsReferenceSection = chunkPolicies
     .some(item => item.evidence_admission === "forbidden_reference_section");
-  const containsFirstTableRegion = tableRegions.first !== null && batchChunks.some(chunk => (
-    chunk.page_range.start_page <= tableRegions.first.page
-      && chunk.page_range.end_page >= tableRegions.first.page
+  const firstActualTable = selectFirstActualTable({ documentChunks, tableRegions, sourcePages });
+  const containsFirstActualTable = firstActualTable !== null && batchChunks.some(chunk => (
+    chunk.page_range.start_page <= firstActualTable.page_one_based
+      && chunk.page_range.end_page >= firstActualTable.page_one_based
   ));
   const documentChunkScopeSha256 = sha256(Buffer.from(canonicalJson(
     documentChunks.map(chunk => ({
@@ -171,11 +373,14 @@ export function classifySourceBoundBatch({
   return {
     document_id: documentId,
     document_map_sha256: documentMapSha256,
+    source_sha256: sourceSha256,
+    source_page_text_bundle_sha256: sourcePages.sha256,
     document_table_regions_sha256: tableRegions.sha256,
     document_chunk_scope_sha256: documentChunkScopeSha256,
+    first_actual_table: firstActualTable,
     batch_chunk_ids: [...batchChunkIds],
     allowed_fields: containsReferenceSection ? [] : ALL_FIELDS.filter(field => (
-      field !== "first_table" || containsFirstTableRegion
+      field !== "first_table" || containsFirstActualTable
     )),
     model_call_recommended: !containsReferenceSection,
     chunk_policies: chunkPolicies,
@@ -193,17 +398,17 @@ export function buildVerifiedExtractionProposalSchema({ allowedFields = ALL_FIEL
     required: ["chunk_id", "quote"],
     properties: {
       chunk_id: { type: "string", pattern: "^chunk\\.[a-f0-9]{64}$" },
-      quote: { type: "string", minLength: 1, maxLength: 4096 },
+      quote: { type: "string", minLength: MIN_CITATION_CHARACTERS, maxLength: MAX_CITATION_CHARACTERS },
     },
   };
-  const citedString = enabledValue => enabledValue ? {
+  const citedString = (enabledValue, maximum = 4096) => enabledValue ? {
     anyOf: [
       { type: "null" },
       {
         type: "object",
         additionalProperties: false,
         required: ["value", "citation"],
-        properties: { value: { type: "string", minLength: 1, maxLength: 4096 }, citation },
+        properties: { value: { type: "string", minLength: 1, maxLength: maximum }, citation },
       },
     ],
   } : { type: "null" };
@@ -212,8 +417,9 @@ export function buildVerifiedExtractionProposalSchema({ allowedFields = ALL_FIEL
     additionalProperties: false,
     required: ALL_FIELDS,
     properties: {
-      agency: citedString(enabled.has("agency")),
-      publication_citation_excerpt: citedString(enabled.has("publication_citation_excerpt")),
+      agency: citedString(enabled.has("agency"), 512),
+      publication_citation_excerpt: citedString(enabled.has("publication_citation_excerpt"),
+        MAX_PUBLICATION_CHARACTERS),
       contributors: enabled.has("contributors") ? {
         type: "array",
         maxItems: MAX_ADMITTED_CONTRIBUTORS,
@@ -233,7 +439,8 @@ export function buildVerifiedExtractionProposalSchema({ allowedFields = ALL_FIEL
             required: ["page_one_based", "anchor_excerpt", "citation"],
             properties: {
               page_one_based: { type: "integer", minimum: 1 },
-              anchor_excerpt: { type: "string", minLength: 1, maxLength: 4096 },
+              anchor_excerpt: { type: "string", minLength: MIN_TABLE_ANCHOR_CHARACTERS,
+                maxLength: MAX_TABLE_ANCHOR_CHARACTERS },
               citation,
             },
           },
@@ -285,80 +492,40 @@ export function parseModelResponseProposalContent(content) {
   }
 }
 
-function whitespaceWidthAt(value, offset) {
-  const point = value.codePointAt(offset);
-  if (point === undefined) return 0;
-  const character = String.fromCodePoint(point);
-  return /^\s$/u.test(character) ? character.length : 0;
+function sourceTokens(value) {
+  return [...value.matchAll(/[\p{L}\p{M}\p{N}]+|[^\s\p{L}\p{M}\p{N}]/gu)].map(match => ({
+    value: match[0],
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
 }
 
-function whitespaceProjectionMatches(source, pieces) {
-  const matches = [];
-  let searchOffset = 0;
-  while (searchOffset <= source.length - pieces[0].length) {
-    const start = source.indexOf(pieces[0], searchOffset);
-    if (start < 0) break;
-    let cursor = start + pieces[0].length;
-    let matched = true;
-    for (const piece of pieces.slice(1)) {
-      let whitespace = whitespaceWidthAt(source, cursor);
-      if (whitespace === 0) {
-        matched = false;
-        break;
-      }
-      while (whitespace > 0) {
-        cursor += whitespace;
-        whitespace = whitespaceWidthAt(source, cursor);
-      }
-      if (!source.startsWith(piece, cursor)) {
-        matched = false;
-        break;
-      }
-      cursor += piece.length;
-    }
-    if (matched) matches.push({ index: start, source_excerpt: source.slice(start, cursor) });
-    searchOffset = start + 1;
-  }
-  return matches;
-}
-
-function uniqueSourceProjection(source, submitted, label) {
-  boundedString(source, `${label}.source`, 1024 * 1024);
+function uniqueTokenProjection(source, submitted, label) {
+  boundedString(source, `${label}.source`, 16 * 1024 * 1024);
   boundedString(submitted, `${label}.submitted`);
   assertion(submitted === submitted.trim(), `${label} has leading or trailing whitespace`);
-
-  const exactOffsets = [];
-  let offset = 0;
-  while ((offset = source.indexOf(submitted, offset)) >= 0) {
-    exactOffsets.push(offset);
-    offset += 1;
+  const sourceEntries = sourceTokens(source);
+  const submittedEntries = sourceTokens(submitted);
+  assertion(submittedEntries.length > 0, `${label} has no source tokens`);
+  const submittedValues = submittedEntries.map(entry => entry.value);
+  const matches = [];
+  for (let start = 0; start <= sourceEntries.length - submittedValues.length; start += 1) {
+    if (submittedValues.every((value, offset) => sourceEntries[start + offset].value === value)) {
+      const first = sourceEntries[start];
+      const last = sourceEntries[start + submittedValues.length - 1];
+      matches.push({
+        start_utf16: first.start,
+        end_utf16: last.end,
+        source_excerpt: source.slice(first.start, last.end),
+      });
+    }
   }
-  if (exactOffsets.length > 1) throw new Error(`${label} is ambiguous in the exact source`);
-
-  const pieces = submitted.split(/\s+/u);
-  const projectionMatches = pieces.length > 1 && pieces.every(piece => piece.length > 0)
-    ? whitespaceProjectionMatches(source, pieces)
-    : [];
-  if (exactOffsets.length === 1) {
-    assertion(projectionMatches.length <= 1, `${label} is ambiguous after whitespace projection`);
-    return {
-      method: "exact",
-      source_excerpt: submitted,
-      start_utf16: exactOffsets[0],
-      end_utf16: exactOffsets[0] + submitted.length,
-    };
-  }
-
-  assertion(pieces.length > 1 && pieces.every(piece => piece.length > 0),
-    `${label} does not replay from the exact source`);
-  assertion(projectionMatches.length > 0, `${label} does not replay from the exact source`);
-  assertion(projectionMatches.length === 1, `${label} is ambiguous after whitespace projection`);
-  const match = projectionMatches[0];
+  assertion(matches.length > 0, `${label} does not replay from the tokenized source`);
+  assertion(matches.length === 1, `${label} is ambiguous in the tokenized source`);
+  const match = matches[0];
   return {
-    method: "unique_internal_whitespace_projection",
-    source_excerpt: match.source_excerpt,
-    start_utf16: match.index,
-    end_utf16: match.index + match.source_excerpt.length,
+    ...match,
+    method: match.source_excerpt === submitted ? "exact" : "unique_source_token_projection",
   };
 }
 
@@ -366,19 +533,34 @@ function byteOffset(value, utf16Offset) {
   return Buffer.byteLength(value.slice(0, utf16Offset), "utf8");
 }
 
-function validateCitation(citation, chunksById, claimedValue, label) {
+function validateCitation(citation, chunksById, sourcePages, claimedValue, label) {
   exactKeys(citation, ["chunk_id", "quote"], `${label}.citation`);
   assertion(CHUNK_ID.test(citation.chunk_id), `${label}.citation.chunk_id is invalid`);
   boundedString(citation.quote, `${label}.citation.quote`);
   const chunk = chunksById.get(citation.chunk_id);
   assertion(chunk, `${label}.citation references a stale or cross-document chunk`);
-  const quoteProjection = uniqueSourceProjection(chunk.content, citation.quote, `${label}.citation quote`);
-  const claimProjection = uniqueSourceProjection(quoteProjection.source_excerpt, claimedValue,
-    `${label}.citation claimed value`);
-  const quoteStart = byteOffset(chunk.content, quoteProjection.start_utf16);
+  const chunkQuoteProjection = uniqueTokenProjection(chunk.content, citation.quote,
+    `${label}.citation chunk quote`);
+  const chunkClaimProjection = uniqueTokenProjection(chunkQuoteProjection.source_excerpt, claimedValue,
+    `${label}.citation chunk claimed value`);
+  const sourcePage = sourcePages.pagesByNumber.get(chunk.page_range.start_page);
+  assertion(sourcePage, `${label}.citation references a page absent from the canonical source bundle`);
+  const quoteProjection = uniqueTokenProjection(sourcePage.normalized_text, citation.quote,
+    `${label}.citation canonical page quote`);
+  const claimProjection = uniqueTokenProjection(quoteProjection.source_excerpt, claimedValue,
+    `${label}.citation canonical page claimed value`);
+  const quoteStart = byteOffset(sourcePage.normalized_text, quoteProjection.start_utf16);
   const quoteBytes = Buffer.from(quoteProjection.source_excerpt, "utf8");
   const claimStart = quoteStart + byteOffset(quoteProjection.source_excerpt, claimProjection.start_utf16);
   const claimBytes = Buffer.from(claimProjection.source_excerpt, "utf8");
+  const chunkQuoteStart = byteOffset(chunk.content, chunkQuoteProjection.start_utf16);
+  const chunkQuoteBytes = Buffer.from(chunkQuoteProjection.source_excerpt, "utf8");
+  const chunkClaimStart = chunkQuoteStart
+    + byteOffset(chunkQuoteProjection.source_excerpt, chunkClaimProjection.start_utf16);
+  const normalizedQuoteLength = normalizeSourceText(quoteProjection.source_excerpt).length;
+  assertion(normalizedQuoteLength >= MIN_CITATION_CHARACTERS
+    && normalizedQuoteLength <= MAX_CITATION_CHARACTERS,
+  `${label}.citation canonical quote length is invalid`);
   const submittedQuote = Buffer.from(citation.quote, "utf8");
   return {
     document_id: chunk.document_id,
@@ -390,34 +572,78 @@ function validateCitation(citation, chunksById, claimedValue, label) {
     quote_sha256: sha256(quoteBytes),
     submitted_quote: citation.quote,
     submitted_quote_sha256: sha256(submittedQuote),
+    source_page_text_sha256: sourcePage.normalized_text_sha256,
+    source_page_text_bundle_sha256: sourcePages.sha256,
     claim_source_excerpt: claimProjection.source_excerpt,
     claim_source_excerpt_sha256: sha256(claimBytes),
     claim_start_utf8_byte: claimStart,
     claim_end_utf8_byte: claimStart + claimBytes.length,
+    chunk_source_excerpt: chunkQuoteProjection.source_excerpt,
+    chunk_source_excerpt_sha256: sha256(chunkQuoteBytes),
+    chunk_start_utf8_byte: chunkQuoteStart,
+    chunk_end_utf8_byte: chunkQuoteStart + chunkQuoteBytes.length,
+    chunk_claim_source_excerpt: chunkClaimProjection.source_excerpt,
+    chunk_claim_source_excerpt_sha256: sha256(Buffer.from(chunkClaimProjection.source_excerpt, "utf8")),
+    chunk_claim_start_utf8_byte: chunkClaimStart,
+    chunk_claim_end_utf8_byte: chunkClaimStart
+      + Buffer.byteLength(chunkClaimProjection.source_excerpt, "utf8"),
     projection: {
       policy: SOURCE_PROJECTION_POLICY,
-      quote_match: quoteProjection.method,
-      claim_match: claimProjection.method,
+      canonical_page_quote_match: quoteProjection.method,
+      canonical_page_claim_match: claimProjection.method,
+      chunk_quote_match: chunkQuoteProjection.method,
+      chunk_claim_match: chunkClaimProjection.method,
     },
   };
 }
 
-export function compareAdmittedCitationEvidence({ admission, oracleCitations = [] }) {
+export function compareAdmittedCitationEvidence({
+  admission, batchPolicy, documentChunks, documentSourcePages, oracleCitations = [],
+}) {
   exactKeys(admission, ["batch_policy_sha256", "benchmark_claim_ready", "content_representation", "contract", "document_id", "observation",
     "document_table_regions", "document_table_regions_sha256", "field_outcomes", "first_table_evidence",
-    "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay",
-    "submitted_proposal", "submitted_proposal_sha256"], "admission");
+    "package_inclusion", "document_map_sha256", "proposal", "proposal_sha256", "source_replay", "source_sha256",
+    "source_page_text_bundle_sha256", "submitted_proposal", "submitted_proposal_sha256"], "admission");
   exactKeys(admission.contract, ["name", "version"], "admission.contract");
   assertion(admission.contract.name === "pdf-tools.verified-extraction-response-admission"
-    && admission.contract.version === "1.4.0-experimental", "admission contract is invalid");
+    && admission.contract.version === "1.5.0-experimental", "admission contract is invalid");
   assertion(admission.benchmark_claim_ready === false && admission.package_inclusion === "disabled_experimental",
     "admission readiness boundary is invalid");
-  assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256),
-    "admission document-map or batch-policy binding is invalid");
+  assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256)
+    && SHA256.test(admission.source_sha256) && SHA256.test(admission.source_page_text_bundle_sha256),
+  "admission document-map or batch-policy binding is invalid");
+  const sourcePages = validateNormalizedSourcePageBundle(documentSourcePages, {
+    documentId: admission.document_id,
+    sourceSha256: admission.source_sha256,
+  });
+  assertion(sourcePages.sha256 === admission.source_page_text_bundle_sha256,
+    "admission source-page bundle binding is invalid");
+  assertion(Array.isArray(documentChunks) && documentChunks.length > 0,
+    "documentChunks must be supplied for independent citation replay");
+  const chunksById = new Map();
+  documentChunks.forEach((chunk, index) => {
+    validateChunk(chunk, admission.document_id, index);
+    assertion(!chunksById.has(chunk.chunk_id), "documentChunks contain a duplicate chunk identity");
+    chunksById.set(chunk.chunk_id, chunk);
+  });
   const tableRegions = validateDocumentTableRegions(admission.document_table_regions);
   assertion(SHA256.test(admission.document_table_regions_sha256)
     && admission.document_table_regions_sha256 === tableRegions.sha256,
   "admission table-region binding is invalid");
+  const recomputedBatchPolicy = classifySourceBoundBatch({
+    documentId: admission.document_id,
+    documentMapSha256: admission.document_map_sha256,
+    sourceSha256: admission.source_sha256,
+    documentChunks,
+    documentTableRegions: admission.document_table_regions,
+    documentSourcePages,
+    batchChunkIds: batchPolicy?.batch_chunk_ids,
+  });
+  assertion(canonicalJson(batchPolicy) === canonicalJson(recomputedBatchPolicy)
+    && admission.batch_policy_sha256
+      === sha256(Buffer.from(canonicalJson(recomputedBatchPolicy), "utf8")),
+  "admission batch-policy binding is invalid");
+  const admittedBatchChunkIds = new Set(recomputedBatchPolicy.batch_chunk_ids);
   exactKeys(admission.observation, ["batch_policy_sha256", "content_sha256", "document_id",
     "document_map_sha256", "finish_reason", "max_output_tokens", "output_truncated", "response_sha256", "usage"],
   "admission.observation");
@@ -497,8 +723,7 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
       ? (Array.isArray(admitted) ? admitted.length : -1)
       : admitted === null ? 0 : 1;
     if (outcome.status === "admitted") {
-      assertion(canonicalJson(submitted) === canonicalJson(admitted)
-        && outcome.reason_code === "none" && outcome.message === null
+      assertion(outcome.reason_code === "none" && outcome.message === null
         && outcome.citation_count === admittedCitationCount && admittedCitationCount > 0,
       `admission.field_outcomes.${field} admitted state is invalid`);
     } else if (outcome.status === "not_proposed") {
@@ -519,19 +744,29 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
   "admission field-outcome and source-replay citation denominators disagree");
   if (admission.field_outcomes.first_table.status === "admitted") {
     exactKeys(admission.first_table_evidence,
-      ["document_table_regions_sha256", "region", "region_sha256"], "admission.first_table_evidence");
+      ["document_table_regions_sha256", "region", "region_sha256", "selection", "selection_sha256"],
+      "admission.first_table_evidence");
     exactKeys(admission.first_table_evidence.region,
       ["bbox", "coordinate_space", "evidence_truncation", "page", "reason", "region_id", "text_item_count"],
     "admission.first_table_evidence.region");
     const region = admission.first_table_evidence.region;
+    const selection = admission.first_table_evidence.selection;
+    exactKeys(selection, ["chunk_id", "classification", "page_one_based", "region_id", "support_anchor",
+      "support_anchor_sha256"], "admission.first_table_evidence.selection");
     const match = typeof region.region_id === "string" ? region.region_id.match(TABLE_REGION_ID) : null;
     assertion(admission.first_table_evidence.document_table_regions_sha256
       === admission.document_table_regions_sha256
       && SHA256.test(admission.first_table_evidence.region_sha256)
       && admission.first_table_evidence.region_sha256
         === sha256(Buffer.from(canonicalJson(region), "utf8"))
-      && canonicalJson(region) === canonicalJson(tableRegions.first)
+      && SHA256.test(admission.first_table_evidence.selection_sha256)
+      && admission.first_table_evidence.selection_sha256
+        === sha256(Buffer.from(canonicalJson(selection), "utf8"))
+      && canonicalJson(region) === canonicalJson(tableRegions.items.find(item => item.region_id === selection.region_id))
       && match && Number(match[1]) === region.page
+      && region.page === selection.page_one_based
+      && selection.classification === "actual_data_table"
+      && selection.support_anchor_sha256 === sha256(Buffer.from(selection.support_anchor, "utf8"))
       && region.page === admission.proposal.first_table.page_one_based,
     "admission first-table region evidence is invalid");
   } else {
@@ -549,13 +784,18 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
   assertion(expectedCitationClaims.length === admission.source_replay.citations.length,
     "admission proposal and citation denominator disagree");
   admission.source_replay.citations.forEach((citation, index) => {
-    exactKeys(citation, ["chunk_id", "claim_end_utf8_byte", "claim_source_excerpt",
-      "claim_source_excerpt_sha256", "claim_start_utf8_byte", "document_id", "end_utf8_byte", "field",
-      "page_one_based", "projection", "quote", "quote_sha256", "start_utf8_byte", "submitted_quote",
+    exactKeys(citation, ["chunk_claim_end_utf8_byte", "chunk_claim_source_excerpt",
+      "chunk_claim_source_excerpt_sha256", "chunk_claim_start_utf8_byte", "chunk_end_utf8_byte", "chunk_id",
+      "chunk_source_excerpt", "chunk_source_excerpt_sha256", "chunk_start_utf8_byte", "claim_end_utf8_byte",
+      "claim_source_excerpt", "claim_source_excerpt_sha256", "claim_start_utf8_byte", "document_id",
+      "end_utf8_byte", "field", "page_one_based", "projection", "quote", "quote_sha256",
+      "source_page_text_bundle_sha256", "source_page_text_sha256", "start_utf8_byte", "submitted_quote",
       "submitted_quote_sha256"], `admission.source_replay.citations[${index}]`);
-    exactKeys(citation.projection, ["claim_match", "policy", "quote_match"],
+    exactKeys(citation.projection, ["canonical_page_claim_match", "canonical_page_quote_match",
+      "chunk_claim_match", "chunk_quote_match", "policy"],
       `admission.source_replay.citations[${index}].projection`);
     assertion(citation.document_id === admission.document_id && CHUNK_ID.test(citation.chunk_id)
+      && admittedBatchChunkIds.has(citation.chunk_id)
       && Number.isSafeInteger(citation.page_one_based) && citation.page_one_based >= 1
       && Number.isSafeInteger(citation.start_utf8_byte) && citation.start_utf8_byte >= 0
       && Number.isSafeInteger(citation.end_utf8_byte)
@@ -564,6 +804,8 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
       && citation.quote_sha256 === sha256(Buffer.from(citation.quote, "utf8"))
       && SHA256.test(citation.submitted_quote_sha256)
       && citation.submitted_quote_sha256 === sha256(Buffer.from(citation.submitted_quote, "utf8"))
+      && citation.source_page_text_bundle_sha256 === admission.source_page_text_bundle_sha256
+      && SHA256.test(citation.source_page_text_sha256)
       && Number.isSafeInteger(citation.claim_start_utf8_byte)
       && Number.isSafeInteger(citation.claim_end_utf8_byte)
       && citation.claim_start_utf8_byte >= citation.start_utf8_byte
@@ -573,23 +815,50 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
       && SHA256.test(citation.claim_source_excerpt_sha256)
       && citation.claim_source_excerpt_sha256
         === sha256(Buffer.from(citation.claim_source_excerpt, "utf8"))
+      && Number.isSafeInteger(citation.chunk_start_utf8_byte) && citation.chunk_start_utf8_byte >= 0
+      && citation.chunk_end_utf8_byte === citation.chunk_start_utf8_byte
+        + Buffer.byteLength(citation.chunk_source_excerpt, "utf8")
+      && citation.chunk_source_excerpt_sha256
+        === sha256(Buffer.from(citation.chunk_source_excerpt, "utf8"))
+      && citation.chunk_claim_start_utf8_byte >= citation.chunk_start_utf8_byte
+      && citation.chunk_claim_end_utf8_byte <= citation.chunk_end_utf8_byte
+      && citation.chunk_claim_end_utf8_byte === citation.chunk_claim_start_utf8_byte
+        + Buffer.byteLength(citation.chunk_claim_source_excerpt, "utf8")
+      && citation.chunk_claim_source_excerpt_sha256
+        === sha256(Buffer.from(citation.chunk_claim_source_excerpt, "utf8"))
       && citation.projection.policy === SOURCE_PROJECTION_POLICY,
     `admission.source_replay.citations[${index}] binding is invalid`);
     const [expectedField, expectedClaim] = expectedCitationClaims[index];
     assertion(citation.field === expectedField && typeof expectedClaim === "string",
       `admission.source_replay.citations[${index}] does not bind its proposal field`);
-    const replayedQuote = uniqueSourceProjection(citation.quote, citation.submitted_quote,
+    let submitted;
+    if (expectedField === "agency" || expectedField === "publication_citation_excerpt") {
+      submitted = admission.submitted_proposal[expectedField];
+    } else if (expectedField === "first_table") {
+      submitted = admission.submitted_proposal.first_table;
+    } else {
+      const contributorIndex = Number(/^contributors\[([0-9]+)\]$/u.exec(expectedField)?.[1]);
+      submitted = admission.submitted_proposal.contributors[contributorIndex];
+    }
+    const submittedClaim = expectedField === "first_table" ? submitted?.anchor_excerpt
+      : expectedField.startsWith("contributors[") ? submitted?.name : submitted?.value;
+    const replayedQuote = uniqueTokenProjection(citation.quote, citation.submitted_quote,
       `admission.source_replay.citations[${index}].submitted_quote`);
-    const replayedClaim = uniqueSourceProjection(citation.quote, expectedClaim,
+    const replayedClaim = uniqueTokenProjection(citation.quote, submittedClaim,
       `admission.source_replay.citations[${index}].claim`);
     assertion(replayedQuote.start_utf16 === 0 && replayedQuote.end_utf16 === citation.quote.length
       && replayedQuote.source_excerpt === citation.quote
-      && replayedQuote.method === citation.projection.quote_match
+      && replayedQuote.method === citation.projection.canonical_page_quote_match
       && replayedClaim.source_excerpt === citation.claim_source_excerpt
+      && replayedClaim.source_excerpt === expectedClaim
       && citation.start_utf8_byte + byteOffset(citation.quote, replayedClaim.start_utf16)
         === citation.claim_start_utf8_byte
-      && replayedClaim.method === citation.projection.claim_match,
+      && replayedClaim.method === citation.projection.canonical_page_claim_match,
     `admission.source_replay.citations[${index}] projection drifted`);
+    const independentlyReplayed = validateCitation(submitted?.citation, chunksById, sourcePages,
+      submittedClaim, expectedField);
+    assertion(canonicalJson(citation) === canonicalJson({ field: expectedField, ...independentlyReplayed }),
+      `admission.source_replay.citations[${index}] does not independently replay`);
   });
   assertion(Array.isArray(oracleCitations), "oracleCitations must be an array");
   const seenOracleCitations = new Set();
@@ -627,11 +896,34 @@ export function compareAdmittedCitationEvidence({ admission, oracleCitations = [
   };
 }
 
-function validateCitedString(item, chunksById, label) {
+function validateCitedString(item, chunksById, sourcePages, label) {
   if (item === null) return null;
   exactKeys(item, ["citation", "value"], label);
   boundedString(item.value, `${label}.value`);
-  return validateCitation(item.citation, chunksById, item.value, label);
+  return validateCitation(item.citation, chunksById, sourcePages, item.value, label);
+}
+
+function canonicalCitedString(item, replay) {
+  if (item === null || replay === null) return null;
+  return {
+    value: replay.claim_source_excerpt,
+    citation: { chunk_id: item.citation.chunk_id, quote: replay.quote },
+  };
+}
+
+function validatePublicationSemantics(value, sourcePages) {
+  const normalized = normalizeSourceText(value);
+  assertion(normalized.length >= MIN_PUBLICATION_CHARACTERS
+    && normalized.length <= MAX_PUBLICATION_CHARACTERS,
+  "publication_citation_excerpt length is invalid");
+  const hasSuggestedCitation = [...sourcePages.pagesByNumber.values()]
+    .some(page => page.normalized_text.includes("Suggested citation:"));
+  if (hasSuggestedCitation) {
+    assertion(normalized.startsWith("Suggested citation:"),
+      "publication_citation_excerpt must begin with Suggested citation:");
+  }
+  assertion(/(?:https:\/\/doi\.org\/|\bdoi:)/iu.test(normalized),
+    "publication_citation_excerpt must retain DOI support");
 }
 
 function fieldOutcome({ status, submitted, admitted, citationCount = 0, error = null }) {
@@ -645,7 +937,8 @@ function fieldOutcome({ status, submitted, admitted, citationCount = 0, error = 
   };
 }
 
-function admitProposal(submittedProposal, chunksById, allowedFields, tableRegions) {
+function admitProposal(submittedProposal, chunksById, allowedFields, tableRegions, sourcePages,
+  firstActualTable) {
   exactKeys(submittedProposal, PROPOSAL_KEYS, "proposal");
   const allowed = new Set(allowedFields);
   const proposal = { agency: null, publication_citation_excerpt: null, contributors: [], first_table: null };
@@ -656,8 +949,11 @@ function admitProposal(submittedProposal, chunksById, allowedFields, tableRegion
     const submitted = submittedProposal[field];
     try {
       if (!allowed.has(field)) assertion(submitted === null, `${field} is forbidden for this source section`);
-      const replay = validateCitedString(submitted, chunksById, field);
-      proposal[field] = structuredClone(submitted);
+      const replay = validateCitedString(submitted, chunksById, sourcePages, field);
+      if (field === "publication_citation_excerpt" && replay) {
+        validatePublicationSemantics(replay.claim_source_excerpt, sourcePages);
+      }
+      proposal[field] = canonicalCitedString(submitted, replay);
       if (replay) citations.push({ field, ...replay });
       fieldOutcomes[field] = fieldOutcome({
         status: replay ? "admitted" : "not_proposed",
@@ -684,9 +980,18 @@ function admitProposal(submittedProposal, chunksById, allowedFields, tableRegion
       assertion(!contributorNames.has(contributor.name), "contributors contains a duplicate exact name");
       contributorNames.add(contributor.name);
       return { field: `contributors[${index}]`,
-        ...validateCitation(contributor.citation, chunksById, contributor.name, `contributors[${index}]`) };
+        ...validateCitation(contributor.citation, chunksById, sourcePages, contributor.name,
+          `contributors[${index}]`) };
     });
-    proposal.contributors = structuredClone(submittedContributors);
+    assertion(contributorCitations.every((citation) => !/\s+and\s+|;/iu.test(citation.claim_source_excerpt)),
+      "contributors must contain one human-readable display name per item");
+    proposal.contributors = submittedContributors.map((contributor, index) => ({
+      name: contributorCitations[index].claim_source_excerpt,
+      citation: {
+        chunk_id: contributor.citation.chunk_id,
+        quote: contributorCitations[index].quote,
+      },
+    }));
     citations.push(...contributorCitations);
     fieldOutcomes.contributors = fieldOutcome({
       status: submittedContributors.length > 0 ? "admitted" : "not_proposed",
@@ -709,20 +1014,36 @@ function admitProposal(submittedProposal, chunksById, allowedFields, tableRegion
       nonnegativeInteger(submittedTable.page_one_based, "first_table.page_one_based");
       assertion(submittedTable.page_one_based >= 1, "first_table.page_one_based must be positive");
       boundedString(submittedTable.anchor_excerpt, "first_table.anchor_excerpt");
-      const replay = validateCitation(submittedTable.citation, chunksById,
+      const replay = validateCitation(submittedTable.citation, chunksById, sourcePages,
         submittedTable.anchor_excerpt, "first_table");
       assertion(replay.page_one_based === submittedTable.page_one_based,
         "first_table page does not match its exact chunk");
-      assertion(tableRegions.first !== null,
-        "first_table is not supported by a returned deterministic table region");
-      assertion(tableRegions.first.page === submittedTable.page_one_based,
-        "first_table page does not match the first deterministic table region");
-      proposal.first_table = structuredClone(submittedTable);
+      assertion(firstActualTable !== null,
+        "first_table is not supported by a deterministic actual-data-table classification");
+      assertion(firstActualTable.page_one_based === submittedTable.page_one_based,
+        "first_table page does not match the first classified actual data table");
+      const anchor = normalizeSourceText(replay.claim_source_excerpt);
+      assertion(anchor.length >= MIN_TABLE_ANCHOR_CHARACTERS
+        && anchor.length <= MAX_TABLE_ANCHOR_CHARACTERS,
+      "first_table anchor length is invalid");
+      assertion(/^Table\s+1(?:[.\s:—-]|$)/iu.test(anchor),
+        "first_table anchor must begin with Table 1");
+      assertion(anchor.startsWith(firstActualTable.support_anchor)
+        || firstActualTable.support_anchor.startsWith(anchor),
+      "first_table anchor does not bind the selected actual table heading");
+      proposal.first_table = {
+        page_one_based: submittedTable.page_one_based,
+        anchor_excerpt: replay.claim_source_excerpt,
+        citation: { chunk_id: submittedTable.citation.chunk_id, quote: replay.quote },
+      };
       citations.push({ field: "first_table", ...replay });
+      const selectedRegion = tableRegions.items.find(item => item.region_id === firstActualTable.region_id);
       firstTableEvidence = {
         document_table_regions_sha256: tableRegions.sha256,
-        region: structuredClone(tableRegions.first),
-        region_sha256: sha256(Buffer.from(canonicalJson(tableRegions.first), "utf8")),
+        selection: structuredClone(firstActualTable),
+        selection_sha256: sha256(Buffer.from(canonicalJson(firstActualTable), "utf8")),
+        region: structuredClone(selectedRegion),
+        region_sha256: sha256(Buffer.from(canonicalJson(selectedRegion), "utf8")),
       };
     }
     fieldOutcomes.first_table = fieldOutcome({
@@ -766,8 +1087,10 @@ export function admitStructuredModelResponse({
   maxOutputTokens,
   documentId,
   documentMapSha256,
+  sourceSha256,
   documentChunks,
   documentTableRegions,
+  documentSourcePages,
   batchChunkIds,
   batchPolicy,
 }) {
@@ -777,6 +1100,8 @@ export function admitStructuredModelResponse({
   assertion(maxOutputTokens > 0, "maxOutputTokens must be positive");
   boundedString(documentId, "documentId", 512);
   assertion(SHA256.test(documentMapSha256 ?? ""), "documentMapSha256 is invalid");
+  assertion(SHA256.test(sourceSha256 ?? "") && sourceSha256 !== "0".repeat(64),
+    "sourceSha256 is invalid");
   assertion(Array.isArray(documentChunks) && documentChunks.length > 0,
     "documentChunks must be a non-empty array");
   const documentChunksById = new Map();
@@ -786,15 +1111,19 @@ export function admitStructuredModelResponse({
     documentChunksById.set(chunk.chunk_id, chunk);
   });
   const tableRegions = validateDocumentTableRegions(documentTableRegions);
+  const sourcePages = validateNormalizedSourcePageBundle(documentSourcePages, { documentId, sourceSha256 });
   exactKeys(batchPolicy, ["allowed_fields", "batch_chunk_ids", "chunk_policies", "document_chunk_scope_sha256",
-    "document_id", "document_map_sha256", "document_table_regions_sha256", "model_call_recommended"],
+    "document_id", "document_map_sha256", "document_table_regions_sha256", "first_actual_table",
+    "model_call_recommended", "source_page_text_bundle_sha256", "source_sha256"],
   "batchPolicy");
   assertion(batchPolicy.document_id === documentId, "batchPolicy belongs to another document");
   const recomputedPolicy = classifySourceBoundBatch({
     documentId,
     documentMapSha256,
+    sourceSha256,
     documentChunks,
     documentTableRegions,
+    documentSourcePages,
     batchChunkIds,
   });
   assertion(canonicalJson(batchPolicy) === canonicalJson(recomputedPolicy), "batchPolicy drifted from exact chunks");
@@ -869,14 +1198,17 @@ export function admitStructuredModelResponse({
   const submittedProposal = parsedContent.proposal;
   let admitted;
   try {
-    admitted = admitProposal(submittedProposal, chunksById, batchPolicy.allowed_fields, tableRegions);
+    admitted = admitProposal(submittedProposal, chunksById, batchPolicy.allowed_fields, tableRegions,
+      sourcePages, batchPolicy.first_actual_table);
   } catch (error) {
     throw new ModelOutputAdmissionError(error.message, "model_proposal_not_source_bound", observation);
   }
   return {
-    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.4.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.5.0-experimental" },
     document_id: documentId,
     document_map_sha256: documentMapSha256,
+    source_sha256: sourceSha256,
+    source_page_text_bundle_sha256: sourcePages.sha256,
     batch_policy_sha256: batchPolicySha256,
     document_table_regions: structuredClone(documentTableRegions),
     document_table_regions_sha256: tableRegions.sha256,
@@ -901,6 +1233,6 @@ export function admitStructuredModelResponse({
 
 export const VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-admission",
-  version: "1.4.0-experimental",
-  boundary: "Only strict proposals whose submitted citations and claims uniquely replay to exact source bytes in a separately validated SHA-bound document map and current batch are admitted. Proposal representation is either direct strict JSON or one exact lowercase-json Markdown fence with no surrounding bytes, nested fence, prose, or alternate wrapper; the raw content and strict payload digests are both retained. Internal whitespace projection is explicit and fail-closed on ambiguity; submitted and exact source spans are both retained. A first_table proposal additionally binds the exact cited page to the first deterministic table-region signal in the validated document map; contents-page destination references cannot satisfy that boundary. A source-invalid known field is replaced by its schema-safe null or empty value with a digest-bound typed rejection while independently valid fields remain admitted; malformed envelopes, duplicate members, and top-level field smuggling still reject the whole response. This helper rehashes chunks and binds table-region inventory but does not replace document-map source/schema/renderer validation. Output-cap termination is a typed truncation failure. Reference-section batches are evidence-ineligible. Exact oracle-span equality remains a separate secondary evaluation and is not treated as source support.",
+  version: "1.5.0-experimental",
+  boundary: "Only strict proposals whose submitted citations and claims uniquely replay both to an exact SHA-bound document-map chunk and to the separately SHA-bound canonical PDF.js source page are admitted. Canonical page spans are retained so renderer punctuation spacing cannot masquerade as source replay. Publication excerpts retain the complete Suggested citation block and DOI when that label exists. A first_table proposal must bind a deterministic actual-data-table candidate: a Table 1 heading on a page with table-region evidence, excluding contents/list pages, with a bounded source anchor. Source-invalid known fields become typed null/empty rejections while independently valid fields remain admitted. Output-cap termination is typed, reference-section batches are evidence-ineligible, and exact hidden-oracle-window equality remains only a secondary diagnostic. The helper remains internal experimental code and does not itself authorize model or provider execution.",
 });

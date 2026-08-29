@@ -44,10 +44,11 @@ function boundedString(value, label, maximum = 1024) {
 function validateDocumentValidation(value) {
   exactKeys(value, [
     "document_id", "document_map_sha256", "ordered_chunk_ids", "renderer_sha256", "schema_sha256",
-    "source_sha256", "table_regions",
+    "source_page_text_bundle_sha256", "source_sha256", "table_regions",
   ], "documentValidation");
   boundedString(value.document_id, "documentValidation.document_id", 512);
-  for (const field of ["document_map_sha256", "renderer_sha256", "schema_sha256", "source_sha256"]) {
+  for (const field of ["document_map_sha256", "renderer_sha256", "schema_sha256", "source_sha256",
+    "source_page_text_bundle_sha256"]) {
     assertion(SHA256.test(value[field] ?? "") && value[field] !== "0".repeat(64),
       `documentValidation.${field} is invalid`);
   }
@@ -79,8 +80,8 @@ function receiptWithDigest(receipt) {
 }
 
 export function prepareResponseAdmissionController({
-  attemptId, trialId, predecessorRoleIds = [], documentValidation, documentChunks, batchChunkIds,
-  expectedModel, maxOutputTokens,
+  attemptId, trialId, predecessorRoleIds = [], documentValidation, documentChunks, documentSourcePages,
+  batchChunkIds, expectedModel, maxOutputTokens,
 }) {
   boundedString(attemptId, "attemptId", 512);
   boundedString(trialId, "trialId", 512);
@@ -112,10 +113,14 @@ export function prepareResponseAdmissionController({
     const policy = classifySourceBoundBatch({
       documentId: documentValidation.document_id,
       documentMapSha256: documentValidation.document_map_sha256,
+      sourceSha256: documentValidation.source_sha256,
       documentChunks,
       documentTableRegions: documentValidation.table_regions,
+      documentSourcePages,
       batchChunkIds: chunkIds,
     });
+    assertion(policy.source_page_text_bundle_sha256 === documentValidation.source_page_text_bundle_sha256,
+      "documentSourcePages does not match the frozen source-page bundle identity");
     const schema = buildVerifiedExtractionProposalSchema({ allowedFields: policy.allowed_fields });
     const policyKinds = new Set(policy.chunk_policies.map(item => item.evidence_admission));
     assertion(policyKinds.size === 1,
@@ -138,7 +143,7 @@ export function prepareResponseAdmissionController({
   const modelBatches = batches.filter(batch => batch.action === "model_call");
   const referenceBatches = batches.filter(batch => batch.action === "skip_reference_section");
   const plan = {
-    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.2.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.3.0-experimental" },
     attempt_id: attemptId,
     trial_id: trialId,
     document_validation: structuredClone(documentValidation),
@@ -160,7 +165,7 @@ export function prepareResponseAdmissionController({
   return plan;
 }
 
-export function validateResponseAdmissionControllerPlan({ plan, documentChunks }) {
+export function validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages }) {
   exactKeys(plan, PLAN_KEYS, "plan");
   assertion(SHA256.test(plan.plan_sha256 ?? "")
     && plan.plan_sha256 === sha256(Buffer.from(canonicalJson(planWithoutDigest(plan)), "utf8")),
@@ -170,6 +175,7 @@ export function validateResponseAdmissionControllerPlan({ plan, documentChunks }
     trialId: plan.trial_id,
     documentValidation: plan.document_validation,
     documentChunks,
+    documentSourcePages,
     batchChunkIds: plan.batch_chunk_ids,
     expectedModel: plan.expected_model,
     maxOutputTokens: plan.max_output_tokens,
@@ -197,8 +203,8 @@ function completedAggregate(admissions) {
   };
 }
 
-export async function runResponseAdmissionControllerAttempt({ plan, documentChunks, invokeBatch }) {
-  validateResponseAdmissionControllerPlan({ plan, documentChunks });
+export async function runResponseAdmissionControllerAttempt({ plan, documentChunks, documentSourcePages, invokeBatch }) {
+  validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages });
   assertion(typeof invokeBatch === "function", "invokeBatch must be a function");
   const batchOutcomes = [];
   const admissions = [];
@@ -242,8 +248,10 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         maxOutputTokens: plan.max_output_tokens,
         documentId: plan.document_validation.document_id,
         documentMapSha256: plan.document_validation.document_map_sha256,
+        sourceSha256: plan.document_validation.source_sha256,
         documentChunks,
         documentTableRegions: plan.document_validation.table_regions,
+        documentSourcePages,
         batchChunkIds: batch.chunk_ids,
         batchPolicy: batch.policy,
       });
@@ -322,6 +330,6 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
-  version: "1.2.0-experimental",
-  boundary: "The controller exact-binds one validated document map and its complete ordered chunk denominator, permits first-table proposals only in the batch containing the first deterministic table region, skips the reference-section suffix before invocation, isolates and retains typed batch-response rejection while continuing the frozen later batches, admits only strict source-replayed proposals, and derives calculation evidence only from admitted proposals. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
+  version: "1.3.0-experimental",
+  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips the reference-section suffix before invocation, isolates typed batch rejection while continuing later frozen batches, and derives calculation evidence only from admitted proposals. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
 });

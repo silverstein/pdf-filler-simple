@@ -52,13 +52,16 @@ evaluation. It is deliberately absent from the MCP server and release packages.
 It treats output-token-cap termination as typed truncation evidence, rejects
 duplicate JSON members before object construction, bounds contributor output,
 and admits citations only when both the submitted quote and claimed value map
-uniquely to exact bytes in one current-document chunk. Literal matches remain
-literal. The only non-literal projection collapses internal Unicode whitespace;
-it rejects leading or trailing whitespace, non-whitespace drift, multiple exact
-or whitespace-equivalent matches, stale chunks, and cross-batch chunks. Every
-admitted citation retains both the submitted quote and the exact source quote,
-the exact source claim excerpt, UTF-8 byte ranges, digests, and the projection
-method. Reference, bibliography, and works-cited sections are
+uniquely to an exact current-document chunk and to the canonical normalized
+PDF.js page text bound to the same PDF bytes. The canonical source-page bundle
+is derived only from a complete retained PDF.js text-item denominator and binds
+the PDF, PDF.js package, every page string, and its own digest. Token projection
+permits renderer-only whitespace around punctuation while preserving the exact
+canonical page span; it does not join or alter source tokens. Every admitted
+citation retains the submitted quote, chunk replay, canonical page replay,
+UTF-8 byte ranges, and all corresponding digests. Independent replay requires
+both the exact chunks and the exact source-page bundle. Reference,
+bibliography, and works-cited sections are
 evidence-ineligible and should not receive a model call.
 
 A structurally known field that fails source replay is not allowed to erase
@@ -72,21 +75,31 @@ rather than creating an apparently complete shortened list. Malformed envelopes,
 duplicate JSON members, unknown top-level fields, and reference-section calls
 still reject the whole response.
 
-`first_table` has an additional source-topology gate. The cited chunk must be
-on the proposed source page, and that page must equal the first deterministic
-table-region page in the separately validated, document-map-bound region
-inventory. The admission retains the exact region object plus its digest and
-the complete region-inventory digest. A table-of-contents or index entry that
-mentions a printed destination page cannot satisfy this gate; absent, hidden,
-reordered, stale, or substituted region evidence produces a typed rejected
-`first_table` field rather than an invented table location.
+`publication_citation_excerpt` must replay as a bounded 50–700-character
+canonical source span, begin with `Suggested citation:` whenever that label
+exists in the document, and retain DOI support. `first_table` has an additional
+semantic topology gate. Its page must contain deterministic table-region
+evidence and a source line beginning with `Table 1`; contents/list pages are
+excluded before the first actual-data-table candidate is frozen. This
+source-only classifier is an experimental deterministic heuristic for the
+current evaluation corpus, not a general proof of table semantics or topology.
+The admitted
+anchor must begin with `Table 1`, contain 20–360 canonical characters, and bind
+the selected source heading prefix. The admission retains the selection, exact
+region, and their digests. Missing, hidden, stale, substituted, contents-only,
+or semantically short evidence produces a typed rejected field rather than an
+invented table location.
 
 The V16 retained-evidence replay exposed two composition requirements around
 that boundary. Model requests now label every source chunk with its exact
-physical PDF page and identify the first deterministic table-region page;
-`first_table` is disabled in every other batch. The prompt explicitly allows
-unsupported fields to remain null or empty and forbids deriving a physical
-page from printed labels or table numbers. A typed malformed or truncated batch
+physical PDF page, include the canonical source page text, and identify the
+first classified actual-data-table page; `first_table` is disabled in every
+other batch. Source-page prompt material is fail-closed under explicit per-page
+and aggregate UTF-8 byte limits; it is never silently truncated. The prompt
+explicitly allows unsupported fields to remain null or empty and forbids deriving a physical
+page from printed labels or table numbers. It also requires one complete
+human-readable contributor name per item and forbids combined `and`/semicolon
+names. A typed malformed or truncated batch
 is retained as rejected but does not prevent later frozen batches from running.
 Only strictly admitted proposals contribute to the aggregate, while invocation
 or controller failures remain fatal. These changes add no retry, repair

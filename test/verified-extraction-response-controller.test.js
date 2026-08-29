@@ -11,16 +11,22 @@ import {
 } from "../scripts/verified-extraction-response-controller.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
+const canonicalJson = value => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
+  : value && typeof value === "object"
+    ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
 const chunkId = value => `chunk.${value.repeat(64)}`;
 const documentId = "public-safe-controller-document";
 const documentMapSha256 = "9".repeat(64);
 const expectedModel = "oda-local-model";
+const sourceSha256 = "1".repeat(64);
+const publication = "Suggested citation: River, A.B., 2025, A public-safe report. https://doi.org/10.1234/example";
 const chunk = value => ({ ...value, content_sha256: sha(Buffer.from(value.content, "utf8")) });
 const chunks = [
   chunk({ document_id: documentId, chunk_id: chunkId("a"), page_range: { start_page: 1, end_page: 1 },
     starts_at_heading: true, content: "TITLE\nU.S. Geological Survey\nRiver, A.B.\nTable 1. Summary values" }),
   chunk({ document_id: documentId, chunk_id: chunkId("b"), page_range: { start_page: 2, end_page: 2 },
-    starts_at_heading: false, content: "Suggested citation: River, A.B., 2025, A public-safe report." }),
+    starts_at_heading: false, content: publication }),
   chunk({ document_id: documentId, chunk_id: chunkId("c"), page_range: { start_page: 3, end_page: 3 },
     starts_at_heading: true, content: "References\nOther, A., 2024, An unrelated cited work." }),
 ];
@@ -42,10 +48,35 @@ const tableRegions = {
   }],
   all_items_sha256: "8".repeat(64),
 };
+const sourcePagesBody = {
+  version: 1,
+  scheme: "verified-extraction-normalized-source-pages.v1",
+  document_id: documentId,
+  source_identity: {
+    pdf_sha256: sourceSha256,
+    page_count: 3,
+    pdfjs_package_sha256: "7".repeat(64),
+    normalization: "unicode_whitespace_runs_to_ascii_space_then_trim",
+  },
+  pages: [
+    "TITLE U.S. Geological Survey River, A.B. Table 1. Summary values",
+    publication,
+    "References Other, A., 2024, An unrelated cited work.",
+  ].map((normalizedText, index) => ({
+    page_one_based: index + 1,
+    normalized_text: normalizedText,
+    normalized_text_sha256: sha(normalizedText),
+  })),
+};
+const sourcePages = {
+  ...sourcePagesBody,
+  source_page_text_bundle_sha256: sha(canonicalJson(sourcePagesBody)),
+};
 const documentValidation = {
   document_id: documentId,
   document_map_sha256: documentMapSha256,
-  source_sha256: "1".repeat(64),
+  source_sha256: sourceSha256,
+  source_page_text_bundle_sha256: sourcePages.source_page_text_bundle_sha256,
   schema_sha256: "2".repeat(64),
   renderer_sha256: "3".repeat(64),
   ordered_chunk_ids: chunks.map(item => item.chunk_id),
@@ -53,8 +84,8 @@ const documentValidation = {
 };
 const proposal = () => ({
   agency: { value: "U.S. Geological Survey", citation: { chunk_id: chunkId("a"), quote: "U.S. Geological Survey" } },
-  publication_citation_excerpt: { value: "River, A.B., 2025, A public-safe report.",
-    citation: { chunk_id: chunkId("b"), quote: "River, A.B., 2025, A public-safe report." } },
+  publication_citation_excerpt: { value: publication,
+    citation: { chunk_id: chunkId("b"), quote: publication } },
   contributors: [{ name: "River, A.B.", citation: { chunk_id: chunkId("a"), quote: "River, A.B." } }],
   first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values",
     citation: { chunk_id: chunkId("a"), quote: "Table 1. Summary values" } },
@@ -69,7 +100,19 @@ const artifact = bytes => ({
   response_bytes: bytes,
   raw_response_artifact: { path: `raw/${sha(bytes)}.json`, bytes: bytes.length, sha256: sha(bytes) },
 });
-const plan = () => prepareResponseAdmissionController({
+const prepareController = overrides => prepareResponseAdmissionController({
+  documentSourcePages: sourcePages,
+  ...overrides,
+});
+const runController = overrides => runResponseAdmissionControllerAttempt({
+  documentSourcePages: sourcePages,
+  ...overrides,
+});
+const validateControllerPlan = overrides => validateResponseAdmissionControllerPlan({
+  documentSourcePages: sourcePages,
+  ...overrides,
+});
+const plan = () => prepareController({
   attemptId: "successor-attempt-0001",
   trialId: "successor-trial-0001",
   predecessorRoleIds: ["v13-attempt-0001", "v13-trial-0001"],
@@ -83,7 +126,7 @@ const plan = () => prepareResponseAdmissionController({
 describe("verified extraction response controller", () => {
   it("binds the complete ordered scope and never calls the reference-section batch", async () => {
     const invokeBatch = vi.fn(async () => artifact(response()));
-    const result = await runResponseAdmissionControllerAttempt({ plan: plan(), documentChunks: chunks, invokeBatch });
+    const result = await runController({ plan: plan(), documentChunks: chunks, invokeBatch });
     expect(invokeBatch).toHaveBeenCalledTimes(1);
     expect(result.receipt).toMatchObject({
       denominator: { document_chunks: 3, batches: 2, model_batches: 1, reference_skipped_batches: 1 },
@@ -101,10 +144,10 @@ describe("verified extraction response controller", () => {
   it("retains exact source spans when an admitted batch uniquely projects internal whitespace", async () => {
     const projectedChunks = [
       chunk({ ...chunks[0], content: "TITLE\nU.S. Geological\nSurvey\nRiver,\nA.B.\nTable 1.\tSummary values" }),
-      chunk({ ...chunks[1], content: "Suggested citation: River, A.B., 2025,\nA public-safe report." }),
+      chunk({ ...chunks[1], content: "Suggested citation: River, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example" }),
       chunks[2],
     ];
-    const projectedPlan = prepareResponseAdmissionController({
+    const projectedPlan = prepareController({
       attemptId: "successor-attempt-projection",
       trialId: "successor-trial-projection",
       predecessorRoleIds: ["v13-attempt-0001"],
@@ -114,25 +157,25 @@ describe("verified extraction response controller", () => {
       expectedModel,
       maxOutputTokens: 4096,
     });
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: projectedPlan,
       documentChunks: projectedChunks,
       invokeBatch: async () => artifact(response()),
     });
     expect(result.receipt.outcome.classification).toBe("completed");
     expect(result.admissions[0].source_replay.citations).toMatchObject([
-      { field: "agency", quote: "U.S. Geological\nSurvey",
-        projection: { quote_match: "unique_internal_whitespace_projection" } },
-      { field: "publication_citation_excerpt", quote: "River, A.B., 2025,\nA public-safe report." },
-      { field: "contributors[0]", quote: "River,\nA.B." },
-      { field: "first_table", quote: "Table 1.\tSummary values" },
+      { field: "agency", quote: "U.S. Geological Survey",
+        projection: { chunk_quote_match: "unique_source_token_projection" } },
+      { field: "publication_citation_excerpt", quote: publication },
+      { field: "contributors[0]", quote: "River, A.B." },
+      { field: "first_table", quote: "Table 1. Summary values" },
     ]);
   });
 
   it("admits the one exact fenced-JSON representation through the controller", async () => {
     const payload = JSON.stringify(proposal());
     const bytes = response({ content: `\`\`\`json\n${payload}\n\`\`\`` });
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => artifact(bytes),
     });
     expect(result.receipt).toMatchObject({
@@ -151,7 +194,7 @@ describe("verified extraction response controller", () => {
     ["model_output_truncated", response({ content: "{\"agency\":", finishReason: "length" })],
     ["model_response_ambiguous_or_malformed", response({ content: "{\"agency\":null" })],
   ])("isolates a denominator-preserving %s batch and completes the frozen scope", async (reasonCode, bytes) => {
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => artifact(bytes),
     });
     expect(result.receipt).toMatchObject({
@@ -166,8 +209,8 @@ describe("verified extraction response controller", () => {
     expect(result.receipt.batch_outcomes[1].status).toBe("skipped_reference_section");
   });
 
-  it("routes first_table only to the batch containing the deterministic first table region", () => {
-    const routed = prepareResponseAdmissionController({
+  it("routes first_table only to the batch containing the classified actual data table", () => {
+    const routed = prepareController({
       attemptId: "successor-attempt-routing",
       trialId: "successor-trial-routing",
       documentValidation,
@@ -189,14 +232,14 @@ describe("verified extraction response controller", () => {
       chunk_id: chunkId("d"),
       page_range: { start_page: 2, end_page: 2 },
       starts_at_heading: false,
-      content: "Suggested citation: River, A.B., 2025, A public-safe report.",
+      content: publication,
     });
     const continuationChunks = [chunks[0], laterChunk, chunks[2]];
     const continuationValidation = {
       ...documentValidation,
       ordered_chunk_ids: continuationChunks.map(item => item.chunk_id),
     };
-    const continuationPlan = prepareResponseAdmissionController({
+    const continuationPlan = prepareController({
       attemptId: "successor-attempt-continuation",
       trialId: "successor-trial-continuation",
       documentValidation: continuationValidation,
@@ -206,7 +249,7 @@ describe("verified extraction response controller", () => {
       maxOutputTokens: 4096,
     });
     let call = 0;
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: continuationPlan,
       documentChunks: continuationChunks,
       invokeBatch: async () => {
@@ -215,8 +258,8 @@ describe("verified extraction response controller", () => {
         return artifact(response({ content: JSON.stringify({
           agency: null,
           publication_citation_excerpt: {
-            value: "River, A.B., 2025, A public-safe report.",
-            citation: { chunk_id: chunkId("d"), quote: "River, A.B., 2025, A public-safe report." },
+            value: publication,
+            citation: { chunk_id: chunkId("d"), quote: publication },
           },
           contributors: [],
           first_table: null,
@@ -233,7 +276,7 @@ describe("verified extraction response controller", () => {
       "model_response_ambiguous_or_malformed", "admitted", "skipped_reference_section",
     ]);
     expect(result.admissions[0].proposal.publication_citation_excerpt.value)
-      .toBe("River, A.B., 2025, A public-safe report.");
+      .toBe(publication);
   });
 
   it("halts later batches after a genuine controller failure", async () => {
@@ -245,7 +288,7 @@ describe("verified extraction response controller", () => {
       content: "Suggested citation: River, A.B., 2025, A public-safe report.",
     });
     const fatalChunks = [chunks[0], laterChunk, chunks[2]];
-    const fatalPlan = prepareResponseAdmissionController({
+    const fatalPlan = prepareController({
       attemptId: "successor-attempt-fatal",
       trialId: "successor-trial-fatal",
       documentValidation: {
@@ -258,7 +301,7 @@ describe("verified extraction response controller", () => {
       maxOutputTokens: 4096,
     });
     const invokeBatch = vi.fn(async () => { throw new Error("synthetic controller fault"); });
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: fatalPlan,
       documentChunks: fatalChunks,
       invokeBatch,
@@ -280,7 +323,7 @@ describe("verified extraction response controller", () => {
     const candidate = proposal();
     mutate(candidate);
     const bytes = response({ content: JSON.stringify(candidate) });
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => artifact(bytes),
     });
     expect(result.receipt.outcome).toMatchObject({ classification: "completed", reason_code: "none" });
@@ -294,7 +337,7 @@ describe("verified extraction response controller", () => {
   });
 
   it("retains an invocation/controller failure without inventing a model call", async () => {
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => { throw new Error("synthetic transport break"); },
     });
     expect(result.receipt).toMatchObject({
@@ -305,23 +348,23 @@ describe("verified extraction response controller", () => {
   });
 
   it("rejects scope, map, plan, role-identity, and raw-artifact drift before admission", async () => {
-    expect(() => prepareResponseAdmissionController({
+    expect(() => prepareController({
       attemptId: "v13-attempt-0001", trialId: "successor-trial-0001",
       predecessorRoleIds: ["v13-attempt-0001"], documentValidation, documentChunks: chunks,
       batchChunkIds: [[chunkId("a"), chunkId("b"), chunkId("c")]], expectedModel, maxOutputTokens: 4096,
     })).toThrow(/overlaps a predecessor/u);
-    expect(() => prepareResponseAdmissionController({
+    expect(() => prepareController({
       attemptId: "successor-attempt-0001", trialId: "successor-trial-0001",
       documentValidation, documentChunks: chunks,
       batchChunkIds: [[chunkId("a"), chunkId("c")], [chunkId("b")]], expectedModel, maxOutputTokens: 4096,
     })).toThrow();
     const drifted = plan();
     drifted.document_validation.document_map_sha256 = "8".repeat(64);
-    expect(() => validateResponseAdmissionControllerPlan({ plan: drifted, documentChunks: chunks })).toThrow();
+    expect(() => validateControllerPlan({ plan: drifted, documentChunks: chunks })).toThrow();
     const bytes = response();
     const wrongArtifact = artifact(bytes);
     wrongArtifact.raw_response_artifact.sha256 = "7".repeat(64);
-    const result = await runResponseAdmissionControllerAttempt({
+    const result = await runController({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => wrongArtifact,
     });
     expect(result.receipt.outcome).toMatchObject({
