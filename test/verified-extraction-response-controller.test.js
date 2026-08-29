@@ -87,7 +87,7 @@ describe("verified extraction response controller", () => {
     expect(invokeBatch).toHaveBeenCalledTimes(1);
     expect(result.receipt).toMatchObject({
       denominator: { document_chunks: 3, batches: 2, model_batches: 1, reference_skipped_batches: 1 },
-      observed: { batch_outcomes: 2, admitted_batches: 1, model_calls: 1,
+      observed: { batch_outcomes: 2, admitted_batches: 1, typed_rejected_batches: 0, model_calls: 1,
         skipped_reference_batches: 1, unattempted_batches: 0 },
       outcome: { classification: "completed", reason_code: "none" },
       calculation_evidence: { contributor_count: 1,
@@ -132,17 +132,126 @@ describe("verified extraction response controller", () => {
   it.each([
     ["model_output_truncated", response({ content: "{\"agency\":", finishReason: "length" })],
     ["model_response_ambiguous_or_malformed", response({ content: "{\"agency\":null" })],
-  ])("retains a denominator-preserving %s receipt", async (reasonCode, bytes) => {
+  ])("isolates a denominator-preserving %s batch and completes the frozen scope", async (reasonCode, bytes) => {
     const result = await runResponseAdmissionControllerAttempt({
       plan: plan(), documentChunks: chunks, invokeBatch: async () => artifact(bytes),
     });
     expect(result.receipt).toMatchObject({
       denominator: { document_chunks: 3, batches: 2 },
-      observed: { batch_outcomes: 1, model_calls: 1, unattempted_batches: 1 },
-      outcome: { classification: "product_failure", reason_code: reasonCode },
-      calculation_evidence: null,
+      observed: { batch_outcomes: 2, typed_rejected_batches: 1, model_calls: 1,
+        skipped_reference_batches: 1, unattempted_batches: 0 },
+      outcome: { classification: "completed", reason_code: "typed_batch_rejections" },
+      calculation_evidence: { contributor_count: 0 },
     });
     expect(result.receipt.batch_outcomes[0].response_observation.response_sha256).toBe(sha(bytes));
+    expect(result.receipt.batch_outcomes[0].status).toBe(reasonCode);
+    expect(result.receipt.batch_outcomes[1].status).toBe("skipped_reference_section");
+  });
+
+  it("routes first_table only to the batch containing the deterministic first table region", () => {
+    const routed = prepareResponseAdmissionController({
+      attemptId: "successor-attempt-routing",
+      trialId: "successor-trial-routing",
+      documentValidation,
+      documentChunks: chunks,
+      batchChunkIds: [[chunkId("a")], [chunkId("b")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+    });
+    expect(routed.batches[0].policy.allowed_fields).toContain("first_table");
+    expect(routed.batches[0].schema.properties.first_table).toHaveProperty("anyOf");
+    expect(routed.batches[1].policy.allowed_fields).not.toContain("first_table");
+    expect(routed.batches[1].schema.properties.first_table).toEqual({ type: "null" });
+    expect(routed.batches[2]).toMatchObject({ action: "skip_reference_section", policy: { allowed_fields: [] } });
+  });
+
+  it("continues later source batches after a typed malformed response", async () => {
+    const laterChunk = chunk({
+      document_id: documentId,
+      chunk_id: chunkId("d"),
+      page_range: { start_page: 2, end_page: 2 },
+      starts_at_heading: false,
+      content: "Suggested citation: River, A.B., 2025, A public-safe report.",
+    });
+    const continuationChunks = [chunks[0], laterChunk, chunks[2]];
+    const continuationValidation = {
+      ...documentValidation,
+      ordered_chunk_ids: continuationChunks.map(item => item.chunk_id),
+    };
+    const continuationPlan = prepareResponseAdmissionController({
+      attemptId: "successor-attempt-continuation",
+      trialId: "successor-trial-continuation",
+      documentValidation: continuationValidation,
+      documentChunks: continuationChunks,
+      batchChunkIds: [[chunkId("a")], [chunkId("d")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+    });
+    let call = 0;
+    const result = await runResponseAdmissionControllerAttempt({
+      plan: continuationPlan,
+      documentChunks: continuationChunks,
+      invokeBatch: async () => {
+        call += 1;
+        if (call === 1) return artifact(response({ content: "{\"agency\":null" }));
+        return artifact(response({ content: JSON.stringify({
+          agency: null,
+          publication_citation_excerpt: {
+            value: "River, A.B., 2025, A public-safe report.",
+            citation: { chunk_id: chunkId("d"), quote: "River, A.B., 2025, A public-safe report." },
+          },
+          contributors: [],
+          first_table: null,
+        }) }));
+      },
+    });
+    expect(call).toBe(2);
+    expect(result.receipt).toMatchObject({
+      observed: { batch_outcomes: 3, admitted_batches: 1, typed_rejected_batches: 1,
+        model_calls: 2, unattempted_batches: 0 },
+      outcome: { classification: "completed", reason_code: "typed_batch_rejections" },
+    });
+    expect(result.receipt.batch_outcomes.map(item => item.status)).toEqual([
+      "model_response_ambiguous_or_malformed", "admitted", "skipped_reference_section",
+    ]);
+    expect(result.admissions[0].proposal.publication_citation_excerpt.value)
+      .toBe("River, A.B., 2025, A public-safe report.");
+  });
+
+  it("halts later batches after a genuine controller failure", async () => {
+    const laterChunk = chunk({
+      document_id: documentId,
+      chunk_id: chunkId("d"),
+      page_range: { start_page: 2, end_page: 2 },
+      starts_at_heading: false,
+      content: "Suggested citation: River, A.B., 2025, A public-safe report.",
+    });
+    const fatalChunks = [chunks[0], laterChunk, chunks[2]];
+    const fatalPlan = prepareResponseAdmissionController({
+      attemptId: "successor-attempt-fatal",
+      trialId: "successor-trial-fatal",
+      documentValidation: {
+        ...documentValidation,
+        ordered_chunk_ids: fatalChunks.map(item => item.chunk_id),
+      },
+      documentChunks: fatalChunks,
+      batchChunkIds: [[chunkId("a")], [chunkId("d")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+    });
+    const invokeBatch = vi.fn(async () => { throw new Error("synthetic controller fault"); });
+    const result = await runResponseAdmissionControllerAttempt({
+      plan: fatalPlan,
+      documentChunks: fatalChunks,
+      invokeBatch,
+    });
+    expect(invokeBatch).toHaveBeenCalledTimes(1);
+    expect(result.receipt).toMatchObject({
+      observed: { batch_outcomes: 1, admitted_batches: 0, typed_rejected_batches: 0,
+        model_calls: 0, unattempted_batches: 2 },
+      outcome: { classification: "harness_failure", reason_code: "controller_failure" },
+      calculation_evidence: null,
+    });
   });
 
   it.each([

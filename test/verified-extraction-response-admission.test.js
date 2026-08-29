@@ -479,7 +479,7 @@ describe("verified extraction response admission", () => {
     });
     const hiddenResult = admit({ documentTableRegions: hidden, batchPolicy: hiddenPolicy });
     expect(hiddenResult.field_outcomes.first_table).toMatchObject({
-      status: "rejected", message: expect.stringMatching(/returned deterministic table region/u),
+      status: "rejected", message: expect.stringMatching(/forbidden for this source section/u),
     });
 
     const reordered = structuredClone(tableRegions);

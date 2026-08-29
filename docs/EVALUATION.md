@@ -81,6 +81,17 @@ mentions a printed destination page cannot satisfy this gate; absent, hidden,
 reordered, stale, or substituted region evidence produces a typed rejected
 `first_table` field rather than an invented table location.
 
+The V16 retained-evidence replay exposed two composition requirements around
+that boundary. Model requests now label every source chunk with its exact
+physical PDF page and identify the first deterministic table-region page;
+`first_table` is disabled in every other batch. The prompt explicitly allows
+unsupported fields to remain null or empty and forbids deriving a physical
+page from printed labels or table numbers. A typed malformed or truncated batch
+is retained as rejected but does not prevent later frozen batches from running.
+Only strictly admitted proposals contribute to the aggregate, while invocation
+or controller failures remain fatal. These changes add no retry, repair
+malformed JSON, weaken citation replay, or authorize a model/provider call.
+
 The caller must supply chunks from a separately validated, SHA-bound document
 map; the helper rehashes each chunk and binds the complete ordered chunk scope
 but does not replace document-map source/schema/renderer validation.

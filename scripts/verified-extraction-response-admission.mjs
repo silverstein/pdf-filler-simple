@@ -151,8 +151,13 @@ export function classifySourceBoundBatch({
   assertion(indices.every((index, offset) => offset === 0 || index === indices[offset - 1] + 1),
     "batchChunkIds must be one ordered contiguous document range");
   const chunkPolicies = indices.map(index => allPolicies[index]);
+  const batchChunks = indices.map(index => documentChunks[index]);
   const containsReferenceSection = chunkPolicies
     .some(item => item.evidence_admission === "forbidden_reference_section");
+  const containsFirstTableRegion = tableRegions.first !== null && batchChunks.some(chunk => (
+    chunk.page_range.start_page <= tableRegions.first.page
+      && chunk.page_range.end_page >= tableRegions.first.page
+  ));
   const documentChunkScopeSha256 = sha256(Buffer.from(canonicalJson(
     documentChunks.map(chunk => ({
       chunk_id: chunk.chunk_id,
@@ -167,7 +172,9 @@ export function classifySourceBoundBatch({
     document_table_regions_sha256: tableRegions.sha256,
     document_chunk_scope_sha256: documentChunkScopeSha256,
     batch_chunk_ids: [...batchChunkIds],
-    allowed_fields: containsReferenceSection ? [] : [...ALL_FIELDS],
+    allowed_fields: containsReferenceSection ? [] : ALL_FIELDS.filter(field => (
+      field !== "first_table" || containsFirstTableRegion
+    )),
     model_call_recommended: !containsReferenceSection,
     chunk_policies: chunkPolicies,
   };

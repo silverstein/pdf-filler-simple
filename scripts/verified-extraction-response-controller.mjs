@@ -138,7 +138,7 @@ export function prepareResponseAdmissionController({
   const modelBatches = batches.filter(batch => batch.action === "model_call");
   const referenceBatches = batches.filter(batch => batch.action === "skip_reference_section");
   const plan = {
-    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.1.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.2.0-experimental" },
     attempt_id: attemptId,
     trial_id: trialId,
     document_validation: structuredClone(documentValidation),
@@ -203,7 +203,8 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
   const batchOutcomes = [];
   const admissions = [];
   let modelCalls = 0;
-  let failure = null;
+  let fatalFailure = null;
+  const typedFailures = [];
 
   for (const batch of plan.batches) {
     if (batch.action === "skip_reference_section") {
@@ -262,7 +263,7 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
       });
     } catch (error) {
       const typed = error instanceof ModelOutputAdmissionError;
-      failure = {
+      const failure = {
         classification: typed ? "product_failure" : "harness_failure",
         reason_code: typed ? error.code : "controller_failure",
         message: String(error?.message ?? error),
@@ -279,11 +280,22 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         admission_sha256: null,
       });
       if (invoked) modelCalls += 1;
-      break;
+      if (typed) typedFailures.push(failure);
+      else {
+        fatalFailure = failure;
+        break;
+      }
     }
   }
 
-  const completed = failure === null;
+  const completed = fatalFailure === null;
+  const completedOutcome = typedFailures.length === 0
+    ? { classification: "completed", reason_code: "none", message: null }
+    : {
+        classification: "completed",
+        reason_code: "typed_batch_rejections",
+        message: `${typedFailures.length} model batch response(s) failed strict admission`,
+      };
   const receipt = receiptWithDigest({
     contract: { name: "pdf-tools.verified-extraction-response-controller-receipt", version: 1 },
     attempt_id: plan.attempt_id,
@@ -295,12 +307,13 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
     observed: {
       batch_outcomes: batchOutcomes.length,
       admitted_batches: admissions.length,
+      typed_rejected_batches: typedFailures.length,
       model_calls: modelCalls,
       skipped_reference_batches: batchOutcomes.filter(item => item.status === "skipped_reference_section").length,
       unattempted_batches: plan.batches.length - batchOutcomes.length,
     },
     batch_outcomes: batchOutcomes,
-    outcome: failure ?? { classification: "completed", reason_code: "none", message: null },
+    outcome: fatalFailure ?? completedOutcome,
     calculation_evidence: completed ? completedAggregate(admissions) : null,
     benchmark_claim_ready: false,
   });
@@ -309,6 +322,6 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
-  version: "1.1.0-experimental",
-  boundary: "The controller exact-binds one validated document map and its complete ordered chunk denominator, skips the reference-section suffix before invocation, admits only strict source-replayed batch responses, derives calculation evidence from admitted proposals, and retains one denominator-preserving receipt for typed model-output or controller failure. It performs no model or provider call by itself.",
+  version: "1.2.0-experimental",
+  boundary: "The controller exact-binds one validated document map and its complete ordered chunk denominator, permits first-table proposals only in the batch containing the first deterministic table region, skips the reference-section suffix before invocation, isolates and retains typed batch-response rejection while continuing the frozen later batches, admits only strict source-replayed proposals, and derives calculation evidence only from admitted proposals. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
 });
