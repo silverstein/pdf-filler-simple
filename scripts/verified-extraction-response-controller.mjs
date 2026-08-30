@@ -20,10 +20,15 @@ const PLAN_KEYS = [
   "attempt_id", "batch_chunk_ids", "batches", "benchmark_claim_ready", "contract", "denominator",
   "document_validation", "expected_model", "max_output_tokens", "plan_sha256", "trial_id",
 ];
-const CURRENT_CONTROLLER_VERSION = "1.5.0-experimental";
+const CURRENT_CONTROLLER_VERSION = "1.6.0-experimental";
 const REPLAYABLE_CONTROLLER_VERSIONS = new Set([
   "1.3.0-experimental",
   "1.4.0-experimental",
+  "1.5.0-experimental",
+  CURRENT_CONTROLLER_VERSION,
+]);
+const MODEL_CONTEXT_CONTROLLER_VERSIONS = new Set([
+  "1.5.0-experimental",
   CURRENT_CONTROLLER_VERSION,
 ]);
 
@@ -112,7 +117,7 @@ function prepareResponseAdmissionControllerForVersion({
   boundedString(expectedModel, "expectedModel", 512);
   assertion(Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0,
     "maxOutputTokens must be a positive integer");
-  const bindsModelContext = controllerVersion === CURRENT_CONTROLLER_VERSION;
+  const bindsModelContext = MODEL_CONTEXT_CONTROLLER_VERSIONS.has(controllerVersion);
   if (bindsModelContext) {
     assertion(Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > maxOutputTokens,
       "contextWindowTokens must exceed maxOutputTokens");
@@ -179,10 +184,12 @@ function prepareResponseAdmissionControllerForVersion({
       ...(bindsModelContext ? { context_capacity_observation: contextCapacityObservation } : {}),
     };
   });
-  let referenceSeen = false;
-  for (const batch of batches) {
-    if (batch.action === "skip_reference_section") referenceSeen = true;
-    else assertion(!referenceSeen, "a model-call batch cannot follow the reference-section boundary");
+  if (controllerVersion !== CURRENT_CONTROLLER_VERSION) {
+    let referenceSeen = false;
+    for (const batch of batches) {
+      if (batch.action === "skip_reference_section") referenceSeen = true;
+      else assertion(!referenceSeen, "a model-call batch cannot follow the reference-section boundary");
+    }
   }
   const modelBatches = batches.filter(batch => batch.action === "model_call");
   const referenceBatches = batches.filter(batch => batch.action === "skip_reference_section");
@@ -215,8 +222,8 @@ export function prepareResponseAdmissionController(options) {
 }
 
 export function validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages }) {
-  const currentPlan = plan?.contract?.version === CURRENT_CONTROLLER_VERSION;
-  exactKeys(plan, currentPlan ? [...PLAN_KEYS, "model_context"] : PLAN_KEYS, "plan");
+  const bindsModelContext = MODEL_CONTEXT_CONTROLLER_VERSIONS.has(plan?.contract?.version);
+  exactKeys(plan, bindsModelContext ? [...PLAN_KEYS, "model_context"] : PLAN_KEYS, "plan");
   exactKeys(plan.contract, ["name", "version"], "plan.contract");
   assertion(plan.contract.name === "pdf-tools.verified-extraction-response-controller"
     && REPLAYABLE_CONTROLLER_VERSIONS.has(plan.contract.version),
@@ -233,7 +240,7 @@ export function validateResponseAdmissionControllerPlan({ plan, documentChunks, 
     batchChunkIds: plan.batch_chunk_ids,
     expectedModel: plan.expected_model,
     maxOutputTokens: plan.max_output_tokens,
-    contextWindowTokens: currentPlan ? plan.model_context?.context_window_tokens : undefined,
+    contextWindowTokens: bindsModelContext ? plan.model_context?.context_window_tokens : undefined,
   }, plan.contract.version);
   assertion(canonicalJson(rebuilt) === canonicalJson(plan), "plan drifted from the exact document chunks");
   return plan;
@@ -516,5 +523,5 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
   version: CURRENT_CONTROLLER_VERSION,
-  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, the model context capacity, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips the reference-section suffix before invocation, isolates typed response or pre-invocation context-capacity rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
+  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, the model context capacity, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips each reference-section span before invocation while allowing a later explicit appendix to reopen source eligibility, isolates typed response or pre-invocation context-capacity rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
 });

@@ -291,7 +291,7 @@ describe("verified extraction response admission", () => {
       batchPolicy: whitespacePolicy,
       responseBytes: response({ content: JSON.stringify(candidate) }),
     });
-    expect(result.contract.version).toBe("1.5.0-experimental");
+    expect(result.contract.version).toBe("1.6.0-experimental");
     expect(result.first_table_evidence).toMatchObject({
       document_table_regions_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       region: { region_id: "p1-t1", page: 1 },
@@ -765,16 +765,20 @@ describe("verified extraction response admission", () => {
     })).toThrow(/deterministic page order/u);
   });
 
-  it("fails closed on missing, reordered, or drifted table-region evidence", () => {
+  it("does not treat the abandoned-region inventory as a complete table inventory", () => {
     const hidden = { ...structuredClone(tableRegions), observed: 1, returned: 0, omitted: 1, items: [] };
     const hiddenPolicy = classification({
       documentId: DOCUMENT, documentMapSha256: DOCUMENT_MAP_SHA256, documentChunks: chunks,
       documentTableRegions: hidden, batchChunkIds,
     });
     const hiddenResult = admit({ documentTableRegions: hidden, batchPolicy: hiddenPolicy });
-    expect(hiddenResult.field_outcomes.first_table).toMatchObject({
-      status: "rejected", message: expect.stringMatching(/forbidden for this source section/u),
+    expect(hiddenResult.field_outcomes.first_table).toMatchObject({ status: "admitted", message: null });
+    expect(hiddenResult.first_table_evidence).toMatchObject({
+      region: null,
+      region_sha256: null,
+      selection: { evidence_kind: "canonical_source_heading", region_id: null },
     });
+    expect(() => compare({ admission: hiddenResult, batchPolicy: hiddenPolicy })).not.toThrow();
 
     const reordered = structuredClone(tableRegions);
     reordered.observed = 2;
@@ -789,6 +793,191 @@ describe("verified extraction response admission", () => {
     const drifted = structuredClone(tableRegions);
     drifted.items[0].page = 2;
     expect(() => admit({ documentTableRegions: drifted })).toThrow(/identity is invalid/u);
+  });
+
+  it("classifies a canonical mid-page Table 1 heading without an abandoned table region", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const scopedChunks = [chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("d"),
+      page_range: { start_page: 1, end_page: 1 },
+      starts_at_heading: false,
+      content: "Report header\nTable 1. Exact source-bound measurements Column A Column B",
+    })];
+    const scopedPages = sourcePages([
+      "Report header Table 1. Exact source-bound measurements Column A Column B",
+    ]);
+    const scopedPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: [id("d")],
+    });
+    expect(scopedPolicy.first_actual_table).toMatchObject({
+      page_one_based: 1,
+      chunk_id: id("d"),
+      region_id: null,
+      evidence_kind: "canonical_source_heading",
+      classification: "actual_data_table",
+    });
+    expect(scopedPolicy.allowed_fields).toContain("first_table");
+  });
+
+  it("uses the longest unique source prefix when renderer text merges later tokens", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const scopedChunks = [chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("d"),
+      page_range: { start_page: 1, end_page: 1 },
+      starts_at_heading: false,
+      content: "Table 1. Summary of the 40Ar/39Ar analyses of selected samples",
+    })];
+    const scopedPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: sourcePages([
+        "Table 1. Summary of the 40 Ar/ 39 Ar analyses of selected samples",
+      ]),
+      batchChunkIds: [id("d")],
+    });
+    expect(scopedPolicy.first_actual_table).toMatchObject({
+      chunk_id: id("d"),
+      support_anchor: "Table 1. Summary of the",
+    });
+    expect(scopedPolicy.allowed_fields).toContain("first_table");
+  });
+
+  it("accepts a retained heading split after the table number", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const scopedChunks = [chunk({
+      document_id: DOCUMENT,
+      chunk_id: id("d"),
+      page_range: { start_page: 1, end_page: 1 },
+      starts_at_heading: false,
+      content: "Table 1.\nCharacteristics of monitored streams and exact measurements",
+    })];
+    const scopedPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: sourcePages([
+        "Table 1. Characteristics of monitored streams and exact measurements",
+      ]),
+      batchChunkIds: [id("d")],
+    });
+    expect(scopedPolicy.first_actual_table).toMatchObject({ page_one_based: 1, chunk_id: id("d") });
+  });
+
+  it("reopens evidence eligibility at an explicit appendix after references", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const scopedChunks = [
+      chunk({
+        document_id: DOCUMENT,
+        chunk_id: id("c"),
+        page_range: { start_page: 1, end_page: 1 },
+        starts_at_heading: true,
+        content: "References Cited\nUnsupported, A., 2025",
+      }),
+      chunk({
+        document_id: DOCUMENT,
+        chunk_id: id("d"),
+        page_range: { start_page: 2, end_page: 2 },
+        starts_at_heading: true,
+        content: "Appendix 1. Measurements\nTable 1. Exact appendix values and totals",
+      }),
+    ];
+    const scopedPages = sourcePages(scopedChunks.map(item => item.content.replace(/\n/gu, " ")));
+    const appendixPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: [id("d")],
+    });
+    expect(appendixPolicy.chunk_policies).toEqual([
+      { chunk_id: id("d"), evidence_admission: "source_replay_required" },
+    ]);
+    expect(appendixPolicy.allowed_fields).toContain("first_table");
+
+    const referencePolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: [id("c")],
+    });
+    expect(referencePolicy.allowed_fields).toEqual([]);
+  });
+
+  it("skips roman-numeral list pages and lowercase cross-references before the actual heading", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const scopedChunks = [
+      chunk({
+        document_id: DOCUMENT,
+        chunk_id: id("c"),
+        page_range: { start_page: 1, end_page: 1 },
+        starts_at_heading: false,
+        content: "iv Figures 1. Map ........ 2 Table 1. Listed table ........ 10",
+      }),
+      chunk({
+        document_id: DOCUMENT,
+        chunk_id: id("d"),
+        page_range: { start_page: 2, end_page: 2 },
+        starts_at_heading: false,
+        content: "Discussion refers to table 1.\nTable 1. Actual measurements and sample totals",
+      }),
+    ];
+    const scopedPages = sourcePages(scopedChunks.map(item => item.content.replace(/\n/gu, " ")));
+    const scopedPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: scopedPages,
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+    });
+    expect(scopedPolicy.first_actual_table).toMatchObject({ page_one_based: 2, chunk_id: id("d") });
+  });
+
+  it("does not promote a capitalized inline Table 1 cross-reference", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const scopedChunks = [
+      chunk({
+        document_id: DOCUMENT,
+        chunk_id: id("c"),
+        page_range: { start_page: 1, end_page: 1 },
+        starts_at_heading: false,
+        content: "Discussion refers to Table 1. Results are described below.",
+      }),
+      chunk({
+        document_id: DOCUMENT,
+        chunk_id: id("d"),
+        page_range: { start_page: 2, end_page: 2 },
+        starts_at_heading: false,
+        content: "Table 1. Actual measurements and sample totals",
+      }),
+    ];
+    const scopedPolicy = classification({
+      documentChunks: scopedChunks,
+      documentTableRegions: noRegions,
+      documentSourcePages: sourcePages(scopedChunks.map(item => item.content)),
+      batchChunkIds: scopedChunks.map(item => item.chunk_id),
+    });
+    expect(scopedPolicy.first_actual_table).toMatchObject({ page_one_based: 2, chunk_id: id("d") });
+  });
+
+  it("fails closed when a canonical table heading does not uniquely replay to one retained chunk", () => {
+    const noRegions = { ...structuredClone(tableRegions), observed: 0, returned: 0, omitted: 0, items: [] };
+    const duplicate = ["e", "f"].map(character => chunk({
+      document_id: DOCUMENT,
+      chunk_id: id(character),
+      page_range: { start_page: 1, end_page: 1 },
+      starts_at_heading: false,
+      content: "Table 1. Duplicate same-page heading and values",
+    }));
+    const scopedPolicy = classification({
+      documentChunks: duplicate,
+      documentTableRegions: noRegions,
+      documentSourcePages: sourcePages(["Table 1. Duplicate same-page heading and values"]),
+      batchChunkIds: duplicate.map(item => item.chunk_id),
+    });
+    expect(scopedPolicy.first_actual_table).toBeNull();
+    expect(scopedPolicy.allowed_fields).not.toContain("first_table");
   });
 
   it("rejects canonical source-page byte or self-digest drift before admission", () => {

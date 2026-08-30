@@ -141,7 +141,8 @@ describe("verified extraction response pipeline", () => {
         .toBe(sourcePages.source_page_text_bundle_sha256);
       expect(request.seed).toBe(20260829);
       expect(request.messages[1].content).toContain("CANONICAL SOURCE PAGES:");
-      expect(request.messages[1].content).toContain("first source-classified actual data table is on physical page 1");
+      expect(request.messages[1].content)
+        .toContain("first source-classified actual data table heading is on physical page 1");
       return artifact(response());
     });
     const result = await runSourceBoundResponsePipelineAttempt({
@@ -269,6 +270,58 @@ describe("verified extraction response pipeline", () => {
     ))).toBe(true);
   });
 
+  it("splits a mixed reference and appendix batch before planning model calls", () => {
+    const appendixChunks = [
+      chunk({ ...chunks[0], content: "TITLE\nU.S. Geological Survey\nRiver, A.B." }),
+      chunks[1],
+      chunks[2],
+      chunk({ document_id: documentId, chunk_id: chunkId("d"),
+        page_range: { start_page: 4, end_page: 4 }, starts_at_heading: true,
+        content: "Appendix 1. Measurements\nTable 1. Exact appendix values and totals" }),
+    ];
+    const appendixPageTexts = [
+      "TITLE U.S. Geological Survey River, A.B.",
+      publication,
+      "References Other, A., 2024, An unrelated cited work.",
+      "Appendix 1. Measurements Table 1. Exact appendix values and totals",
+    ];
+    const appendixSourcePagesBody = {
+      ...structuredClone(sourcePagesBody),
+      source_identity: { ...sourcePagesBody.source_identity, page_count: 4 },
+      pages: appendixPageTexts.map((normalizedText, index) => ({
+        page_one_based: index + 1,
+        normalized_text: normalizedText,
+        normalized_text_sha256: sha(normalizedText),
+      })),
+    };
+    const appendixSourcePages = {
+      ...appendixSourcePagesBody,
+      source_page_text_bundle_sha256: sha(canonicalJson(appendixSourcePagesBody)),
+    };
+    const appendixMapBody = {
+      ...structuredClone(documentMapBody),
+      page_count: 4,
+      chunks: { descriptors: appendixChunks.map(item => ({ chunk_id: item.chunk_id })) },
+    };
+    const appendixMap = withDocumentMapDigest(appendixMapBody);
+    const prepared = prepare({
+      documentMap: appendixMap,
+      documentChunks: appendixChunks,
+      documentSourcePages: appendixSourcePages,
+      batchChunkIds: [[chunkId("a"), chunkId("b")], [chunkId("c"), chunkId("d")]],
+    });
+    expect(prepared.plan.batch_chunk_ids).toEqual([
+      [chunkId("a"), chunkId("b")], [chunkId("c")], [chunkId("d")],
+    ]);
+    expect(prepared.plan.batches.map(batch => batch.action)).toEqual([
+      "model_call", "skip_reference_section", "model_call",
+    ]);
+    expect(prepared.plan.batches[2].policy).toMatchObject({
+      allowed_fields: expect.arrayContaining(["first_table"]),
+      first_actual_table: { page_one_based: 4, chunk_id: chunkId("d") },
+    });
+  });
+
   it("retains a typed zero-call rejection when one chunk cannot fit", async () => {
     const prepared = prepare({
       contextWindowTokens: 4097,
@@ -321,7 +374,7 @@ describe("verified extraction response pipeline", () => {
   });
 
   it("remains internal experimental source", () => {
-    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.3.0-experimental");
+    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.4.0-experimental");
     expect(SERVER_FILES).not.toContain("verified-extraction-response-pipeline.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-pipeline.mjs");
   });

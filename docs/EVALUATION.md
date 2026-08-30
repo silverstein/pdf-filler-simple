@@ -62,7 +62,10 @@ citation retains the submitted quote, chunk replay, canonical page replay,
 UTF-8 byte ranges, and all corresponding digests. Independent replay requires
 both the exact chunks and the exact source-page bundle. Reference,
 bibliography, and works-cited sections are
-evidence-ineligible and should not receive a model call.
+evidence-ineligible and should not receive a model call. A later explicit
+`Appendix` heading reopens source eligibility for that appendix; the pipeline
+splits a caller batch at that transition so reference and appendix chunks can
+never share one request.
 
 A structurally known field that fails source replay is not allowed to erase
 independently valid fields or masquerade as valid. The admitted proposal replaces
@@ -78,17 +81,23 @@ still reject the whole response.
 `publication_citation_excerpt` must replay as a bounded 50–700-character
 canonical source span, begin with `Suggested citation:` whenever that label
 exists in the document, and retain DOI support. `first_table` has an additional
-semantic topology gate. Its page must contain deterministic table-region
-evidence and a source line beginning with `Table 1`; contents/list pages are
-excluded before the first actual-data-table candidate is frozen. This
-source-only classifier is an experimental deterministic heuristic for the
+source-heading gate. Its page must contain the first exact capitalized
+`Table 1.` or `Table 1.x.` heading whose longest bounded source prefix uniquely
+replays to one retained chunk;
+contents/list pages are excluded before the candidate is frozen. Abandoned
+table regions remain bound when present, but they are not a complete table
+inventory: confidently reconstructed tables do not appear in that collection.
+This source-only classifier is an experimental deterministic heuristic for the
 current evaluation corpus, not a general proof of table semantics or topology.
 The admitted
 anchor must begin with `Table 1`, contain 20–360 canonical characters, and bind
-the selected source heading prefix. The admission retains the selection, exact
-region, and their digests. Missing, hidden, stale, substituted, contents-only,
-or semantically short evidence produces a typed rejected field rather than an
-invented table location.
+the selected source heading prefix. The request exposes that exact prefix rather
+than asking the model to guess the source-bound extent. The admission retains
+the selection and its digest, plus the exact abandoned-region evidence when one
+exists on that page.
+Missing, ambiguous, stale, substituted, contents-only, or semantically short
+evidence produces a typed rejected field rather than an invented table
+location.
 
 The V16 retained-evidence replay exposed two composition requirements around
 that boundary. Model requests now label every source chunk with its exact

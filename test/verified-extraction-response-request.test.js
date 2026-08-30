@@ -99,16 +99,16 @@ describe("verified extraction response request", () => {
       batchChunkIds: chunks.map(item => item.chunk_id),
     });
     const prompt = request.messages[1].content;
-    expect(prompt).toContain(`[chunk_id=${chunkId("a")} page_one_based=7 first_table_region=true]`);
-    expect(prompt).toContain(`[chunk_id=${chunkId("b")} page_one_based=8 first_table_region=false]`);
-    expect(prompt).toContain("The first source-classified actual data table is on physical page 7");
+    expect(prompt).toContain(`[chunk_id=${chunkId("a")} page_one_based=7 first_table_source_heading=true]`);
+    expect(prompt).toContain(`[chunk_id=${chunkId("b")} page_one_based=8 first_table_source_heading=false]`);
+    expect(prompt).toContain("The first source-classified actual data table heading is on physical page 7");
     expect(prompt).toContain("CANONICAL SOURCE PAGES:");
     expect(prompt).toContain("A requested field may be absent from this batch");
     expect(prompt).not.toContain("Every requested field is present in the source");
     expect(request).toMatchObject({ temperature: 0, top_p: 1, seed: 20260829, stream: false });
   });
 
-  it("requires first_table null when no deterministic table region exists", () => {
+  it("requires first_table null in a batch that does not contain the deterministic source heading", () => {
     const request = buildSourceBoundExtractionRequest({
       model: "local-public-safe-model",
       maxOutputTokens: 4096,
@@ -129,7 +129,10 @@ describe("verified extraction response request", () => {
       }),
       batchChunkIds: [chunkId("b")],
     });
-    expect(request.messages[1].content).toContain("No deterministic first table region exists; first_table must be null");
+    expect(request.messages[1].content)
+      .toContain(`[chunk_id=${chunkId("b")} page_one_based=8 first_table_source_heading=false]`);
+    expect(request.messages[1].content)
+      .toContain("first_table must be null unless its exact cited chunk has first_table_source_heading=true");
   });
 
   it("rejects duplicate, unknown, or multi-page chunk scope", () => {

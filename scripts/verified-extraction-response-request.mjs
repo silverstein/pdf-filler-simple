@@ -156,10 +156,11 @@ export function buildSourceBoundExtractionRequest({
   }
 
   const firstTablePage = batchPolicy.first_actual_table?.page_one_based ?? null;
+  const firstTableSupportAnchor = batchPolicy.first_actual_table?.support_anchor ?? null;
   const sourceChunks = selected.map((item) => {
     const isFirstTablePage = item.page_range.start_page === firstTablePage;
     return [
-      `[chunk_id=${item.chunk_id} page_one_based=${item.page_range.start_page} first_table_region=${isFirstTablePage}]`,
+      `[chunk_id=${item.chunk_id} page_one_based=${item.page_range.start_page} first_table_source_heading=${isFirstTablePage}]`,
       item.content,
     ].join("\n");
   });
@@ -187,8 +188,8 @@ export function buildSourceBoundExtractionRequest({
     "When a Suggested citation: label exists, publication_citation_excerpt must copy a 50-700 character source span that begins with that exact label and includes the DOI.",
     "The page_one_based metadata is authoritative physical PDF page evidence; never infer it from printed page labels or table numbers.",
     firstTablePage === null
-      ? "No deterministic first table region exists; first_table must be null."
-      : `The first source-classified actual data table is on physical page ${firstTablePage}. first_table must be null unless its exact cited chunk has first_table_region=true; when non-null, page_one_based must be ${firstTablePage}, and anchor_excerpt must begin with Table 1 and contain 20-360 characters from the actual heading.`,
+      ? "No deterministic first table source heading exists; first_table must be null."
+      : `The first source-classified actual data table heading is on physical page ${firstTablePage}. first_table must be null unless its exact cited chunk has first_table_source_heading=true; when non-null, page_one_based must be ${firstTablePage}, and anchor_excerpt must begin with the exact deterministic support prefix ${JSON.stringify(firstTableSupportAnchor)} and contain 20-360 characters from the actual heading.`,
     "OUTPUT JSON SCHEMA:",
     JSON.stringify(schema),
     "SOURCE CHUNKS:",

@@ -277,39 +277,63 @@ function validateDocumentTableRegions(value) {
 
 function looksLikeContentsPage(pageText) {
   const lead = pageText.slice(0, 500);
+  const dotLeaderCount = pageText.match(/\.{3,}/gu)?.length ?? 0;
   return /^(?:contents|table of contents|list of (?:figures|tables)|figures|tables)\b/iu.test(lead)
-    || /\bcontents\b/iu.test(lead) && /(?:\.{3,}|\bTable\s+2\b.*\bTable\s+3\b)/iu.test(pageText);
+    || /\bcontents\b/iu.test(lead) && /(?:\.{3,}|\bTable\s+2\b.*\bTable\s+3\b)/iu.test(pageText)
+    || /^[ivxlcdm]+\s+/iu.test(lead) && dotLeaderCount >= 2;
+}
+
+function selectUniqueTableSupport({ anchorExcerpt, documentChunks, pageOneBased }) {
+  const coveringChunks = documentChunks.filter(chunk => (
+    chunk.page_range.start_page <= pageOneBased && chunk.page_range.end_page >= pageOneBased
+      && chunk.content.split(/\r?\n/gu).some(line => (
+        /^\s*(?:Table|TABLE)\s+1(?:\.[0-9]+)?\.(?:\s+\S.*)?\s*$/u.test(line)
+      ))
+  ));
+  const anchors = sourceTokens(anchorExcerpt)
+    .filter(entry => entry.end >= MIN_TABLE_ANCHOR_CHARACTERS && entry.end <= 80)
+    .map(entry => anchorExcerpt.slice(0, entry.end).trimEnd())
+    .filter((anchor, index, all) => index === 0 || anchor !== all[index - 1])
+    .reverse();
+  for (const supportAnchor of anchors) {
+    const supportingChunks = coveringChunks.filter(chunk => {
+      try {
+        uniqueTokenProjection(chunk.content, supportAnchor, "first actual table chunk heading");
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (supportingChunks.length === 1) {
+      return { chunk: supportingChunks[0], supportAnchor };
+    }
+  }
+  return null;
 }
 
 function selectFirstActualTable({ documentChunks, tableRegions, sourcePages }) {
-  const regionPages = new Set(tableRegions.items.map(item => item.page));
-  for (const chunk of documentChunks) {
-    const pageOneBased = chunk.page_range.start_page;
-    if (!regionPages.has(pageOneBased)) continue;
-    const page = sourcePages.pagesByNumber.get(pageOneBased);
-    if (!page || looksLikeContentsPage(page.normalized_text)) continue;
-    const tableLine = chunk.content.split(/\r?\n/gu).find(line => (
-      /^\s*Table\s+1(?:\.\d+)?(?:[.\s:—-])+\S/iu.test(line)
-    ));
-    if (!tableLine) continue;
-    let projected;
-    try {
-      projected = uniqueTokenProjection(page.normalized_text, tableLine.trim(), "first actual table heading");
-    } catch {
-      continue;
-    }
-    const anchorExcerpt = page.normalized_text.slice(projected.start_utf16,
-      Math.min(page.normalized_text.length, projected.start_utf16 + MAX_TABLE_ANCHOR_CHARACTERS));
+  for (const page of sourcePages.pagesByNumber.values()) {
+    if (looksLikeContentsPage(page.normalized_text)) continue;
+    const heading = /\b(?:Table|TABLE)\s+1(?:\.[0-9]+)?\.\s+\S/gu.exec(page.normalized_text);
+    if (!heading) continue;
+    const pageOneBased = page.page_one_based;
+    const anchorExcerpt = page.normalized_text.slice(heading.index,
+      Math.min(page.normalized_text.length, heading.index + MAX_TABLE_ANCHOR_CHARACTERS));
     if (anchorExcerpt.length < MIN_TABLE_ANCHOR_CHARACTERS) continue;
-    const region = tableRegions.items.find(item => item.page === pageOneBased);
-    const supportAnchor = anchorExcerpt.slice(0, Math.min(80, anchorExcerpt.length));
+    const support = selectUniqueTableSupport({ anchorExcerpt, documentChunks, pageOneBased });
+    if (support === null) continue;
+    const { chunk, supportAnchor } = support;
+    const region = tableRegions.items.find(item => item.page === pageOneBased) ?? null;
     return {
       page_one_based: pageOneBased,
       chunk_id: chunk.chunk_id,
-      region_id: region.region_id,
+      region_id: region?.region_id ?? null,
       support_anchor: supportAnchor,
       support_anchor_sha256: sha256(Buffer.from(supportAnchor, "utf8")),
       classification: "actual_data_table",
+      evidence_kind: region === null
+        ? "canonical_source_heading"
+        : "canonical_source_heading_plus_abandoned_table_region",
     };
   }
   return null;
@@ -341,7 +365,11 @@ export function classifySourceBoundBatch({
       `chunks[${index}] page is absent from documentSourcePages`);
     assertion(!seen.has(chunk.chunk_id), "documentChunks contain a duplicate chunk identity");
     seen.add(chunk.chunk_id);
-    if (chunk.starts_at_heading && REFERENCE_HEADINGS.has(firstLine(chunk.content))) inReferenceSection = true;
+    if (chunk.starts_at_heading) {
+      const heading = firstLine(chunk.content);
+      if (REFERENCE_HEADINGS.has(heading)) inReferenceSection = true;
+      else if (/^Appendix(?:\s|$)/iu.test(heading)) inReferenceSection = false;
+    }
     return {
       chunk_id: chunk.chunk_id,
       evidence_admission: inReferenceSection ? "forbidden_reference_section" : "source_replay_required",
@@ -606,7 +634,7 @@ export function compareAdmittedCitationEvidence({
     "source_page_text_bundle_sha256", "submitted_proposal", "submitted_proposal_sha256"], "admission");
   exactKeys(admission.contract, ["name", "version"], "admission.contract");
   assertion(admission.contract.name === "pdf-tools.verified-extraction-response-admission"
-    && admission.contract.version === "1.5.0-experimental", "admission contract is invalid");
+    && admission.contract.version === "1.6.0-experimental", "admission contract is invalid");
   assertion(admission.benchmark_claim_ready === false && admission.package_inclusion === "disabled_experimental",
     "admission readiness boundary is invalid");
   assertion(SHA256.test(admission.document_map_sha256) && SHA256.test(admission.batch_policy_sha256)
@@ -746,29 +774,42 @@ export function compareAdmittedCitationEvidence({
     exactKeys(admission.first_table_evidence,
       ["document_table_regions_sha256", "region", "region_sha256", "selection", "selection_sha256"],
       "admission.first_table_evidence");
-    exactKeys(admission.first_table_evidence.region,
-      ["bbox", "coordinate_space", "evidence_truncation", "page", "reason", "region_id", "text_item_count"],
-    "admission.first_table_evidence.region");
     const region = admission.first_table_evidence.region;
     const selection = admission.first_table_evidence.selection;
-    exactKeys(selection, ["chunk_id", "classification", "page_one_based", "region_id", "support_anchor",
-      "support_anchor_sha256"], "admission.first_table_evidence.selection");
-    const match = typeof region.region_id === "string" ? region.region_id.match(TABLE_REGION_ID) : null;
+    exactKeys(selection, ["chunk_id", "classification", "evidence_kind", "page_one_based", "region_id",
+      "support_anchor", "support_anchor_sha256"], "admission.first_table_evidence.selection");
+    const hasRegion = selection.region_id !== null;
+    if (hasRegion) {
+      exactKeys(region,
+        ["bbox", "coordinate_space", "evidence_truncation", "page", "reason", "region_id", "text_item_count"],
+      "admission.first_table_evidence.region");
+    }
+    const match = hasRegion && typeof region?.region_id === "string"
+      ? region.region_id.match(TABLE_REGION_ID) : null;
     assertion(admission.first_table_evidence.document_table_regions_sha256
       === admission.document_table_regions_sha256
-      && SHA256.test(admission.first_table_evidence.region_sha256)
-      && admission.first_table_evidence.region_sha256
-        === sha256(Buffer.from(canonicalJson(region), "utf8"))
       && SHA256.test(admission.first_table_evidence.selection_sha256)
       && admission.first_table_evidence.selection_sha256
         === sha256(Buffer.from(canonicalJson(selection), "utf8"))
-      && canonicalJson(region) === canonicalJson(tableRegions.items.find(item => item.region_id === selection.region_id))
-      && match && Number(match[1]) === region.page
-      && region.page === selection.page_one_based
       && selection.classification === "actual_data_table"
       && selection.support_anchor_sha256 === sha256(Buffer.from(selection.support_anchor, "utf8"))
-      && region.page === admission.proposal.first_table.page_one_based,
+      && selection.page_one_based === admission.proposal.first_table.page_one_based,
     "admission first-table region evidence is invalid");
+    if (hasRegion) {
+      assertion(selection.evidence_kind === "canonical_source_heading_plus_abandoned_table_region"
+        && SHA256.test(admission.first_table_evidence.region_sha256)
+        && admission.first_table_evidence.region_sha256
+          === sha256(Buffer.from(canonicalJson(region), "utf8"))
+        && canonicalJson(region)
+          === canonicalJson(tableRegions.items.find(item => item.region_id === selection.region_id))
+        && match && Number(match[1]) === region.page
+        && region.page === selection.page_one_based,
+      "admission first-table region evidence is invalid");
+    } else {
+      assertion(selection.evidence_kind === "canonical_source_heading"
+        && region === null && admission.first_table_evidence.region_sha256 === null,
+      "admission first-table source-heading evidence is invalid");
+    }
   } else {
     assertion(admission.first_table_evidence === null,
       "admission retains table-region evidence for a non-admitted first_table field");
@@ -1042,8 +1083,9 @@ function admitProposal(submittedProposal, chunksById, allowedFields, tableRegion
         document_table_regions_sha256: tableRegions.sha256,
         selection: structuredClone(firstActualTable),
         selection_sha256: sha256(Buffer.from(canonicalJson(firstActualTable), "utf8")),
-        region: structuredClone(selectedRegion),
-        region_sha256: sha256(Buffer.from(canonicalJson(selectedRegion), "utf8")),
+        region: selectedRegion === undefined ? null : structuredClone(selectedRegion),
+        region_sha256: selectedRegion === undefined
+          ? null : sha256(Buffer.from(canonicalJson(selectedRegion), "utf8")),
       };
     }
     fieldOutcomes.first_table = fieldOutcome({
@@ -1204,7 +1246,7 @@ export function admitStructuredModelResponse({
     throw new ModelOutputAdmissionError(error.message, "model_proposal_not_source_bound", observation);
   }
   return {
-    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.5.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-admission", version: "1.6.0-experimental" },
     document_id: documentId,
     document_map_sha256: documentMapSha256,
     source_sha256: sourceSha256,
@@ -1233,6 +1275,6 @@ export function admitStructuredModelResponse({
 
 export const VERIFIED_EXTRACTION_RESPONSE_ADMISSION_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-admission",
-  version: "1.5.0-experimental",
-  boundary: "Only strict proposals whose submitted citations and claims uniquely replay both to an exact SHA-bound document-map chunk and to the separately SHA-bound canonical PDF.js source page are admitted. Canonical page spans are retained so renderer punctuation spacing cannot masquerade as source replay. Publication excerpts retain the complete Suggested citation block and DOI when that label exists. A first_table proposal must bind a deterministic actual-data-table candidate: a Table 1 heading on a page with table-region evidence, excluding contents/list pages, with a bounded source anchor. Source-invalid known fields become typed null/empty rejections while independently valid fields remain admitted. Output-cap termination is typed, reference-section batches are evidence-ineligible, and exact hidden-oracle-window equality remains only a secondary diagnostic. The helper remains internal experimental code and does not itself authorize model or provider execution.",
+  version: "1.6.0-experimental",
+  boundary: "Only strict proposals whose submitted citations and claims uniquely replay both to an exact SHA-bound document-map chunk and to the separately SHA-bound canonical PDF.js source page are admitted. Canonical page spans are retained so renderer punctuation spacing cannot masquerade as source replay. Publication excerpts retain the complete Suggested citation block and DOI when that label exists. A first_table proposal must bind a deterministic actual-data-table candidate: the first exact capitalized Table 1 or Table 1.x heading with a bounded source prefix that uniquely replays to one retained chunk on the same canonical source page, with contents/list pages excluded. Abandoned-table-region evidence is retained when present but is not treated as a complete inventory because confidently reconstructed tables do not appear there. References remain evidence-ineligible, while an explicit later Appendix heading reopens source eligibility for that appendix. Source-invalid known fields become typed null/empty rejections while independently valid fields remain admitted. Output-cap termination is typed, exact hidden-oracle-window equality remains only a secondary diagnostic, and the helper remains internal experimental code that does not itself authorize model or provider execution.",
 });

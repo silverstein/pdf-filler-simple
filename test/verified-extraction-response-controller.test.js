@@ -469,6 +469,18 @@ describe("verified extraction response controller", () => {
         documentSourcePages: sourcePages,
       })).toMatchObject({ status: "complete", missing_required_paths: [] });
     }
+    const immediatePredecessor = structuredClone(currentPlan);
+    immediatePredecessor.contract.version = "1.5.0-experimental";
+    delete immediatePredecessor.plan_sha256;
+    immediatePredecessor.plan_sha256 = sha(canonicalJson(immediatePredecessor));
+    expect(validateControllerPlan({ plan: immediatePredecessor, documentChunks: chunks }))
+      .toBe(immediatePredecessor);
+    expect(materializeAdmittedSourceExtraction({
+      plan: immediatePredecessor,
+      admissions: result.admissions,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+    })).toMatchObject({ status: "complete", missing_required_paths: [] });
     expect(prepareController({
       attemptId: "fresh-version-check",
       trialId: "fresh-version-check-trial",
@@ -478,7 +490,7 @@ describe("verified extraction response controller", () => {
       expectedModel,
       maxOutputTokens: 4096,
       contextWindowTokens: 32768,
-    }).contract.version).toBe("1.5.0-experimental");
+    }).contract.version).toBe("1.6.0-experimental");
   });
 
   it("retains an invocation/controller failure without inventing a model call", async () => {

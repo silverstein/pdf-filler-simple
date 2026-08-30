@@ -56,6 +56,29 @@ function fitBatchChunkIdsToModelContext({ documentValidation, documentChunks, do
     model: expectedModel,
     contextWindowTokens,
   });
+  const documentPolicy = classifySourceBoundBatch({
+    documentId: documentValidation.document_id,
+    documentMapSha256: documentValidation.document_map_sha256,
+    sourceSha256: documentValidation.source_sha256,
+    documentChunks,
+    documentTableRegions: documentValidation.table_regions,
+    documentSourcePages,
+    batchChunkIds: documentChunks.map(chunk => chunk.chunk_id),
+  });
+  const evidenceByChunk = new Map(documentPolicy.chunk_policies.map(item => (
+    [item.chunk_id, item.evidence_admission]
+  )));
+  const evidenceScoped = batchChunkIds.flatMap(chunkIds => {
+    const groups = [];
+    for (const chunkId of chunkIds) {
+      const evidence = evidenceByChunk.get(chunkId);
+      assertion(typeof evidence === "string", "batchChunkIds contains an unknown chunk identity");
+      const previous = groups.at(-1);
+      if (previous?.evidence === evidence) previous.chunk_ids.push(chunkId);
+      else groups.push({ evidence, chunk_ids: [chunkId] });
+    }
+    return groups.map(group => group.chunk_ids);
+  });
   const fitted = [];
   const fit = chunkIds => {
     const policy = classifySourceBoundBatch({
@@ -90,7 +113,7 @@ function fitBatchChunkIdsToModelContext({ documentValidation, documentChunks, do
     fit(chunkIds.slice(0, midpoint));
     fit(chunkIds.slice(midpoint));
   };
-  batchChunkIds.forEach(fit);
+  evidenceScoped.forEach(fit);
   return fitted;
 }
 
@@ -288,6 +311,6 @@ export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentC
 
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
-  version: "1.3.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, deterministically splits model batches until each multi-chunk request fits the frozen model-context upper bound, and retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations without reinterpreting canonical source spans through a second incompatible chunk-text merge. It performs no model or provider call by itself.",
+  version: "1.4.0-experimental",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, deterministically splits caller batches at every source-evidence/reference boundary and then until each multi-chunk request fits the frozen model-context upper bound, and retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations without reinterpreting canonical source spans through a second incompatible chunk-text merge. It performs no model or provider call by itself.",
 });
