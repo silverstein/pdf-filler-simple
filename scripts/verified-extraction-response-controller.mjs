@@ -4,6 +4,7 @@ import {
   admitStructuredModelResponse,
   buildVerifiedExtractionProposalSchema,
   classifySourceBoundBatch,
+  compareAdmittedCitationEvidence,
   ModelOutputAdmissionError,
 } from "./verified-extraction-response-admission.mjs";
 
@@ -13,6 +14,11 @@ const PLAN_KEYS = [
   "attempt_id", "batch_chunk_ids", "batches", "benchmark_claim_ready", "contract", "denominator",
   "document_validation", "expected_model", "max_output_tokens", "plan_sha256", "trial_id",
 ];
+const CURRENT_CONTROLLER_VERSION = "1.4.0-experimental";
+const REPLAYABLE_CONTROLLER_VERSIONS = new Set([
+  "1.3.0-experimental",
+  CURRENT_CONTROLLER_VERSION,
+]);
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -79,10 +85,12 @@ function receiptWithDigest(receipt) {
   return { ...receipt, receipt_sha256: sha256(Buffer.from(canonicalJson(receipt), "utf8")) };
 }
 
-export function prepareResponseAdmissionController({
+function prepareResponseAdmissionControllerForVersion({
   attemptId, trialId, predecessorRoleIds = [], documentValidation, documentChunks, documentSourcePages,
   batchChunkIds, expectedModel, maxOutputTokens,
-}) {
+}, controllerVersion) {
+  assertion(REPLAYABLE_CONTROLLER_VERSIONS.has(controllerVersion),
+    "controller plan version is unsupported");
   boundedString(attemptId, "attemptId", 512);
   boundedString(trialId, "trialId", 512);
   assertion(attemptId !== trialId, "attemptId and trialId must be distinct");
@@ -143,7 +151,7 @@ export function prepareResponseAdmissionController({
   const modelBatches = batches.filter(batch => batch.action === "model_call");
   const referenceBatches = batches.filter(batch => batch.action === "skip_reference_section");
   const plan = {
-    contract: { name: "pdf-tools.verified-extraction-response-controller", version: "1.3.0-experimental" },
+    contract: { name: "pdf-tools.verified-extraction-response-controller", version: controllerVersion },
     attempt_id: attemptId,
     trial_id: trialId,
     document_validation: structuredClone(documentValidation),
@@ -165,12 +173,20 @@ export function prepareResponseAdmissionController({
   return plan;
 }
 
+export function prepareResponseAdmissionController(options) {
+  return prepareResponseAdmissionControllerForVersion(options, CURRENT_CONTROLLER_VERSION);
+}
+
 export function validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages }) {
   exactKeys(plan, PLAN_KEYS, "plan");
+  exactKeys(plan.contract, ["name", "version"], "plan.contract");
+  assertion(plan.contract.name === "pdf-tools.verified-extraction-response-controller"
+    && REPLAYABLE_CONTROLLER_VERSIONS.has(plan.contract.version),
+  "plan.contract is unsupported");
   assertion(SHA256.test(plan.plan_sha256 ?? "")
     && plan.plan_sha256 === sha256(Buffer.from(canonicalJson(planWithoutDigest(plan)), "utf8")),
   "plan.plan_sha256 does not bind the exact plan");
-  const rebuilt = prepareResponseAdmissionController({
+  const rebuilt = prepareResponseAdmissionControllerForVersion({
     attemptId: plan.attempt_id,
     trialId: plan.trial_id,
     documentValidation: plan.document_validation,
@@ -179,7 +195,7 @@ export function validateResponseAdmissionControllerPlan({ plan, documentChunks, 
     batchChunkIds: plan.batch_chunk_ids,
     expectedModel: plan.expected_model,
     maxOutputTokens: plan.max_output_tokens,
-  });
+  }, plan.contract.version);
   assertion(canonicalJson(rebuilt) === canonicalJson(plan), "plan drifted from the exact document chunks");
   return plan;
 }
@@ -200,6 +216,131 @@ function completedAggregate(admissions) {
     contributor_count: contributors.length,
     contributor_count_derivation: "derived_from_unique_exact_admitted_contributor_names",
     input_admission_sha256s: admissions.map(admission => sha256(Buffer.from(canonicalJson(admission), "utf8"))),
+  };
+}
+
+function retainedCitation(citation) {
+  return {
+    ...structuredClone(citation),
+    page: citation.page_one_based,
+    public_citation: {
+      page: citation.page_one_based,
+      quote: citation.quote,
+    },
+    workspace_citation: {
+      chunk_id: citation.chunk_id,
+      start_utf8_byte: citation.chunk_start_utf8_byte,
+      end_utf8_byte: citation.chunk_end_utf8_byte,
+      quote_sha256: citation.chunk_source_excerpt_sha256,
+    },
+  };
+}
+
+export function materializeAdmittedSourceExtraction({
+  plan, admissions, documentChunks, documentSourcePages,
+}) {
+  validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages });
+  assertion(Array.isArray(admissions), "admissions must be an array");
+  const admittedBatches = plan.batches.filter(batch => batch.action === "model_call");
+  const batchesByPolicySha256 = new Map(admittedBatches.map(batch => [batch.policy_sha256, batch]));
+  const seenPolicies = new Set();
+  const selected = {
+    publication: { agency: null, publication_citation_excerpt: null },
+    contributors: [],
+    summary: { contributor_count: 0, first_table: null },
+  };
+  const citations = {};
+  const contributorNames = new Set();
+  const inputAdmissionSha256s = [];
+  let precedingBatchOrdinal = 0;
+
+  for (const [admissionIndex, admission] of admissions.entries()) {
+    const batch = batchesByPolicySha256.get(admission?.batch_policy_sha256);
+    assertion(batch && !seenPolicies.has(batch.policy_sha256),
+      `admissions[${admissionIndex}] has an unplanned or duplicate batch policy`);
+    assertion(batch.batch_ordinal > precedingBatchOrdinal,
+      "admissions are not in frozen batch order");
+    seenPolicies.add(batch.policy_sha256);
+    precedingBatchOrdinal = batch.batch_ordinal;
+    compareAdmittedCitationEvidence({
+      admission,
+      batchPolicy: batch.policy,
+      documentChunks,
+      documentSourcePages,
+    });
+    const admissionSha256 = sha256(Buffer.from(canonicalJson(admission), "utf8"));
+    inputAdmissionSha256s.push(admissionSha256);
+    const evidenceByField = new Map(admission.source_replay.citations.map(citation => {
+      assertion(!citation.field.startsWith("contributors[") || /^contributors\[[0-9]+\]$/u.test(citation.field),
+        "admission contributor citation field is invalid");
+      return [citation.field, citation];
+    }));
+
+    for (const field of ["agency", "publication_citation_excerpt"]) {
+      const item = admission.proposal[field];
+      if (selected.publication[field] !== null || item === null) continue;
+      const evidence = evidenceByField.get(field);
+      assertion(evidence, `admission omitted canonical ${field} evidence`);
+      selected.publication[field] = item.value;
+      citations[`publication.${field}`] = retainedCitation(evidence);
+    }
+
+    admission.proposal.contributors.forEach((contributor, contributorIndex) => {
+      if (contributorNames.has(contributor.name)) return;
+      const evidence = evidenceByField.get(`contributors[${contributorIndex}]`);
+      assertion(evidence, `admission omitted canonical contributors[${contributorIndex}] evidence`);
+      contributorNames.add(contributor.name);
+      selected.contributors.push({ name: contributor.name });
+      citations[`contributors[name=${contributor.name}]`] = retainedCitation(evidence);
+    });
+
+    const table = admission.proposal.first_table;
+    if (table !== null && (selected.summary.first_table === null
+      || table.page_one_based < selected.summary.first_table.page_one_based)) {
+      const evidence = evidenceByField.get("first_table");
+      assertion(evidence && evidence.page_one_based === table.page_one_based,
+        "admission omitted canonical first_table evidence");
+      selected.summary.first_table = {
+        page_one_based: table.page_one_based,
+        anchor_excerpt: table.anchor_excerpt,
+      };
+      citations["summary.first_table"] = retainedCitation(evidence);
+    }
+  }
+
+  const missingRequiredPaths = [];
+  selected.summary.contributor_count = selected.contributors.length;
+  if (selected.publication.agency === null) missingRequiredPaths.push("publication.agency");
+  if (selected.publication.publication_citation_excerpt === null) {
+    missingRequiredPaths.push("publication.publication_citation_excerpt");
+  }
+  if (selected.contributors.length === 0) missingRequiredPaths.push("contributors");
+  if (selected.summary.first_table === null) missingRequiredPaths.push("summary.first_table");
+  missingRequiredPaths.sort();
+  const complete = missingRequiredPaths.length === 0;
+  const body = {
+    contract: { name: "pdf-tools.verified-extraction-source-materialization", version: 1 },
+    document_id: plan.document_validation.document_id,
+    document_map_sha256: plan.document_validation.document_map_sha256,
+    source_sha256: plan.document_validation.source_sha256,
+    source_page_text_bundle_sha256: plan.document_validation.source_page_text_bundle_sha256,
+    input_admission_sha256s: inputAdmissionSha256s,
+    status: complete ? "complete" : "incomplete",
+    result: complete ? structuredClone(selected) : null,
+    selected,
+    citation_evidence: citations,
+    public_citations: Object.fromEntries(Object.entries(citations).map(([field, citation]) => (
+      [field, structuredClone(citation.public_citation)]
+    ))),
+    workspace_citations: Object.fromEntries(Object.entries(citations).map(([field, citation]) => (
+      [field, structuredClone(citation.workspace_citation)]
+    ))),
+    missing_required_paths: missingRequiredPaths,
+    benchmark_claim_ready: false,
+  };
+  return {
+    ...body,
+    extraction_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
   };
 }
 
@@ -304,8 +445,11 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         reason_code: "typed_batch_rejections",
         message: `${typedFailures.length} model batch response(s) failed strict admission`,
       };
+  const sourceExtraction = completed ? materializeAdmittedSourceExtraction({
+    plan, admissions, documentChunks, documentSourcePages,
+  }) : null;
   const receipt = receiptWithDigest({
-    contract: { name: "pdf-tools.verified-extraction-response-controller-receipt", version: 1 },
+    contract: { name: "pdf-tools.verified-extraction-response-controller-receipt", version: 2 },
     attempt_id: plan.attempt_id,
     trial_id: plan.trial_id,
     controller_plan_sha256: plan.plan_sha256,
@@ -323,13 +467,14 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
     batch_outcomes: batchOutcomes,
     outcome: fatalFailure ?? completedOutcome,
     calculation_evidence: completed ? completedAggregate(admissions) : null,
+    source_extraction: sourceExtraction,
     benchmark_claim_ready: false,
   });
-  return { receipt, admissions };
+  return { receipt, admissions, source_extraction: sourceExtraction };
 }
 
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
-  version: "1.3.0-experimental",
-  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips the reference-section suffix before invocation, isolates typed batch rejection while continuing later frozen batches, and derives calculation evidence only from admitted proposals. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
+  version: CURRENT_CONTROLLER_VERSION,
+  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips the reference-section suffix before invocation, isolates typed batch rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
 });

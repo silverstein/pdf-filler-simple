@@ -153,6 +153,16 @@ describe("verified extraction response pipeline", () => {
       observed: { model_calls: 1, skipped_reference_batches: 1 },
       benchmark_claim_ready: false,
     });
+    expect(result.source_extraction).toMatchObject({
+      status: "complete",
+      selected: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+        contributors: [{ name: "River, A.B." }],
+        summary: { contributor_count: 1, first_table: { page_one_based: 1 } },
+      },
+      result: { summary: { contributor_count: 1 } },
+      missing_required_paths: [],
+    });
   });
 
   it("rejects missing, drifted, duplicated, or substituted source bindings before invocation", async () => {
@@ -205,7 +215,7 @@ describe("verified extraction response pipeline", () => {
   });
 
   it("remains internal experimental source", () => {
-    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.0.0-experimental");
+    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.1.0-experimental");
     expect(SERVER_FILES).not.toContain("verified-extraction-response-pipeline.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-pipeline.mjs");
   });

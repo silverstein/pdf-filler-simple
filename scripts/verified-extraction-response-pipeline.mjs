@@ -156,6 +156,6 @@ export async function runSourceBoundResponsePipelineAttempt({ prepared, document
 
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
-  version: "1.0.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, passes that same bundle through plan validation and response admission, and constructs every model request with the controller-frozen batch policy. It performs no model or provider call by itself.",
+  version: "1.1.0-experimental",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, passes that same bundle through plan validation, response admission, and final source materialization, and constructs every model request with the controller-frozen batch policy. Final selected values and citations come from the admitted canonical source-replay spans rather than a second incompatible chunk-text interpretation. It performs no model or provider call by itself.",
 });

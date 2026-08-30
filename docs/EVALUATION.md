@@ -169,6 +169,24 @@ source-page digest/object at the response-controller handoff. V19 remains
 immutable failure evidence; this source repair neither retries nor retroactively
 changes that campaign.
 
+The consumed V20 campaign then exposed a later semantic seam. Response
+admission successfully retained canonical source-page spans, including spans
+whose chunk rendering differed only in whitespace, but the measured caller
+discarded some of those admitted values by applying a second byte-exact chunk
+substring check during final merge. The controller now owns one digest-bound
+source materialization after admission. It independently replays every
+admission against the frozen batch policy, exact chunks, and canonical
+source-page bundle, then selects values and citations directly from those
+validated replay spans. Each retained citation exposes a canonical-page form
+for scoring and the separately replayed exact-chunk byte range for workspace
+verification, so callers do not reinterpret offsets between those consumers.
+It retains exact missing paths for incomplete results
+and never treats a controller-admitted span as unsupported merely because its
+chunk rendering contains different whitespace. Wrong-page, cross-chunk,
+forged, substituted, ambiguous, or drifted evidence still rejects before
+materialization. This is a source-only correction over preserved evidence; it
+does not retry V20, authorize another campaign, or qualify integration.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that

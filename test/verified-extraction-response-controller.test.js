@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
+  materializeAdmittedSourceExtraction,
   prepareResponseAdmissionController,
   runResponseAdmissionControllerAttempt,
   validateResponseAdmissionControllerPlan,
@@ -139,6 +140,23 @@ describe("verified extraction response controller", () => {
     });
     expect(result.receipt.receipt_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.receipt.batch_outcomes[0].admission).toEqual(result.admissions[0]);
+    expect(result.source_extraction).toMatchObject({
+      status: "complete",
+      selected: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+        contributors: [{ name: "River, A.B." }],
+        summary: { contributor_count: 1,
+          first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values" } },
+      },
+      result: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+        contributors: [{ name: "River, A.B." }],
+        summary: { contributor_count: 1 },
+      },
+      missing_required_paths: [],
+      benchmark_claim_ready: false,
+    });
+    expect(result.receipt.source_extraction).toEqual(result.source_extraction);
   });
 
   it("retains exact source spans when an admitted batch uniquely projects internal whitespace", async () => {
@@ -170,6 +188,42 @@ describe("verified extraction response controller", () => {
       { field: "contributors[0]", quote: "River, A.B." },
       { field: "first_table", quote: "Table 1. Summary values" },
     ]);
+    expect(result.source_extraction).toMatchObject({
+      status: "complete",
+      selected: { publication: { publication_citation_excerpt: publication } },
+      citation_evidence: {
+        "publication.publication_citation_excerpt": {
+          quote: publication,
+          chunk_source_excerpt: "Suggested citation: River, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example",
+          projection: { chunk_quote_match: "unique_source_token_projection" },
+          public_citation: { page: 2, quote: publication },
+          workspace_citation: {
+            chunk_id: chunkId("b"),
+            start_utf8_byte: 0,
+            end_utf8_byte: Buffer.byteLength(
+              "Suggested citation: River, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example",
+              "utf8",
+            ),
+            quote_sha256: sha("Suggested citation: River, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example"),
+          },
+        },
+      },
+      public_citations: {
+        "publication.publication_citation_excerpt": { page: 2, quote: publication },
+      },
+      workspace_citations: {
+        "publication.publication_citation_excerpt": {
+          chunk_id: chunkId("b"),
+          start_utf8_byte: 0,
+          end_utf8_byte: Buffer.byteLength(
+            "Suggested citation: River, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example",
+            "utf8",
+          ),
+          quote_sha256: sha("Suggested citation: River, A.B., 2025,\nA public-safe report.\nhttps://doi.org/10.1234/example"),
+        },
+      },
+      missing_required_paths: [],
+    });
   });
 
   it("admits the one exact fenced-JSON representation through the controller", async () => {
@@ -334,6 +388,90 @@ describe("verified extraction response controller", () => {
     expect(result.admissions[0].proposal.publication_citation_excerpt)
       .toEqual(proposal().publication_citation_excerpt);
     expect(result.receipt.denominator.document_chunks).toBe(3);
+    expect(result.source_extraction).toMatchObject({
+      status: "incomplete",
+      missing_required_paths: ["publication.agency"],
+      result: null,
+    });
+  });
+
+  it("rejects forged canonical replay evidence during final materialization", async () => {
+    const exactPlan = plan();
+    const result = await runController({
+      plan: exactPlan, documentChunks: chunks, invokeBatch: async () => artifact(response()),
+    });
+    const forged = structuredClone(result.admissions);
+    forged[0].source_replay.citations[1].quote = "forged publication quote";
+    expect(() => materializeAdmittedSourceExtraction({
+      plan: exactPlan,
+      admissions: forged,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+    })).toThrow(/binding is invalid|does not independently replay|projection drifted/u);
+  });
+
+  it("materializes multiple admitted batches only in frozen order", async () => {
+    const splitPlan = prepareController({
+      attemptId: "successor-attempt-split-materialization",
+      trialId: "successor-trial-split-materialization",
+      predecessorRoleIds: ["v13-attempt-0001"],
+      documentValidation,
+      documentChunks: chunks,
+      batchChunkIds: [[chunkId("a")], [chunkId("b")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+    });
+    const proposals = [{
+      agency: proposal().agency,
+      publication_citation_excerpt: null,
+      contributors: proposal().contributors,
+      first_table: proposal().first_table,
+    }, {
+      agency: null,
+      publication_citation_excerpt: proposal().publication_citation_excerpt,
+      contributors: [],
+      first_table: null,
+    }];
+    let call = 0;
+    const result = await runController({
+      plan: splitPlan,
+      documentChunks: chunks,
+      invokeBatch: async () => artifact(response({ content: JSON.stringify(proposals[call++]) })),
+    });
+    expect(result.source_extraction).toMatchObject({ status: "complete", missing_required_paths: [] });
+    expect(() => materializeAdmittedSourceExtraction({
+      plan: splitPlan,
+      admissions: [...result.admissions].reverse(),
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+    })).toThrow(/frozen batch order/u);
+  });
+
+  it("replays the consumed V20 controller-plan version without minting it for new plans", async () => {
+    const currentPlan = plan();
+    const result = await runController({
+      plan: currentPlan, documentChunks: chunks, invokeBatch: async () => artifact(response()),
+    });
+    const legacyPlan = structuredClone(currentPlan);
+    legacyPlan.contract.version = "1.3.0-experimental";
+    delete legacyPlan.plan_sha256;
+    legacyPlan.plan_sha256 = sha(canonicalJson(legacyPlan));
+    expect(validateControllerPlan({ plan: legacyPlan, documentChunks: chunks })).toBe(legacyPlan);
+    expect(materializeAdmittedSourceExtraction({
+      plan: legacyPlan,
+      admissions: result.admissions,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+    })).toMatchObject({ status: "complete", missing_required_paths: [] });
+    expect(prepareController({
+      attemptId: "fresh-version-check",
+      trialId: "fresh-version-check-trial",
+      documentValidation,
+      documentChunks: chunks,
+      batchChunkIds: [[chunkId("a"), chunkId("b")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+    }).contract.version).toBe("1.4.0-experimental");
   });
 
   it("retains an invocation/controller failure without inventing a model call", async () => {
