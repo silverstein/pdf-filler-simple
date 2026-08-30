@@ -203,6 +203,21 @@ model identity, context, estimator, template ceiling, request digest and output
 reservation are all digest-bound. This source repair does not retry V20 or
 authorize a new campaign.
 
+The consumed V26 campaign proved the frozen 283-call ceiling, but also exposed
+a caller-side finalization defect. Seventeen documents reached a completed
+response-controller receipt. Six of those also retained a complete canonical
+source materialization, but the caller rebuilt state from raw admitted
+proposals using the obsolete chunk-substring merge and incorrectly reported
+`incomplete_extraction`. The other ten materializations were genuinely
+incomplete, usually because `summary.first_table` was absent. The pipeline now
+provides one fail-closed finalizer: it recomputes materialization from the
+retained admissions, exact-compares the returned extraction and controller
+receipt, and projects the already validated public and workspace citation forms
+into caller state. Drifted receipts, citations, admissions, and incomplete
+materializations reject; the finalizer does not infer or fill a missing field.
+V26 remains immutable zero-completion evidence, and this correction authorizes
+no campaign, retry, integration, benchmark, or public claim.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that

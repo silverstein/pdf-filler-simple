@@ -5,6 +5,7 @@ import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
   buildSourceBoundDocumentValidation,
+  finalizeSourceBoundResponsePipelineAttempt,
   prepareSourceBoundResponsePipeline,
   runSourceBoundResponsePipelineAttempt,
   VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY,
@@ -164,6 +165,52 @@ describe("verified extraction response pipeline", () => {
       result: { summary: { contributor_count: 1 } },
       missing_required_paths: [],
     });
+    expect(finalizeSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      attempt: result,
+    })).toEqual({
+      extraction_sha256: result.source_extraction.extraction_sha256,
+      result: result.source_extraction.result,
+      public_citations: result.source_extraction.public_citations,
+      workspace_state: {
+        publication: result.source_extraction.result.publication,
+        contributors: result.source_extraction.result.contributors,
+        summary: result.source_extraction.result.summary,
+        citations: Object.fromEntries(Object.entries(result.source_extraction.citation_evidence)
+          .map(([field, citation]) => [field, {
+            page: citation.public_citation.page,
+            quote: citation.public_citation.quote,
+            ...citation.workspace_citation,
+          }])),
+      },
+    });
+  });
+
+  it("fails closed when finalized source extraction drifts from its receipt or retained admissions", async () => {
+    const prepared = prepare();
+    const result = await runSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      invokeRequest: async () => artifact(response()),
+    });
+    const returnedDrift = structuredClone(result);
+    returnedDrift.receipt.source_extraction = structuredClone(result.receipt.source_extraction);
+    returnedDrift.source_extraction.result.publication.agency = "Substituted agency";
+    expect(() => finalizeSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      attempt: returnedDrift,
+    })).toThrow(/receipt and returned source extraction drifted/u);
+
+    const replayDrift = structuredClone(result);
+    replayDrift.source_extraction.workspace_citations["publication.agency"].start_utf8_byte += 1;
+    replayDrift.receipt.source_extraction = structuredClone(replayDrift.source_extraction);
+    expect(() => finalizeSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      attempt: replayDrift,
+    })).toThrow(/does not replay from retained admissions/u);
   });
 
   it("rejects missing, drifted, duplicated, or substituted source bindings before invocation", async () => {
@@ -247,6 +294,16 @@ describe("verified extraction response pipeline", () => {
       status: "incomplete",
       result: null,
     });
+    expect(() => finalizeSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      attempt: result,
+    })).toThrow(expect.objectContaining({
+      code: "incomplete_extraction",
+      missing_required_paths: [
+        "contributors", "publication.agency", "publication.publication_citation_excerpt", "summary.first_table",
+      ],
+    }));
   });
 
   it("derives the exact validation object rather than accepting caller-authored binding fields", () => {
@@ -264,7 +321,7 @@ describe("verified extraction response pipeline", () => {
   });
 
   it("remains internal experimental source", () => {
-    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.2.0-experimental");
+    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.3.0-experimental");
     expect(SERVER_FILES).not.toContain("verified-extraction-response-pipeline.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-pipeline.mjs");
   });

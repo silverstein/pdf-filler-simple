@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  materializeAdmittedSourceExtraction,
   prepareResponseAdmissionController,
   runResponseAdmissionControllerAttempt,
 } from "./verified-extraction-response-controller.mjs";
@@ -241,8 +242,52 @@ export async function runSourceBoundResponsePipelineAttempt({ prepared, document
   });
 }
 
+export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentChunks, attempt }) {
+  exactKeys(prepared, ["document_source_pages", "plan"], "prepared pipeline");
+  exactKeys(attempt, ["admissions", "receipt", "source_extraction"], "pipeline attempt");
+  assertion(attempt.receipt?.outcome?.classification === "completed",
+    "Only a completed response-controller attempt can be finalized");
+  assertion(canonicalJson(attempt.receipt.source_extraction)
+    === canonicalJson(attempt.source_extraction),
+  "Response-controller receipt and returned source extraction drifted");
+  const expected = materializeAdmittedSourceExtraction({
+    plan: prepared.plan,
+    admissions: attempt.admissions,
+    documentChunks,
+    documentSourcePages: prepared.document_source_pages,
+  });
+  assertion(canonicalJson(attempt.source_extraction) === canonicalJson(expected),
+    "Response-controller source extraction does not replay from retained admissions");
+  if (expected.status !== "complete") {
+    throw Object.assign(new Error("Required extraction paths remain unsupported"), {
+      code: "incomplete_extraction",
+      missing_required_paths: structuredClone(expected.missing_required_paths),
+      extraction_sha256: expected.extraction_sha256,
+    });
+  }
+  const citations = Object.fromEntries(Object.entries(expected.citation_evidence).map(([field, citation]) => [
+    field,
+    {
+      page: citation.public_citation.page,
+      quote: citation.public_citation.quote,
+      ...structuredClone(citation.workspace_citation),
+    },
+  ]));
+  return {
+    extraction_sha256: expected.extraction_sha256,
+    result: structuredClone(expected.result),
+    public_citations: structuredClone(expected.public_citations),
+    workspace_state: {
+      publication: structuredClone(expected.result.publication),
+      contributors: structuredClone(expected.result.contributors),
+      summary: structuredClone(expected.result.summary),
+      citations,
+    },
+  };
+}
+
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
-  version: "1.2.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, deterministically splits model batches until each multi-chunk request fits the frozen model-context upper bound, and retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Final selected values and citations come from the admitted canonical source-replay spans rather than a second incompatible chunk-text interpretation. It performs no model or provider call by itself.",
+  version: "1.3.0-experimental",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, deterministically splits model batches until each multi-chunk request fits the frozen model-context upper bound, and retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations without reinterpreting canonical source spans through a second incompatible chunk-text merge. It performs no model or provider call by itself.",
 });
