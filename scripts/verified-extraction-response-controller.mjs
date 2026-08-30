@@ -7,6 +7,12 @@ import {
   compareAdmittedCitationEvidence,
   ModelOutputAdmissionError,
 } from "./verified-extraction-response-admission.mjs";
+import {
+  buildSourceBoundExtractionRequest,
+  buildModelContextCapacityBinding,
+  ModelContextCapacityError,
+  observeSourceBoundExtractionRequestCapacity,
+} from "./verified-extraction-response-request.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
@@ -14,9 +20,10 @@ const PLAN_KEYS = [
   "attempt_id", "batch_chunk_ids", "batches", "benchmark_claim_ready", "contract", "denominator",
   "document_validation", "expected_model", "max_output_tokens", "plan_sha256", "trial_id",
 ];
-const CURRENT_CONTROLLER_VERSION = "1.4.0-experimental";
+const CURRENT_CONTROLLER_VERSION = "1.5.0-experimental";
 const REPLAYABLE_CONTROLLER_VERSIONS = new Set([
   "1.3.0-experimental",
+  "1.4.0-experimental",
   CURRENT_CONTROLLER_VERSION,
 ]);
 
@@ -87,7 +94,7 @@ function receiptWithDigest(receipt) {
 
 function prepareResponseAdmissionControllerForVersion({
   attemptId, trialId, predecessorRoleIds = [], documentValidation, documentChunks, documentSourcePages,
-  batchChunkIds, expectedModel, maxOutputTokens,
+  batchChunkIds, expectedModel, maxOutputTokens, contextWindowTokens,
 }, controllerVersion) {
   assertion(REPLAYABLE_CONTROLLER_VERSIONS.has(controllerVersion),
     "controller plan version is unsupported");
@@ -105,6 +112,14 @@ function prepareResponseAdmissionControllerForVersion({
   boundedString(expectedModel, "expectedModel", 512);
   assertion(Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0,
     "maxOutputTokens must be a positive integer");
+  const bindsModelContext = controllerVersion === CURRENT_CONTROLLER_VERSION;
+  if (bindsModelContext) {
+    assertion(Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > maxOutputTokens,
+      "contextWindowTokens must exceed maxOutputTokens");
+  } else {
+    assertion(contextWindowTokens === undefined,
+      "legacy controller plans cannot add a model-context binding");
+  }
   assertion(Array.isArray(documentChunks)
     && documentChunks.length === documentValidation.ordered_chunk_ids.length,
   "documentChunks does not match the frozen chunk denominator");
@@ -117,6 +132,10 @@ function prepareResponseAdmissionControllerForVersion({
   assertion(canonicalJson(batchChunkIds.flat()) === canonicalJson(documentValidation.ordered_chunk_ids),
     "batchChunkIds must cover the exact ordered full chunk scope once");
 
+  const modelContext = bindsModelContext ? buildModelContextCapacityBinding({
+    model: expectedModel,
+    contextWindowTokens,
+  }) : null;
   const batches = batchChunkIds.map((chunkIds, index) => {
     const policy = classifySourceBoundBatch({
       documentId: documentValidation.document_id,
@@ -133,6 +152,22 @@ function prepareResponseAdmissionControllerForVersion({
     const policyKinds = new Set(policy.chunk_policies.map(item => item.evidence_admission));
     assertion(policyKinds.size === 1,
       "a batch cannot cross the source-evidence/reference-section boundary");
+    const action = policy.model_call_recommended ? "model_call" : "skip_reference_section";
+    const contextCapacityObservation = bindsModelContext && action === "model_call"
+      ? observeSourceBoundExtractionRequestCapacity({
+          request: buildSourceBoundExtractionRequest({
+            model: expectedModel,
+            maxOutputTokens,
+            schema,
+            documentChunks,
+            documentTableRegions: documentValidation.table_regions,
+            documentSourcePages,
+            batchPolicy: policy,
+            batchChunkIds: chunkIds,
+          }),
+          contextBinding: modelContext,
+        })
+      : null;
     return {
       batch_ordinal: index + 1,
       chunk_ids: [...chunkIds],
@@ -140,7 +175,8 @@ function prepareResponseAdmissionControllerForVersion({
       policy_sha256: sha256(Buffer.from(canonicalJson(policy), "utf8")),
       schema,
       schema_sha256: sha256(Buffer.from(canonicalJson(schema), "utf8")),
-      action: policy.model_call_recommended ? "model_call" : "skip_reference_section",
+      action,
+      ...(bindsModelContext ? { context_capacity_observation: contextCapacityObservation } : {}),
     };
   });
   let referenceSeen = false;
@@ -159,6 +195,7 @@ function prepareResponseAdmissionControllerForVersion({
     batches,
     expected_model: expectedModel,
     max_output_tokens: maxOutputTokens,
+    ...(bindsModelContext ? { model_context: modelContext } : {}),
     denominator: {
       document_chunks: documentChunks.length,
       batches: batches.length,
@@ -178,7 +215,8 @@ export function prepareResponseAdmissionController(options) {
 }
 
 export function validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages }) {
-  exactKeys(plan, PLAN_KEYS, "plan");
+  const currentPlan = plan?.contract?.version === CURRENT_CONTROLLER_VERSION;
+  exactKeys(plan, currentPlan ? [...PLAN_KEYS, "model_context"] : PLAN_KEYS, "plan");
   exactKeys(plan.contract, ["name", "version"], "plan.contract");
   assertion(plan.contract.name === "pdf-tools.verified-extraction-response-controller"
     && REPLAYABLE_CONTROLLER_VERSIONS.has(plan.contract.version),
@@ -195,6 +233,7 @@ export function validateResponseAdmissionControllerPlan({ plan, documentChunks, 
     batchChunkIds: plan.batch_chunk_ids,
     expectedModel: plan.expected_model,
     maxOutputTokens: plan.max_output_tokens,
+    contextWindowTokens: currentPlan ? plan.model_context?.context_window_tokens : undefined,
   }, plan.contract.version);
   assertion(canonicalJson(rebuilt) === canonicalJson(plan), "plan drifted from the exact document chunks");
   return plan;
@@ -411,7 +450,8 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         admission_sha256: admissionSha256,
       });
     } catch (error) {
-      const typed = error instanceof ModelOutputAdmissionError;
+      const typed = error instanceof ModelOutputAdmissionError
+        || error instanceof ModelContextCapacityError;
       const failure = {
         classification: typed ? "product_failure" : "harness_failure",
         reason_code: typed ? error.code : "controller_failure",
@@ -476,5 +516,5 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
   version: CURRENT_CONTROLLER_VERSION,
-  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips the reference-section suffix before invocation, isolates typed batch rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
+  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, the model context capacity, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips the reference-section suffix before invocation, isolates typed response or pre-invocation context-capacity rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
 });

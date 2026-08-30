@@ -187,6 +187,22 @@ forged, substituted, ambiguous, or drifted evidence still rejects before
 materialization. This is a source-only correction over preserved evidence; it
 does not retry V20, authorize another campaign, or qualify integration.
 
+V20 also retained one fatal local-model context failure: a 32,976-token prompt
+reached a runtime frozen at 32,768 tokens while the request reserved additional
+output. Current response plans bind the exact model context and a conservative
+two-message capacity policy. The pipeline measures the canonical UTF-8 request
+shape with a one-token-per-byte upper bound plus a fixed frozen-chat-template
+ceiling, adds the full reserved output, and deterministically splits contiguous
+multi-chunk batches until they fit. It repeats the exact capacity observation
+immediately before invocation. If even one chunk cannot fit, the batch is
+retained as a typed `model_context_capacity_exceeded` product failure with zero
+model calls; later frozen batches and the document denominator remain intact.
+The byte upper bound intentionally favors fail-closed extra splitting over an
+ambient tokenizer or an endpoint-side token-count probe. Its two-message shape,
+model identity, context, estimator, template ceiling, request digest and output
+reservation are all digest-bound. This source repair does not retry V20 or
+authorize a new campaign.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that

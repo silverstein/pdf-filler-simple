@@ -119,6 +119,7 @@ const prepare = overrides => prepareSourceBoundResponsePipeline({
   batchChunkIds: [[chunkId("a"), chunkId("b")], [chunkId("c")]],
   expectedModel,
   maxOutputTokens: 4096,
+  contextWindowTokens: 32768,
   ...overrides,
 });
 
@@ -200,6 +201,54 @@ describe("verified extraction response pipeline", () => {
     expect(invokeRequest).not.toHaveBeenCalled();
   });
 
+  it("splits an oversized multi-chunk request at deterministic chunk boundaries", () => {
+    const wideCombined = prepare({ contextWindowTokens: 100000 });
+    const wideSingles = prepare({
+      contextWindowTokens: 100000,
+      batchChunkIds: [[chunkId("a")], [chunkId("b")], [chunkId("c")]],
+    });
+    const singleCeiling = Math.max(
+      wideSingles.plan.batches[0].context_capacity_observation.required_context_tokens_upper_bound,
+      wideSingles.plan.batches[1].context_capacity_observation.required_context_tokens_upper_bound,
+    );
+    expect(wideCombined.plan.batches[0].context_capacity_observation
+      .required_context_tokens_upper_bound).toBeGreaterThan(singleCeiling);
+    const fitted = prepare({ contextWindowTokens: singleCeiling });
+    expect(fitted.plan.batch_chunk_ids).toEqual([
+      [chunkId("a")], [chunkId("b")], [chunkId("c")],
+    ]);
+    expect(fitted.plan.batches.slice(0, 2).every(batch => (
+      batch.context_capacity_observation.fits
+    ))).toBe(true);
+  });
+
+  it("retains a typed zero-call rejection when one chunk cannot fit", async () => {
+    const prepared = prepare({
+      contextWindowTokens: 4097,
+      batchChunkIds: [[chunkId("a")], [chunkId("b")], [chunkId("c")]],
+    });
+    const invokeRequest = vi.fn();
+    const result = await runSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      invokeRequest,
+    });
+    expect(invokeRequest).not.toHaveBeenCalled();
+    expect(result.receipt).toMatchObject({
+      outcome: { classification: "completed", reason_code: "typed_batch_rejections" },
+      observed: { model_calls: 0, typed_rejected_batches: 2, skipped_reference_batches: 1 },
+      benchmark_claim_ready: false,
+    });
+    expect(result.receipt.batch_outcomes.slice(0, 2)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "model_context_capacity_exceeded", model_call_count: 0,
+        response_observation: expect.objectContaining({ fits: false, model_or_provider_calls_made: 0 }) }),
+    ]));
+    expect(result.source_extraction).toMatchObject({
+      status: "incomplete",
+      result: null,
+    });
+  });
+
   it("derives the exact validation object rather than accepting caller-authored binding fields", () => {
     const validation = buildSourceBoundDocumentValidation({
       documentId,
@@ -215,7 +264,7 @@ describe("verified extraction response pipeline", () => {
   });
 
   it("remains internal experimental source", () => {
-    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.1.0-experimental");
+    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.2.0-experimental");
     expect(SERVER_FILES).not.toContain("verified-extraction-response-pipeline.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-pipeline.mjs");
   });

@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
+  buildModelContextCapacityBinding,
   buildSourceBoundExtractionRequest,
+  ModelContextCapacityError,
+  observeSourceBoundExtractionRequestCapacity,
+  preflightSourceBoundExtractionRequest,
+  VERIFIED_EXTRACTION_CONTEXT_CAPACITY_POLICY,
   VERIFIED_EXTRACTION_REQUEST_MODE,
 } from "../scripts/verified-extraction-response-request.mjs";
 import {
@@ -196,8 +201,73 @@ describe("verified extraction response request", () => {
     })).toThrow(/prompt byte limit/u);
   });
 
+  it("enforces a deterministic model-bound context ceiling before invocation", () => {
+    const request = buildSourceBoundExtractionRequest({
+      model: "local-public-safe-model",
+      maxOutputTokens: 4096,
+      schema: buildVerifiedExtractionProposalSchema(),
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      batchPolicy: batchPolicy(chunks.map(item => item.chunk_id)),
+      batchChunkIds: chunks.map(item => item.chunk_id),
+    });
+    const wide = buildModelContextCapacityBinding({
+      model: request.model,
+      contextWindowTokens: 100000,
+    });
+    const observed = observeSourceBoundExtractionRequestCapacity({ request, contextBinding: wide });
+    expect(observed).toMatchObject({ fits: true, reserved_output_tokens: 4096,
+      model_or_provider_calls_made: 0 });
+    expect(observed.observation_sha256).toMatch(/^[a-f0-9]{64}$/u);
+
+    const exact = buildModelContextCapacityBinding({
+      model: request.model,
+      contextWindowTokens: observed.required_context_tokens_upper_bound,
+    });
+    expect(preflightSourceBoundExtractionRequest({ request, contextBinding: exact }).fits).toBe(true);
+    const short = buildModelContextCapacityBinding({
+      model: request.model,
+      contextWindowTokens: observed.required_context_tokens_upper_bound - 1,
+    });
+    expect(() => preflightSourceBoundExtractionRequest({ request, contextBinding: short }))
+      .toThrow(ModelContextCapacityError);
+    const injectedMessage = structuredClone(request);
+    injectedMessage.messages.push({ role: "assistant", content: "unplanned template turn" });
+    expect(() => preflightSourceBoundExtractionRequest({ request: injectedMessage, contextBinding: wide }))
+      .toThrow();
+  });
+
+  it("counts exact UTF-8 request bytes for multibyte prompt content", () => {
+    const request = buildSourceBoundExtractionRequest({
+      model: "local-public-safe-model",
+      maxOutputTokens: 4096,
+      schema: buildVerifiedExtractionProposalSchema(),
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      batchPolicy: batchPolicy(chunks.map(item => item.chunk_id)),
+      batchChunkIds: chunks.map(item => item.chunk_id),
+    });
+    const binding = buildModelContextCapacityBinding({ model: request.model, contextWindowTokens: 100000 });
+    const ascii = structuredClone(request);
+    ascii.messages[1].content += "aaa";
+    const multibyte = structuredClone(request);
+    multibyte.messages[1].content += "é😀";
+    const asciiObservation = observeSourceBoundExtractionRequestCapacity({ request: ascii,
+      contextBinding: binding });
+    const multibyteObservation = observeSourceBoundExtractionRequestCapacity({ request: multibyte,
+      contextBinding: binding });
+    expect(multibyteObservation.request_utf8_bytes - asciiObservation.request_utf8_bytes).toBe(3);
+    expect(multibyteObservation.prompt_tokens_upper_bound - asciiObservation.prompt_tokens_upper_bound).toBe(3);
+  });
+
   it("remains internal experimental source", () => {
     expect(VERIFIED_EXTRACTION_REQUEST_MODE).toBe("prompted_json_with_exact_chunk_page_metadata");
+    expect(VERIFIED_EXTRACTION_CONTEXT_CAPACITY_POLICY).toMatchObject({
+      estimator: "utf8_request_bytes_plus_fixed_chat_template_ceiling",
+      maximum_prompt_tokens_per_request_utf8_byte: 1,
+    });
     expect(SERVER_FILES).not.toContain("verified-extraction-response-request.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-request.mjs");
   });

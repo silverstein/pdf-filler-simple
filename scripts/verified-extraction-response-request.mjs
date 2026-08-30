@@ -7,11 +7,101 @@ import {
 } from "./verified-extraction-response-admission.mjs";
 
 export const VERIFIED_EXTRACTION_REQUEST_MODE = "prompted_json_with_exact_chunk_page_metadata";
+export const VERIFIED_EXTRACTION_CONTEXT_CAPACITY_POLICY = Object.freeze({
+  name: "pdf-tools.model-context-capacity",
+  version: 1,
+  estimator: "utf8_request_bytes_plus_fixed_chat_template_ceiling",
+  maximum_prompt_tokens_per_request_utf8_byte: 1,
+  chat_template_overhead_token_ceiling: 512,
+});
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MAX_CANONICAL_SOURCE_PAGE_PROMPT_BYTES = 48 * 1024;
 const MAX_CANONICAL_SOURCE_PROMPT_BYTES = 96 * 1024;
 const sha256 = value => createHash("sha256").update(value).digest("hex");
+const canonicalJson = value => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
+  : value && typeof value === "object"
+    ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+
+export class ModelContextCapacityError extends Error {
+  constructor(observation) {
+    super(`Model request capacity upper bound ${observation.required_context_tokens_upper_bound}`
+      + ` exceeds context ${observation.context_window_tokens}`);
+    this.name = "ModelContextCapacityError";
+    this.code = "model_context_capacity_exceeded";
+    this.observation = structuredClone(observation);
+  }
+}
+
+export function buildModelContextCapacityBinding({ model, contextWindowTokens }) {
+  assert.equal(typeof model, "string");
+  assert.ok(model.length > 0);
+  assert.ok(Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > 0);
+  const body = {
+    contract: { name: "pdf-tools.model-context-capacity-binding", version: 1 },
+    model,
+    context_window_tokens: contextWindowTokens,
+    policy: structuredClone(VERIFIED_EXTRACTION_CONTEXT_CAPACITY_POLICY),
+  };
+  return {
+    ...body,
+    binding_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
+  };
+}
+
+export function observeSourceBoundExtractionRequestCapacity({ request, contextBinding }) {
+  assert.deepEqual(Object.keys(request).sort(), [
+    "max_tokens", "messages", "model", "seed", "stream", "temperature", "top_p",
+  ]);
+  assert.deepEqual(Object.keys(contextBinding).sort(), [
+    "binding_sha256", "context_window_tokens", "contract", "model", "policy",
+  ]);
+  const rebuiltBinding = buildModelContextCapacityBinding({
+    model: contextBinding.model,
+    contextWindowTokens: contextBinding.context_window_tokens,
+  });
+  assert.deepEqual(contextBinding, rebuiltBinding);
+  assert.equal(request.model, contextBinding.model);
+  assert.ok(Number.isSafeInteger(request.max_tokens) && request.max_tokens > 0);
+  assert.ok(Array.isArray(request.messages) && request.messages.length === 2);
+  request.messages.forEach((message, index) => {
+    assert.deepEqual(Object.keys(message).sort(), ["content", "role"]);
+    assert.equal(message.role, index === 0 ? "system" : "user");
+    assert.equal(typeof message.content, "string");
+  });
+  const requestPromptShape = { model: request.model, messages: request.messages };
+  const requestUtf8Bytes = Buffer.byteLength(canonicalJson(requestPromptShape), "utf8");
+  const promptTokensUpperBound = requestUtf8Bytes
+    * contextBinding.policy.maximum_prompt_tokens_per_request_utf8_byte
+    + contextBinding.policy.chat_template_overhead_token_ceiling;
+  const requiredContextTokensUpperBound = promptTokensUpperBound + request.max_tokens;
+  const body = {
+    contract: { name: "pdf-tools.model-context-capacity-observation", version: 1 },
+    context_binding_sha256: contextBinding.binding_sha256,
+    model: request.model,
+    request_sha256: sha256(Buffer.from(canonicalJson(request), "utf8")),
+    request_utf8_bytes: requestUtf8Bytes,
+    prompt_tokens_upper_bound: promptTokensUpperBound,
+    reserved_output_tokens: request.max_tokens,
+    required_context_tokens_upper_bound: requiredContextTokensUpperBound,
+    context_window_tokens: contextBinding.context_window_tokens,
+    fits: requiredContextTokensUpperBound <= contextBinding.context_window_tokens,
+    estimator: contextBinding.policy.estimator,
+    model_or_provider_calls_made: 0,
+  };
+  const observation = {
+    ...body,
+    observation_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
+  };
+  return observation;
+}
+
+export function preflightSourceBoundExtractionRequest({ request, contextBinding }) {
+  const observation = observeSourceBoundExtractionRequestCapacity({ request, contextBinding });
+  if (!observation.fits) throw new ModelContextCapacityError(observation);
+  return observation;
+}
 
 export function buildSourceBoundExtractionRequest({
   model,

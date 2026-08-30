@@ -103,6 +103,7 @@ const artifact = bytes => ({
 });
 const prepareController = overrides => prepareResponseAdmissionController({
   documentSourcePages: sourcePages,
+  contextWindowTokens: 32768,
   ...overrides,
 });
 const runController = overrides => runResponseAdmissionControllerAttempt({
@@ -122,6 +123,7 @@ const plan = () => prepareController({
   batchChunkIds: [[chunkId("a"), chunkId("b")], [chunkId("c")]],
   expectedModel,
   maxOutputTokens: 4096,
+  contextWindowTokens: 32768,
 });
 
 describe("verified extraction response controller", () => {
@@ -452,17 +454,21 @@ describe("verified extraction response controller", () => {
     const result = await runController({
       plan: currentPlan, documentChunks: chunks, invokeBatch: async () => artifact(response()),
     });
-    const legacyPlan = structuredClone(currentPlan);
-    legacyPlan.contract.version = "1.3.0-experimental";
-    delete legacyPlan.plan_sha256;
-    legacyPlan.plan_sha256 = sha(canonicalJson(legacyPlan));
-    expect(validateControllerPlan({ plan: legacyPlan, documentChunks: chunks })).toBe(legacyPlan);
-    expect(materializeAdmittedSourceExtraction({
-      plan: legacyPlan,
-      admissions: result.admissions,
-      documentChunks: chunks,
-      documentSourcePages: sourcePages,
-    })).toMatchObject({ status: "complete", missing_required_paths: [] });
+    for (const version of ["1.3.0-experimental", "1.4.0-experimental"]) {
+      const legacyPlan = structuredClone(currentPlan);
+      legacyPlan.contract.version = version;
+      delete legacyPlan.model_context;
+      legacyPlan.batches.forEach(batch => { delete batch.context_capacity_observation; });
+      delete legacyPlan.plan_sha256;
+      legacyPlan.plan_sha256 = sha(canonicalJson(legacyPlan));
+      expect(validateControllerPlan({ plan: legacyPlan, documentChunks: chunks })).toBe(legacyPlan);
+      expect(materializeAdmittedSourceExtraction({
+        plan: legacyPlan,
+        admissions: result.admissions,
+        documentChunks: chunks,
+        documentSourcePages: sourcePages,
+      })).toMatchObject({ status: "complete", missing_required_paths: [] });
+    }
     expect(prepareController({
       attemptId: "fresh-version-check",
       trialId: "fresh-version-check-trial",
@@ -471,7 +477,8 @@ describe("verified extraction response controller", () => {
       batchChunkIds: [[chunkId("a"), chunkId("b")], [chunkId("c")]],
       expectedModel,
       maxOutputTokens: 4096,
-    }).contract.version).toBe("1.4.0-experimental");
+      contextWindowTokens: 32768,
+    }).contract.version).toBe("1.5.0-experimental");
   });
 
   it("retains an invocation/controller failure without inventing a model call", async () => {
@@ -499,6 +506,14 @@ describe("verified extraction response controller", () => {
     const drifted = plan();
     drifted.document_validation.document_map_sha256 = "8".repeat(64);
     expect(() => validateControllerPlan({ plan: drifted, documentChunks: chunks })).toThrow();
+    const contextDrift = plan();
+    contextDrift.model_context.context_window_tokens += 1;
+    delete contextDrift.model_context.binding_sha256;
+    contextDrift.model_context.binding_sha256 = sha(canonicalJson(contextDrift.model_context));
+    delete contextDrift.plan_sha256;
+    contextDrift.plan_sha256 = sha(canonicalJson(contextDrift));
+    expect(() => validateControllerPlan({ plan: contextDrift, documentChunks: chunks }))
+      .toThrow(/drifted from the exact document chunks/u);
     const bytes = response();
     const wrongArtifact = artifact(bytes);
     wrongArtifact.raw_response_artifact.sha256 = "7".repeat(64);

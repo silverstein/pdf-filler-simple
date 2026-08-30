@@ -4,8 +4,18 @@ import {
   prepareResponseAdmissionController,
   runResponseAdmissionControllerAttempt,
 } from "./verified-extraction-response-controller.mjs";
-import { validateNormalizedSourcePageBundle } from "./verified-extraction-response-admission.mjs";
-import { buildSourceBoundExtractionRequest } from "./verified-extraction-response-request.mjs";
+import {
+  buildVerifiedExtractionProposalSchema,
+  classifySourceBoundBatch,
+  validateNormalizedSourcePageBundle,
+} from "./verified-extraction-response-admission.mjs";
+import {
+  buildModelContextCapacityBinding,
+  buildSourceBoundExtractionRequest,
+  ModelContextCapacityError,
+  observeSourceBoundExtractionRequestCapacity,
+  preflightSourceBoundExtractionRequest,
+} from "./verified-extraction-response-request.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
@@ -35,6 +45,52 @@ function withoutKey(value, key) {
   const copy = structuredClone(value);
   delete copy[key];
   return copy;
+}
+
+function fitBatchChunkIdsToModelContext({ documentValidation, documentChunks, documentSourcePages,
+  batchChunkIds, expectedModel, maxOutputTokens, contextWindowTokens }) {
+  assertion(Array.isArray(batchChunkIds) && batchChunkIds.length > 0,
+    "batchChunkIds must be a non-empty array");
+  const contextBinding = buildModelContextCapacityBinding({
+    model: expectedModel,
+    contextWindowTokens,
+  });
+  const fitted = [];
+  const fit = chunkIds => {
+    const policy = classifySourceBoundBatch({
+      documentId: documentValidation.document_id,
+      documentMapSha256: documentValidation.document_map_sha256,
+      sourceSha256: documentValidation.source_sha256,
+      documentChunks,
+      documentTableRegions: documentValidation.table_regions,
+      documentSourcePages,
+      batchChunkIds: chunkIds,
+    });
+    if (!policy.model_call_recommended) {
+      fitted.push([...chunkIds]);
+      return;
+    }
+    const request = buildSourceBoundExtractionRequest({
+      model: expectedModel,
+      maxOutputTokens,
+      schema: buildVerifiedExtractionProposalSchema({ allowedFields: policy.allowed_fields }),
+      documentChunks,
+      documentTableRegions: documentValidation.table_regions,
+      documentSourcePages,
+      batchPolicy: policy,
+      batchChunkIds: chunkIds,
+    });
+    const observation = observeSourceBoundExtractionRequestCapacity({ request, contextBinding });
+    if (observation.fits || chunkIds.length === 1) {
+      fitted.push([...chunkIds]);
+      return;
+    }
+    const midpoint = Math.ceil(chunkIds.length / 2);
+    fit(chunkIds.slice(0, midpoint));
+    fit(chunkIds.slice(midpoint));
+  };
+  batchChunkIds.forEach(fit);
+  return fitted;
 }
 
 export function buildSourceBoundDocumentValidation({ documentId, documentMap, documentChunks,
@@ -107,12 +163,22 @@ export function prepareSourceBoundResponsePipeline({
   batchChunkIds,
   expectedModel,
   maxOutputTokens,
+  contextWindowTokens,
 }) {
   const documentValidation = buildSourceBoundDocumentValidation({
     documentId,
     documentMap,
     documentChunks,
     documentSourcePages,
+  });
+  const fittedBatchChunkIds = fitBatchChunkIdsToModelContext({
+    documentValidation,
+    documentChunks,
+    documentSourcePages,
+    batchChunkIds,
+    expectedModel,
+    maxOutputTokens,
+    contextWindowTokens,
   });
   const plan = prepareResponseAdmissionController({
     attemptId,
@@ -121,9 +187,10 @@ export function prepareSourceBoundResponsePipeline({
     documentValidation,
     documentChunks,
     documentSourcePages,
-    batchChunkIds,
+    batchChunkIds: fittedBatchChunkIds,
     expectedModel,
     maxOutputTokens,
+    contextWindowTokens,
   });
   return {
     plan,
@@ -149,13 +216,33 @@ export async function runSourceBoundResponsePipelineAttempt({ prepared, document
         batchPolicy: batch.policy,
         batchChunkIds: batch.chunk_ids,
       });
-      return invokeRequest({ batch: structuredClone(batch), request });
+      let contextCapacityObservation;
+      try {
+        contextCapacityObservation = preflightSourceBoundExtractionRequest({
+          request,
+          contextBinding: prepared.plan.model_context,
+        });
+      } catch (error) {
+        if (!(error instanceof ModelContextCapacityError)) throw error;
+        assertion(canonicalJson(error.observation)
+          === canonicalJson(batch.context_capacity_observation),
+        "runtime context-capacity rejection drifted from the frozen batch plan");
+        throw error;
+      }
+      assertion(canonicalJson(contextCapacityObservation)
+        === canonicalJson(batch.context_capacity_observation),
+      "runtime context-capacity observation drifted from the frozen batch plan");
+      return invokeRequest({
+        batch: structuredClone(batch),
+        request,
+        context_capacity_observation: contextCapacityObservation,
+      });
     },
   });
 }
 
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
-  version: "1.1.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, passes that same bundle through plan validation, response admission, and final source materialization, and constructs every model request with the controller-frozen batch policy. Final selected values and citations come from the admitted canonical source-replay spans rather than a second incompatible chunk-text interpretation. It performs no model or provider call by itself.",
+  version: "1.2.0-experimental",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, deterministically splits model batches until each multi-chunk request fits the frozen model-context upper bound, and retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Final selected values and citations come from the admitted canonical source-replay spans rather than a second incompatible chunk-text interpretation. It performs no model or provider call by itself.",
 });
