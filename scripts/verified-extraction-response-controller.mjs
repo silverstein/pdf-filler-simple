@@ -13,6 +13,7 @@ import {
   ModelContextCapacityError,
   observeSourceBoundExtractionRequestCapacity,
 } from "./verified-extraction-response-request.mjs";
+import { validateSchemaDirectedEvidencePlan } from "./verified-extraction-evidence-router.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
@@ -20,17 +21,20 @@ const PLAN_KEYS = [
   "attempt_id", "batch_chunk_ids", "batches", "benchmark_claim_ready", "contract", "denominator",
   "document_validation", "expected_model", "max_output_tokens", "plan_sha256", "trial_id",
 ];
-const CURRENT_CONTROLLER_VERSION = "1.6.0-experimental";
+const CURRENT_CONTROLLER_VERSION = "1.7.0-experimental";
 const REPLAYABLE_CONTROLLER_VERSIONS = new Set([
   "1.3.0-experimental",
   "1.4.0-experimental",
   "1.5.0-experimental",
+  "1.6.0-experimental",
   CURRENT_CONTROLLER_VERSION,
 ]);
 const MODEL_CONTEXT_CONTROLLER_VERSIONS = new Set([
   "1.5.0-experimental",
+  "1.6.0-experimental",
   CURRENT_CONTROLLER_VERSION,
 ]);
+const ROUTED_CONTROLLER_VERSIONS = new Set([CURRENT_CONTROLLER_VERSION]);
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -87,6 +91,34 @@ function validateRawResponseArtifact(value, responseBytes) {
     "rawResponseArtifact.sha256 does not match the exact response");
 }
 
+function validateDocumentRouting(value, documentValidation, documentChunks, documentSourcePages,
+  selectedChunkIds) {
+  validateSchemaDirectedEvidencePlan({
+    plan: value,
+    documentChunks,
+    documentTableRegions: documentValidation.table_regions,
+    documentSourcePages,
+  });
+  assertion(value.document_id === documentValidation.document_id
+    && value.document_map_sha256 === documentValidation.document_map_sha256
+    && value.source_sha256 === documentValidation.source_sha256
+    && value.source_page_text_bundle_sha256 === documentValidation.source_page_text_bundle_sha256,
+  "documentRouting identity drifted from the frozen document validation");
+  assertion(value.total_chunk_count === documentChunks.length,
+    "documentRouting total chunk denominator drifted");
+  assertion(Array.isArray(value.selected_chunk_ids) && value.selected_chunk_ids.length > 0
+    && canonicalJson(value.selected_chunk_ids) === canonicalJson(selectedChunkIds),
+  "documentRouting selected chunk scope drifted");
+  const position = new Map(documentValidation.ordered_chunk_ids.map((chunkId, index) => [chunkId, index]));
+  let previous = -1;
+  for (const chunkId of value.selected_chunk_ids) {
+    const current = position.get(chunkId);
+    assertion(Number.isSafeInteger(current) && current > previous,
+      "documentRouting must be a unique ordered subset of the frozen chunk denominator");
+    previous = current;
+  }
+}
+
 function planWithoutDigest(plan) {
   const copy = structuredClone(plan);
   delete copy.plan_sha256;
@@ -99,7 +131,7 @@ function receiptWithDigest(receipt) {
 
 function prepareResponseAdmissionControllerForVersion({
   attemptId, trialId, predecessorRoleIds = [], documentValidation, documentChunks, documentSourcePages,
-  batchChunkIds, expectedModel, maxOutputTokens, contextWindowTokens,
+  batchChunkIds, expectedModel, maxOutputTokens, contextWindowTokens, documentRouting,
 }, controllerVersion) {
   assertion(REPLAYABLE_CONTROLLER_VERSIONS.has(controllerVersion),
     "controller plan version is unsupported");
@@ -134,8 +166,17 @@ function prepareResponseAdmissionControllerForVersion({
   assertion(Array.isArray(batchChunkIds) && batchChunkIds.length > 0
     && batchChunkIds.every(batch => Array.isArray(batch) && batch.length > 0),
   "batchChunkIds must contain non-empty batches");
-  assertion(canonicalJson(batchChunkIds.flat()) === canonicalJson(documentValidation.ordered_chunk_ids),
-    "batchChunkIds must cover the exact ordered full chunk scope once");
+  const selectedChunkIds = batchChunkIds.flat();
+  const bindsDocumentRouting = ROUTED_CONTROLLER_VERSIONS.has(controllerVersion);
+  if (bindsDocumentRouting && documentRouting !== undefined && documentRouting !== null) {
+    validateDocumentRouting(documentRouting, documentValidation, documentChunks, documentSourcePages,
+      selectedChunkIds);
+  } else {
+    assertion(documentRouting === undefined || (bindsDocumentRouting && documentRouting === null),
+      "legacy controller plans cannot add a document-routing binding");
+    assertion(canonicalJson(selectedChunkIds) === canonicalJson(documentValidation.ordered_chunk_ids),
+      "batchChunkIds must cover the exact ordered full chunk scope once");
+  }
 
   const modelContext = bindsModelContext ? buildModelContextCapacityBinding({
     model: expectedModel,
@@ -203,8 +244,14 @@ function prepareResponseAdmissionControllerForVersion({
     expected_model: expectedModel,
     max_output_tokens: maxOutputTokens,
     ...(bindsModelContext ? { model_context: modelContext } : {}),
+    ...(bindsDocumentRouting ? { document_routing: documentRouting === undefined
+      ? null : structuredClone(documentRouting) } : {}),
     denominator: {
       document_chunks: documentChunks.length,
+      ...(bindsDocumentRouting ? {
+        routed_chunks: selectedChunkIds.length,
+        unrouted_chunks: documentChunks.length - selectedChunkIds.length,
+      } : {}),
       batches: batches.length,
       model_batches: modelBatches.length,
       reference_skipped_batches: referenceBatches.length,
@@ -223,7 +270,12 @@ export function prepareResponseAdmissionController(options) {
 
 export function validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages }) {
   const bindsModelContext = MODEL_CONTEXT_CONTROLLER_VERSIONS.has(plan?.contract?.version);
-  exactKeys(plan, bindsModelContext ? [...PLAN_KEYS, "model_context"] : PLAN_KEYS, "plan");
+  const bindsDocumentRouting = ROUTED_CONTROLLER_VERSIONS.has(plan?.contract?.version);
+  exactKeys(plan, [
+    ...PLAN_KEYS,
+    ...(bindsModelContext ? ["model_context"] : []),
+    ...(bindsDocumentRouting ? ["document_routing"] : []),
+  ], "plan");
   exactKeys(plan.contract, ["name", "version"], "plan.contract");
   assertion(plan.contract.name === "pdf-tools.verified-extraction-response-controller"
     && REPLAYABLE_CONTROLLER_VERSIONS.has(plan.contract.version),
@@ -241,6 +293,7 @@ export function validateResponseAdmissionControllerPlan({ plan, documentChunks, 
     expectedModel: plan.expected_model,
     maxOutputTokens: plan.max_output_tokens,
     contextWindowTokens: bindsModelContext ? plan.model_context?.context_window_tokens : undefined,
+    documentRouting: bindsDocumentRouting ? plan.document_routing : undefined,
   }, plan.contract.version);
   assertion(canonicalJson(rebuilt) === canonicalJson(plan), "plan drifted from the exact document chunks");
   return plan;
@@ -523,5 +576,5 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-controller",
   version: CURRENT_CONTROLLER_VERSION,
-  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, the model context capacity, and the complete ordered chunk denominator. It permits first-table proposals only in the batch containing the first classified actual data table, skips each reference-section span before invocation while allowing a later explicit appendix to reopen source eligibility, isolates typed response or pre-invocation context-capacity rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
+  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, the model context capacity, and the complete ordered chunk denominator. Current plans may additionally bind a schema-directed routing plan whose selected chunks must be a unique ordered subset of that denominator; both routed and unrouted chunk counts remain explicit. Without that binding, callers must still cover the full chunk scope exactly once. It permits first-table proposals only in the batch containing the first classified actual data table, skips each reference-section span before invocation while allowing a later explicit appendix to reopen source eligibility, isolates typed response or pre-invocation context-capacity rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
 });

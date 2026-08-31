@@ -968,6 +968,36 @@ start and completion timestamps independently for every call, and execute the
 native-host matrix below. Synthetic calibration records cannot satisfy any of
 those prerequisites.
 
+## Schema-directed verified-extraction routing
+
+The experimental verified-extraction pipeline does not treat every document
+chunk as equally relevant to every schema. Its schema-directed entrypoint first
+builds a deterministic evidence plan from the retained document map and
+canonical source-page bundle. For the current publication schema, the plan
+selects only the labeled or source-identified front-matter publication-citation
+page, an earlier credited-name page, and the earliest classified
+actual-data-table page. Reference-section chunks are ineligible. The response
+controller retains the complete document
+chunk denominator while separately binding the routed and unrouted counts, and
+it rejects a routing plan that cannot be rebuilt from the exact retained source
+evidence.
+
+A zero-inference private replay over the 30-document development corpus reduced
+the worst-case context-split request count from the approximately 590 calls
+projected for near-exhaustive coverage to 108 routed calls. On the 11 completed
+results available from the consumed predecessor run, deterministic source-bound
+projection produced 11 semantically valid results and replayed all 74 citation
+obligations under the private source-replay-v2 contract. The older exact-window
+diagnostic matched 21 of those 74 citations; it remains a secondary diagnostic
+because a different literal source span can support the same value.
+
+These are internal product-development measurements, not a rerun campaign or a
+public benchmark. The router and projection perform no model or provider call,
+do not read the private truth or citation oracle while choosing evidence, and
+retain `benchmark_claim_ready: false`. A future measured campaign must freeze
+the exact router/controller bytes and demonstrate its own complete receipts,
+resource usage, and private score before any integration or performance claim.
+
 Each trial set includes an invocation run plan that defines the denominator
 before execution. The plan binds the trial-set ID, suite ID and digest, claim
 boundary, semantic operation, fixture instance, and seed. Its signature uses a

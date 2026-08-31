@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
+import { buildSchemaDirectedEvidencePlan } from "../scripts/verified-extraction-evidence-router.mjs";
 import {
   materializeAdmittedSourceExtraction,
   prepareResponseAdmissionController,
@@ -25,7 +26,7 @@ const publication = "Suggested citation: River, A.B., 2025, A public-safe report
 const chunk = value => ({ ...value, content_sha256: sha(Buffer.from(value.content, "utf8")) });
 const chunks = [
   chunk({ document_id: documentId, chunk_id: chunkId("a"), page_range: { start_page: 1, end_page: 1 },
-    starts_at_heading: true, content: "TITLE\nU.S. Geological Survey\nRiver, A.B.\nTable 1. Summary values" }),
+    starts_at_heading: true, content: "TITLE\nBy Alice B. River\nU.S. Geological Survey\nRiver, A.B.\nTable 1. Summary values" }),
   chunk({ document_id: documentId, chunk_id: chunkId("b"), page_range: { start_page: 2, end_page: 2 },
     starts_at_heading: false, content: publication }),
   chunk({ document_id: documentId, chunk_id: chunkId("c"), page_range: { start_page: 3, end_page: 3 },
@@ -60,7 +61,7 @@ const sourcePagesBody = {
     normalization: "unicode_whitespace_runs_to_ascii_space_then_trim",
   },
   pages: [
-    "TITLE U.S. Geological Survey River, A.B. Table 1. Summary values",
+    "TITLE By Alice B. River U.S. Geological Survey River, A.B. Table 1. Summary values",
     publication,
     "References Other, A., 2024, An unrelated cited work.",
   ].map((normalizedText, index) => ({
@@ -159,6 +160,47 @@ describe("verified extraction response controller", () => {
       benchmark_claim_ready: false,
     });
     expect(result.receipt.source_extraction).toEqual(result.source_extraction);
+  });
+
+  it("binds a routed ordered subset while retaining the full document denominator", () => {
+    const documentRouting = buildSchemaDirectedEvidencePlan({
+      documentId,
+      documentMapSha256,
+      sourceSha256,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+    });
+    const routed = prepareController({
+      attemptId: "routed-attempt-0001",
+      trialId: "routed-trial-0001",
+      documentValidation,
+      documentChunks: chunks,
+      batchChunkIds: [[chunkId("a"), chunkId("b")]],
+      documentRouting,
+      expectedModel,
+      maxOutputTokens: 4096,
+    });
+    expect(routed).toMatchObject({
+      contract: { version: "1.7.0-experimental" },
+      document_routing: documentRouting,
+      denominator: { document_chunks: 3, routed_chunks: 2, unrouted_chunks: 1 },
+    });
+    expect(validateControllerPlan({ plan: routed, documentChunks: chunks })).toBe(routed);
+
+    for (const mutate of [
+      value => { value.document_routing.plan_sha256 = "5".repeat(64); },
+      value => { value.document_routing.selected_chunk_ids.push(chunkId("c")); },
+      value => { value.document_routing.selected_chunk_ids.reverse(); },
+      value => { value.document_routing.selected_chunk_ids[1] = chunkId("d"); },
+      value => { value.document_routing.total_chunk_count = 2; },
+    ]) {
+      const drifted = structuredClone(routed);
+      mutate(drifted);
+      delete drifted.plan_sha256;
+      drifted.plan_sha256 = sha(canonicalJson(drifted));
+      expect(() => validateControllerPlan({ plan: drifted, documentChunks: chunks })).toThrow();
+    }
   });
 
   it("retains exact source spans when an admitted batch uniquely projects internal whitespace", async () => {
@@ -458,6 +500,9 @@ describe("verified extraction response controller", () => {
       const legacyPlan = structuredClone(currentPlan);
       legacyPlan.contract.version = version;
       delete legacyPlan.model_context;
+      delete legacyPlan.document_routing;
+      delete legacyPlan.denominator.routed_chunks;
+      delete legacyPlan.denominator.unrouted_chunks;
       legacyPlan.batches.forEach(batch => { delete batch.context_capacity_observation; });
       delete legacyPlan.plan_sha256;
       legacyPlan.plan_sha256 = sha(canonicalJson(legacyPlan));
@@ -469,18 +514,23 @@ describe("verified extraction response controller", () => {
         documentSourcePages: sourcePages,
       })).toMatchObject({ status: "complete", missing_required_paths: [] });
     }
-    const immediatePredecessor = structuredClone(currentPlan);
-    immediatePredecessor.contract.version = "1.5.0-experimental";
-    delete immediatePredecessor.plan_sha256;
-    immediatePredecessor.plan_sha256 = sha(canonicalJson(immediatePredecessor));
-    expect(validateControllerPlan({ plan: immediatePredecessor, documentChunks: chunks }))
-      .toBe(immediatePredecessor);
-    expect(materializeAdmittedSourceExtraction({
-      plan: immediatePredecessor,
-      admissions: result.admissions,
-      documentChunks: chunks,
-      documentSourcePages: sourcePages,
-    })).toMatchObject({ status: "complete", missing_required_paths: [] });
+    for (const version of ["1.5.0-experimental", "1.6.0-experimental"]) {
+      const immediatePredecessor = structuredClone(currentPlan);
+      immediatePredecessor.contract.version = version;
+      delete immediatePredecessor.document_routing;
+      delete immediatePredecessor.denominator.routed_chunks;
+      delete immediatePredecessor.denominator.unrouted_chunks;
+      delete immediatePredecessor.plan_sha256;
+      immediatePredecessor.plan_sha256 = sha(canonicalJson(immediatePredecessor));
+      expect(validateControllerPlan({ plan: immediatePredecessor, documentChunks: chunks }))
+        .toBe(immediatePredecessor);
+      expect(materializeAdmittedSourceExtraction({
+        plan: immediatePredecessor,
+        admissions: result.admissions,
+        documentChunks: chunks,
+        documentSourcePages: sourcePages,
+      })).toMatchObject({ status: "complete", missing_required_paths: [] });
+    }
     expect(prepareController({
       attemptId: "fresh-version-check",
       trialId: "fresh-version-check-trial",
@@ -490,7 +540,7 @@ describe("verified extraction response controller", () => {
       expectedModel,
       maxOutputTokens: 4096,
       contextWindowTokens: 32768,
-    }).contract.version).toBe("1.6.0-experimental");
+    }).contract.version).toBe("1.7.0-experimental");
   });
 
   it("retains an invocation/controller failure without inventing a model call", async () => {

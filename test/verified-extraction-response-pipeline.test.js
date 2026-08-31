@@ -6,7 +6,9 @@ import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
   buildSourceBoundDocumentValidation,
   finalizeSourceBoundResponsePipelineAttempt,
+  prepareSchemaDirectedSourceBoundResponsePipeline,
   prepareSourceBoundResponsePipeline,
+  projectSchemaDirectedSourceBoundResponsePipelineResult,
   runSourceBoundResponsePipelineAttempt,
   VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY,
 } from "../scripts/verified-extraction-response-pipeline.mjs";
@@ -25,7 +27,7 @@ const publication = "Suggested citation: River, A.B., 2025, A public-safe report
 const chunk = value => ({ ...value, content_sha256: sha(Buffer.from(value.content, "utf8")) });
 const chunks = [
   chunk({ document_id: documentId, chunk_id: chunkId("a"), page_range: { start_page: 1, end_page: 1 },
-    starts_at_heading: true, content: "TITLE\nU.S. Geological Survey\nRiver, A.B.\nTable 1. Summary values" }),
+    starts_at_heading: true, content: "TITLE\nBy Alice B. River\nU.S. Geological Survey\nTable 1. Summary values" }),
   chunk({ document_id: documentId, chunk_id: chunkId("b"), page_range: { start_page: 2, end_page: 2 },
     starts_at_heading: false, content: publication }),
   chunk({ document_id: documentId, chunk_id: chunkId("c"), page_range: { start_page: 3, end_page: 3 },
@@ -60,8 +62,8 @@ const sourcePagesBody = {
     normalization: "unicode_whitespace_runs_to_ascii_space_then_trim",
   },
   pages: [
-    "TITLE U.S. Geological Survey River, A.B. Table 1. Summary values",
-    publication,
+    "TITLE By Alice B. River U.S. Geological Survey Table 1. Summary values",
+    `U.S. Geological Survey ${publication}`,
     "References Other, A., 2024, An unrelated cited work.",
   ].map((normalizedText, index) => ({
     page_one_based: index + 1,
@@ -95,7 +97,7 @@ const proposal = () => ({
   agency: { value: "U.S. Geological Survey", citation: { chunk_id: chunkId("a"), quote: "U.S. Geological Survey" } },
   publication_citation_excerpt: { value: publication,
     citation: { chunk_id: chunkId("b"), quote: publication } },
-  contributors: [{ name: "River, A.B.", citation: { chunk_id: chunkId("a"), quote: "River, A.B." } }],
+  contributors: [{ name: "Alice B. River", citation: { chunk_id: chunkId("a"), quote: "Alice B. River" } }],
   first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values",
     citation: { chunk_id: chunkId("a"), quote: "Table 1. Summary values" } },
 });
@@ -160,7 +162,7 @@ describe("verified extraction response pipeline", () => {
       status: "complete",
       selected: {
         publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
-        contributors: [{ name: "River, A.B." }],
+        contributors: [{ name: "Alice B. River" }],
         summary: { contributor_count: 1, first_table: { page_one_based: 1 } },
       },
       result: { summary: { contributor_count: 1 } },
@@ -186,6 +188,56 @@ describe("verified extraction response pipeline", () => {
           }])),
       },
     });
+  });
+
+  it("routes schema evidence before preparation and projects a completed result from retained source", () => {
+    const routed = prepareSchemaDirectedSourceBoundResponsePipeline({
+      attemptId: "successor-attempt-0001",
+      trialId: "successor-trial-0001",
+      predecessorRoleIds: ["baseline-attempt-0001", "baseline-trial-0001"],
+      documentId,
+      documentMap,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+      expectedModel,
+      maxOutputTokens: 4096,
+      contextWindowTokens: 32768,
+    });
+    expect(routed.evidence_plan.selected_chunk_ids).toEqual([chunkId("a"), chunkId("b")]);
+    expect(routed.prepared.plan.batches.flatMap(batch => batch.chunk_ids)).toEqual([
+      chunkId("a"), chunkId("b"),
+    ]);
+    expect(routed.prepared.plan.batches.flatMap(batch => batch.chunk_ids)).not.toContain(chunkId("c"));
+    expect(routed.prepared.plan).toMatchObject({
+      document_routing: routed.evidence_plan,
+      denominator: { document_chunks: 3, routed_chunks: 2, unrouted_chunks: 1 },
+      benchmark_claim_ready: false,
+    });
+
+    const finalized = {
+      extraction_sha256: "9".repeat(64),
+      result: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+        contributors: [{ name: "Alice B. River" }, { name: "Unrelated Reference" }],
+        summary: { contributor_count: 2,
+          first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values" } },
+      },
+      public_citations: {},
+      workspace_state: {},
+    };
+    const projected = projectSchemaDirectedSourceBoundResponsePipelineResult({
+      evidencePlan: routed.evidence_plan,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      finalized,
+    });
+    expect(projected.canonical_projection.result).toMatchObject({
+      contributors: [{ name: "Alice B. River" }],
+      summary: { contributor_count: 1, first_table: { page_one_based: 1 } },
+    });
+    expect(projected.source_pipeline).toEqual(finalized);
+    expect(projected.benchmark_claim_ready).toBe(false);
   });
 
   it("fails closed when finalized source extraction drifts from its receipt or retained admissions", async () => {
@@ -374,7 +426,7 @@ describe("verified extraction response pipeline", () => {
   });
 
   it("remains internal experimental source", () => {
-    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.4.0-experimental");
+    expect(VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY.version).toBe("1.5.0-experimental");
     expect(SERVER_FILES).not.toContain("verified-extraction-response-pipeline.mjs");
     expect(SHARE_FILES).not.toContain("scripts/verified-extraction-response-pipeline.mjs");
   });

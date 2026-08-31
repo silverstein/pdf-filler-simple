@@ -17,6 +17,10 @@ import {
   observeSourceBoundExtractionRequestCapacity,
   preflightSourceBoundExtractionRequest,
 } from "./verified-extraction-response-request.mjs";
+import {
+  buildSchemaDirectedEvidencePlan,
+  canonicalizeSchemaDirectedExtraction,
+} from "./verified-extraction-evidence-router.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
@@ -188,6 +192,7 @@ export function prepareSourceBoundResponsePipeline({
   expectedModel,
   maxOutputTokens,
   contextWindowTokens,
+  documentRouting,
 }) {
   const documentValidation = buildSourceBoundDocumentValidation({
     documentId,
@@ -215,10 +220,73 @@ export function prepareSourceBoundResponsePipeline({
     expectedModel,
     maxOutputTokens,
     contextWindowTokens,
+    documentRouting,
   });
   return {
     plan,
     document_source_pages: structuredClone(documentSourcePages),
+  };
+}
+
+export function prepareSchemaDirectedSourceBoundResponsePipeline({
+  attemptId,
+  trialId,
+  predecessorRoleIds = [],
+  documentId,
+  documentMap,
+  documentChunks,
+  documentSourcePages,
+  expectedModel,
+  maxOutputTokens,
+  contextWindowTokens,
+}) {
+  const evidencePlan = buildSchemaDirectedEvidencePlan({
+    documentId,
+    documentMapSha256: documentMap?.document_map_sha256,
+    sourceSha256: documentMap?.bindings?.source?.sha256,
+    documentChunks,
+    documentTableRegions: documentMap?.table_regions,
+    documentSourcePages,
+  });
+  const prepared = prepareSourceBoundResponsePipeline({
+    attemptId,
+    trialId,
+    predecessorRoleIds,
+    documentId,
+    documentMap,
+    documentChunks,
+    documentSourcePages,
+    batchChunkIds: evidencePlan.selected_pages.map(page => page.chunk_ids),
+    expectedModel,
+    maxOutputTokens,
+    contextWindowTokens,
+    documentRouting: evidencePlan,
+  });
+  return { evidence_plan: evidencePlan, prepared };
+}
+
+export function projectSchemaDirectedSourceBoundResponsePipelineResult({
+  evidencePlan,
+  documentChunks,
+  documentTableRegions,
+  documentSourcePages,
+  finalized,
+}) {
+  exactKeys(finalized, ["extraction_sha256", "public_citations", "result", "workspace_state"],
+    "finalized source pipeline");
+  const canonicalProjection = canonicalizeSchemaDirectedExtraction({
+    plan: evidencePlan,
+    documentChunks,
+    documentTableRegions,
+    documentSourcePages,
+    result: finalized.result,
+  });
+  return {
+    evidence_plan_sha256: evidencePlan.plan_sha256,
+    source_extraction_sha256: finalized.extraction_sha256,
+    canonical_projection: canonicalProjection,
+    source_pipeline: structuredClone(finalized),
+    benchmark_claim_ready: false,
   };
 }
 
@@ -311,6 +379,6 @@ export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentC
 
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
-  version: "1.4.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle, deterministically splits caller batches at every source-evidence/reference boundary and then until each multi-chunk request fits the frozen model-context upper bound, and retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations without reinterpreting canonical source spans through a second incompatible chunk-text merge. It performs no model or provider call by itself.",
+  version: "1.5.0-experimental",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, and selects canonical source spans for the publication citation and first actual table. It performs no model or provider call by itself.",
 });
