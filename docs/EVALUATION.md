@@ -998,6 +998,23 @@ retain `benchmark_claim_ready: false`. A future measured campaign must freeze
 the exact router/controller bytes and demonstrate its own complete receipts,
 resource usage, and private score before any integration or performance claim.
 
+Private acceptance uses the experimental source-replay scorer rather than
+requiring equality with one hidden excerpt window. The scorer binds the exact
+schema bytes, normalized source-page bundle, PDF and document-map identities,
+and the complete retained chunk inventory. Every required citation must be a
+literal span on the submitted page, support the canonical submitted value, and
+map to a page represented in that bound chunk inventory. Missing, extra,
+duplicated, substituted, stale, or unsupported evidence fails closed. Exact
+equality with the frozen oracle window is reported separately as a diagnostic
+and does not override valid source support.
+
+The retained V29 projections were replayed again through the repository scorer:
+11/11 documents were semantically valid, all 74/74 citation obligations replayed
+from their bound source, and zero deterministic failures remained. Only 21/74
+quotes equal the oracle author's chosen window byte-for-byte. This private
+offline replay used no model or provider call, leaves prior scores immutable,
+and does not authorize a benchmark or public claim.
+
 Each trial set includes an invocation run plan that defines the denominator
 before execution. The plan binds the trial-set ID, suite ID and digest, claim
 boundary, semantic operation, fixture instance, and seed. Its signature uses a

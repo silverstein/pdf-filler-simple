@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+
+import { readSourceBoundDocumentChunk } from "../server/document-map.js";
+import {
+  buildSourceReplayScoringBindings,
+  scoreSourceReplayResult,
+} from "./verified-extraction-source-replay-scorer.mjs";
 
 const canonicalJson = value => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
   : value && typeof value === "object"
@@ -23,7 +28,8 @@ function parseArguments(argv) {
     assertion(!values.has(key), `duplicate argument ${key}`);
     values.set(key, value);
   }
-  const expected = ["--contract-root", "--corpus-root", "--evaluation", "--oracles-root", "--output"];
+  const expected = ["--admission-root", "--contract-root", "--corpus-root", "--evaluation",
+    "--oracles-root", "--output", "--state-root"];
   assertion(canonicalJson([...values.keys()].sort()) === canonicalJson(expected),
     `exactly ${expected.join(", ")} are required`);
   return Object.fromEntries([...values].map(([key, value]) => [key.slice(2).replaceAll("-", "_"),
@@ -44,20 +50,62 @@ async function readJson(filePath) {
   return JSON.parse((await readPhysicalFile(filePath)).toString("utf8"));
 }
 
+async function readLayouts(documentDirectory) {
+  const entries = await fsp.readdir(path.join(documentDirectory, "layouts"), {
+    withFileTypes: true,
+  });
+  const names = entries.filter(entry => entry.isFile()
+    && /^page-[0-9]{5}\.layout\.json$/u.test(entry.name)).map(entry => entry.name).sort();
+  assertion(names.length > 0, `${documentDirectory} has no retained layouts`);
+  return Promise.all(names.map(name => readJson(path.join(documentDirectory, "layouts", name))));
+}
+
+async function loadDocumentScoringContext({ args, documentId, register, schemaBytes }) {
+  const admitted = register.documents.find(item => item.id === documentId);
+  assertion(admitted, `${documentId} is absent from the admission register`);
+  const documentDirectory = path.join(args.state_root, documentId);
+  const [documentMap, sourceBytes, layouts] = await Promise.all([
+    readJson(path.join(documentDirectory, "document-map.v1.json")),
+    readPhysicalFile(admitted.artifacts.pdf.path),
+    readLayouts(documentDirectory),
+  ]);
+  assertion(sha256(sourceBytes) === admitted.artifacts.pdf.sha256,
+    `${documentId} PDF bytes drifted`);
+  const documentChunks = documentMap.chunks.descriptors.map((descriptor, index) => {
+    const chunk = readSourceBoundDocumentChunk({
+      documentMap,
+      chunkId: descriptor.chunk_id,
+      sourceBytes,
+      schemaBytes,
+      layouts,
+    });
+    return {
+      document_id: documentId,
+      chunk_id: chunk.chunk_id,
+      page_range: chunk.page_range,
+      starts_at_heading: descriptor.starts_at_heading,
+      content: chunk.content,
+      content_sha256: chunk.content_sha256,
+    };
+  });
+  return { documentMap, documentChunks };
+}
+
 async function main() {
   const args = parseArguments(process.argv.slice(2));
-  const [evaluationBytes, semantics, corpusManifest, oracleManifest] = await Promise.all([
+  const [evaluationBytes, semantics, corpusManifest, oracleManifest, register, schemaBytes] = await Promise.all([
     readPhysicalFile(args.evaluation),
     readJson(path.join(args.contract_root, "task-semantics.v2.json")),
     readJson(path.join(args.corpus_root, "corpus-source-bundle-manifest.v1.json")),
     readJson(path.join(args.oracles_root, "source-replay-oracle-manifest.v2.json")),
+    readJson(path.join(args.admission_root, "admission-register.v1.json")),
+    readPhysicalFile(path.join(args.admission_root, "schema.v1.json")),
   ]);
   const evaluation = JSON.parse(evaluationBytes.toString("utf8"));
   assertion(evaluation.mode === "project-completed"
     && evaluation.oracle_accessed === false && evaluation.model_or_provider_calls_made === 0,
     "input evaluation must be a frozen zero-inference, no-oracle projection");
-  const scorer = await import(pathToFileURL(path.join(args.contract_root,
-    "source-replay-scorer.v2.mjs")).href);
+  const schema = JSON.parse(schemaBytes.toString("utf8"));
   const corpusById = new Map(corpusManifest.documents.map(item => [item.document_id, item]));
   const oracleById = new Map(oracleManifest.documents.map(item => [item.document_id, item]));
   const rows = [];
@@ -73,9 +121,27 @@ async function main() {
       `${evaluated.document_id} source bundle drifted`);
     assertion(sha256(oracleBytes) === oracleArtifact.sha256,
       `${evaluated.document_id} truth oracle drifted`);
-    const score = scorer.scoreSourceReplayResult({
+    const sourceBundle = JSON.parse(sourceBytes.toString("utf8"));
+    const { documentMap, documentChunks } = await loadDocumentScoringContext({
+      args,
+      documentId: evaluated.document_id,
+      register,
+      schemaBytes,
+    });
+    const bindings = buildSourceReplayScoringBindings({
+      documentId: evaluated.document_id,
+      documentMapSha256: documentMap.document_map_sha256,
+      schemaBytes,
+      sourceBundle,
+      documentChunks,
+    });
+    const score = scoreSourceReplayResult({
+      bindings,
+      schema,
+      schemaBytes,
       semantics,
-      sourceBundle: JSON.parse(sourceBytes.toString("utf8")),
+      sourceBundle,
+      documentChunks,
       truthOracle: JSON.parse(oracleBytes.toString("utf8")),
       result: evaluated.canonical_projection.result,
       citations: evaluated.canonical_projection.citations,
@@ -100,6 +166,9 @@ async function main() {
       evaluation_report_sha256: evaluation.report_sha256,
       source_replay_contract_seal_sha256: (await readJson(path.join(args.contract_root,
         "contract-seal.v1.json"))).contract_seal_sha256,
+      source_replay_scorer_sha256: sha256(await readPhysicalFile(new URL(
+        "./verified-extraction-source-replay-scorer.mjs", import.meta.url))),
+      schema_sha256: sha256(schemaBytes),
       corpus_manifest_sha256: corpusManifest.corpus_source_bundle_manifest_sha256,
       oracle_manifest_sha256: oracleManifest.source_replay_oracle_manifest_sha256,
     },
