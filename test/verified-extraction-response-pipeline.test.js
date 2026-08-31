@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
+  buildSchemaDirectedWorkspaceState,
   buildSourceBoundDocumentValidation,
   deriveRetainedPagePartition,
   finalizeSourceBoundResponsePipelineAttempt,
@@ -237,8 +238,98 @@ describe("verified extraction response pipeline", () => {
       contributors: [{ name: "Alice B. River" }],
       summary: { contributor_count: 1, first_table: { page_one_based: 1 } },
     });
+    expect(projected.workspace_state).toMatchObject({
+      publication: projected.canonical_projection.result.publication,
+      contributors: [{ name: "Alice B. River" }],
+      summary: projected.canonical_projection.result.summary,
+      citations: {
+        "publication.agency": {
+          page: 1,
+          chunk_id: chunkId("a"),
+          start_utf8_byte: 0,
+          end_utf8_byte: Buffer.byteLength(chunks[0].content, "utf8"),
+          quote_sha256: chunks[0].content_sha256,
+        },
+        "publication.publication_citation_excerpt": {
+          page: 2,
+          chunk_id: chunkId("b"),
+          start_utf8_byte: 0,
+          end_utf8_byte: Buffer.byteLength(chunks[1].content, "utf8"),
+          quote_sha256: chunks[1].content_sha256,
+        },
+        "contributors[name=Alice B. River]": { page: 1, chunk_id: chunkId("a") },
+        "summary.first_table": { page: 1, chunk_id: chunkId("a") },
+      },
+    });
+    expect(Object.keys(projected.workspace_state.citations).sort())
+      .toEqual(Object.keys(projected.canonical_projection.citations).sort());
+    expect(JSON.stringify(projected.workspace_state)).not.toContain("Unrelated Reference");
     expect(projected.source_pipeline).toEqual(finalized);
     expect(projected.benchmark_claim_ready).toBe(false);
+
+    const projectionDrift = structuredClone(projected.canonical_projection);
+    projectionDrift.citations["publication.agency"].page = 2;
+    expect(() => buildSchemaDirectedWorkspaceState({
+      canonicalProjection: projectionDrift,
+      documentChunks: chunks,
+    })).toThrow(/digest drifted/u);
+
+    const redigestProjection = projection => {
+      delete projection.projection_sha256;
+      projection.projection_sha256 = sha(Buffer.from(canonicalJson(projection), "utf8"));
+      return projection;
+    };
+    const wrongPage = redigestProjection(structuredClone(projected.canonical_projection));
+    wrongPage.citations["publication.agency"].page = 2;
+    redigestProjection(wrongPage);
+    const reboundWorkspace = buildSchemaDirectedWorkspaceState({
+      canonicalProjection: wrongPage,
+      documentChunks: chunks,
+    });
+    expect(reboundWorkspace.citations["publication.agency"]).toMatchObject({
+      page: 1,
+      chunk_id: chunkId("a"),
+      quote: chunks[0].content,
+      quote_sha256: chunks[0].content_sha256,
+    });
+
+    const unsupportedValue = redigestProjection(structuredClone(projected.canonical_projection));
+    unsupportedValue.result.publication.agency = "Unsupported Agency";
+    redigestProjection(unsupportedValue);
+    expect(() => buildSchemaDirectedWorkspaceState({
+      canonicalProjection: unsupportedValue,
+      documentChunks: chunks,
+    })).toThrow(/does not contain its submitted value/u);
+
+    const ambiguousChunk = chunk({
+      ...chunks[0],
+      chunk_id: chunkId("d"),
+    });
+    const repeatedSupport = buildSchemaDirectedWorkspaceState({
+      canonicalProjection: projected.canonical_projection,
+      documentChunks: [...chunks, ambiguousChunk],
+    });
+    expect(repeatedSupport.citations["publication.agency"].chunk_id).toBe(chunkId("a"));
+
+    const unsupportedChunks = chunks.map(item => ({ ...item }));
+    unsupportedChunks[0].content = "TITLE\nNo agency, contributor, or table support remains.";
+    unsupportedChunks[0].content_sha256 = sha(Buffer.from(unsupportedChunks[0].content, "utf8"));
+    expect(() => buildSchemaDirectedWorkspaceState({
+      canonicalProjection: projected.canonical_projection,
+      documentChunks: unsupportedChunks,
+    })).toThrow(/no source-bound workspace support/u);
+
+    expect(() => buildSchemaDirectedWorkspaceState({
+      canonicalProjection: projected.canonical_projection,
+      documentChunks: [...chunks.slice(0, 2), { ...chunks[2], document_id: "other-document" }],
+    })).toThrow(/span multiple documents/u);
+
+    const contentDrift = structuredClone(chunks);
+    contentDrift[0].content += " drift";
+    expect(() => buildSchemaDirectedWorkspaceState({
+      canonicalProjection: projected.canonical_projection,
+      documentChunks: contentDrift,
+    })).toThrow(/binding is invalid/u);
   });
 
   it("fails closed when finalized source extraction drifts from its receipt or retained admissions", async () => {

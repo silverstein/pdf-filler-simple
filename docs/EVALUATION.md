@@ -1008,6 +1008,20 @@ duplicated, substituted, stale, or unsupported evidence fails closed. Exact
 equality with the frozen oracle window is reported separately as a diagnostic
 and does not override valid source support.
 
+The routed canonical projection is also the verified-workspace state; it is not
+merely a scoring overlay. Publication, contributors, summary, and citation keys
+are identical between the canonical result and workspace proposal state. Each
+workspace citation deterministically selects the strongest exact retained
+source chunk by literal support, quote and value token coverage, cited-page
+agreement, and finally the frozen document-map chunk order. Its workspace page,
+quote, byte range, and digest describe that replayed chunk itself; the public
+canonical citation remains separately unchanged. This distinction handles
+repeated report headers and renderer/oracle text-window differences without
+inventing support or silently choosing an unbound representation. Missing,
+stale-content, cross-document, or unsupported mappings fail before workspace
+mutation, so reference-derived extras cannot survive in a parallel
+pre-canonical state.
+
 The retained V29 projections were replayed again through the repository scorer:
 11/11 documents were semantically valid, all 74/74 citation obligations replayed
 from their bound source, and zero deterministic failures remained. Only 21/74

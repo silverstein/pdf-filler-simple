@@ -24,6 +24,7 @@ import {
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
+const CONTRIBUTOR_CITATION = /^contributors\[name=(.+)\]$/u;
 
 const sha256 = value => createHash("sha256").update(value).digest("hex");
 const canonicalJson = value => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]`
@@ -71,6 +72,138 @@ function withoutKey(value, key) {
   const copy = structuredClone(value);
   delete copy[key];
   return copy;
+}
+
+function normalizeSourceText(value) {
+  assertion(typeof value === "string", "source text must be a string");
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function citationSupportValue(result, citationKey) {
+  if (citationKey === "publication.agency") return result.publication.agency;
+  if (citationKey === "publication.publication_citation_excerpt") {
+    return result.publication.publication_citation_excerpt;
+  }
+  if (citationKey === "summary.first_table") return result.summary.first_table.anchor_excerpt;
+  const contributor = CONTRIBUTOR_CITATION.exec(citationKey);
+  assertion(contributor && result.contributors.some(item => item.name === contributor[1]),
+    `canonical workspace citation key is unsupported: ${citationKey}`);
+  return contributor[1];
+}
+
+function sourceTokens(value) {
+  return [...new Set(normalizeSourceText(value).toLocaleLowerCase("en-US")
+    .match(/[\p{L}\p{N}]+/gu) ?? [])].filter(token => token.length >= 2);
+}
+
+function tokenCoverage(needleTokens, contentTokens) {
+  if (needleTokens.length === 0) return { count: 0, basis_points: 0 };
+  const content = new Set(contentTokens);
+  const count = needleTokens.filter(token => content.has(token)).length;
+  return { count, basis_points: Math.floor((count * 10_000) / needleTokens.length) };
+}
+
+function compareSupportScore(left, right) {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+function selectWorkspaceCitationChunk({ citationKey, citation, supportValue, chunks }) {
+  const quote = normalizeSourceText(citation.quote);
+  const support = normalizeSourceText(supportValue);
+  const quoteTokens = sourceTokens(quote);
+  const supportTokens = sourceTokens(support);
+  const candidates = chunks.map(chunk => {
+    const normalizedContent = normalizeSourceText(chunk.content);
+    const contentTokens = sourceTokens(normalizedContent);
+    const supportCoverage = tokenCoverage(supportTokens, contentTokens);
+    const quoteCoverage = tokenCoverage(quoteTokens, contentTokens);
+    return {
+      chunk,
+      supportCoverage,
+      quoteCoverage,
+      score: [
+        Number(normalizedContent.includes(support)),
+        Number(normalizedContent.includes(quote)),
+        supportCoverage.basis_points,
+        quoteCoverage.basis_points,
+        Number(chunk.page_range.start_page === citation.page),
+      ],
+    };
+  }).filter(candidate => candidate.score[0] === 1 || candidate.score[1] === 1
+    || (candidate.supportCoverage.count >= 2 && candidate.supportCoverage.basis_points >= 5_000)
+    || (candidate.quoteCoverage.count >= 4 && candidate.quoteCoverage.basis_points >= 2_500));
+  assertion(candidates.length > 0,
+    `canonical citation ${citationKey} has no source-bound workspace support`);
+  candidates.sort((left, right) => compareSupportScore(right.score, left.score));
+  // Stable sort retains the already validated document-map chunk order as the final tie-breaker.
+  // Repeated organization names and headers are common in government reports, so equal semantic
+  // support is a representation tie rather than grounds to discard an otherwise valid result.
+  return candidates[0].chunk;
+}
+
+export function buildSchemaDirectedWorkspaceState({ canonicalProjection, documentChunks }) {
+  exactKeys(canonicalProjection, ["benchmark_claim_ready", "citations", "contract", "diagnostics",
+    "evidence_plan_sha256", "projection_sha256", "result"], "canonical projection");
+  assertion(canonicalProjection.benchmark_claim_ready === false,
+    "canonical projection cannot authorize a benchmark claim");
+  const projectionBody = structuredClone(canonicalProjection);
+  delete projectionBody.projection_sha256;
+  assertion(SHA256.test(canonicalProjection.projection_sha256 ?? "")
+    && canonicalProjection.projection_sha256
+      === sha256(Buffer.from(canonicalJson(projectionBody), "utf8")),
+  "canonical projection digest drifted");
+  assertion(Array.isArray(documentChunks) && documentChunks.length > 0,
+    "documentChunks must be a non-empty array");
+  const chunks = documentChunks.map((chunk, index) => {
+    exactKeys(chunk, ["chunk_id", "content", "content_sha256", "document_id", "page_range",
+      "starts_at_heading"], `documentChunks[${index}]`);
+    assertion(CHUNK_ID.test(chunk.chunk_id ?? "")
+      && chunk.page_range?.start_page === chunk.page_range?.end_page
+      && Number.isSafeInteger(chunk.page_range.start_page) && chunk.page_range.start_page > 0
+      && typeof chunk.content === "string" && chunk.content.length > 0
+      && SHA256.test(chunk.content_sha256 ?? "")
+      && sha256(Buffer.from(chunk.content, "utf8")) === chunk.content_sha256,
+    `documentChunks[${index}] binding is invalid`);
+    return chunk;
+  });
+  assertion(new Set(chunks.map(chunk => chunk.chunk_id)).size === chunks.length,
+    "documentChunks contain duplicate identities");
+  assertion(new Set(chunks.map(chunk => chunk.document_id)).size === 1,
+    "documentChunks span multiple documents");
+  const workspaceCitations = {};
+  for (const [citationKey, citation] of Object.entries(canonicalProjection.citations)) {
+    exactKeys(citation, ["page", "quote"], `canonical citation ${citationKey}`);
+    assertion(Number.isSafeInteger(citation.page) && citation.page > 0
+      && typeof citation.quote === "string" && citation.quote.length > 0,
+    `canonical citation ${citationKey} is invalid`);
+    const supportValue = normalizeSourceText(citationSupportValue(canonicalProjection.result, citationKey));
+    const quote = normalizeSourceText(citation.quote);
+    assertion(quote.includes(supportValue),
+      `canonical citation ${citationKey} does not contain its submitted value`);
+    const chunk = selectWorkspaceCitationChunk({
+      citationKey,
+      citation,
+      supportValue,
+      chunks,
+    });
+    workspaceCitations[citationKey] = {
+      page: chunk.page_range.start_page,
+      quote: chunk.content,
+      chunk_id: chunk.chunk_id,
+      start_utf8_byte: 0,
+      end_utf8_byte: Buffer.byteLength(chunk.content, "utf8"),
+      quote_sha256: chunk.content_sha256,
+    };
+  }
+  return {
+    publication: structuredClone(canonicalProjection.result.publication),
+    contributors: structuredClone(canonicalProjection.result.contributors),
+    summary: structuredClone(canonicalProjection.result.summary),
+    citations: workspaceCitations,
+  };
 }
 
 function fitBatchChunkIdsToModelContext({ documentValidation, documentChunks, documentSourcePages,
@@ -302,10 +435,15 @@ export function projectSchemaDirectedSourceBoundResponsePipelineResult({
     documentSourcePages,
     result: finalized.result,
   });
+  const workspaceState = buildSchemaDirectedWorkspaceState({
+    canonicalProjection,
+    documentChunks,
+  });
   return {
     evidence_plan_sha256: evidencePlan.plan_sha256,
     source_extraction_sha256: finalized.extraction_sha256,
     canonical_projection: canonicalProjection,
+    workspace_state: workspaceState,
     source_pipeline: structuredClone(finalized),
     benchmark_claim_ready: false,
   };
@@ -401,5 +539,5 @@ export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentC
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
   version: "1.5.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, and selects canonical source spans for the publication citation and first actual table. Its page-partition helper derives processed pages only from the ordered retained page inventory and clears that inventory when the aggregate trace is unavailable. It performs no model or provider call by itself.",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, selects canonical source spans for the publication citation and first actual table, and projects that same canonical state into unique exact page/chunk bindings for the verified workspace. Its page-partition helper derives processed pages only from the ordered retained page inventory and clears that inventory when the aggregate trace is unavailable. It performs no model or provider call by itself.",
 });
