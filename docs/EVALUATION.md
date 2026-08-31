@@ -1015,6 +1015,17 @@ quotes equal the oracle author's chosen window byte-for-byte. This private
 offline replay used no model or provider call, leaves prior scores immutable,
 and does not authorize a benchmark or public claim.
 
+Campaign-wide model-call exhaustion is a typed, denominator-preserving outcome,
+including when it occurs between document batches. Response-controller receipt
+version 3 retains `model_call_budget_exhausted` and the exact campaign
+`completed_request_count`; malformed lookalike errors remain ordinary controller
+failures. A caller can reconstruct the typed error only from a digest-valid
+receipt. Attempt page partitions must be derived from the ordered, durably
+retained page inventory: retained pages survive a later model-budget failure,
+while failure to retain the aggregate trace clears processed pages rather than
+claiming unsupported work. Zero retry and no replacement still apply, and every
+later frozen slot remains in the campaign index.
+
 Each trial set includes an invocation run plan that defines the denominator
 before execution. The plan binds the trial-set ID, suite ID and digest, claim
 boundary, semantic operation, fixture instance, and seed. Its signature uses a

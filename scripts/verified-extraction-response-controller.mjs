@@ -36,6 +36,19 @@ const MODEL_CONTEXT_CONTROLLER_VERSIONS = new Set([
 ]);
 const ROUTED_CONTROLLER_VERSIONS = new Set([CURRENT_CONTROLLER_VERSION]);
 
+export class ModelCallBudgetExhaustedError extends Error {
+  constructor({ completedRequestCount, message = "The exact campaign-wide local model-call ceiling is exhausted" }) {
+    assertion(Number.isSafeInteger(completedRequestCount) && completedRequestCount >= 0,
+      "completedRequestCount must be a non-negative safe integer");
+    boundedString(message, "model-call budget exhaustion message", 1024);
+    super(message);
+    this.name = "ModelCallBudgetExhaustedError";
+    this.code = "model_call_budget_exhausted";
+    this.tokens_complete = true;
+    this.completed_request_count = completedRequestCount;
+  }
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -127,6 +140,58 @@ function planWithoutDigest(plan) {
 
 function receiptWithDigest(receipt) {
   return { ...receipt, receipt_sha256: sha256(Buffer.from(canonicalJson(receipt), "utf8")) };
+}
+
+function modelCallBudgetExhaustion(error) {
+  if (!(error instanceof Error)
+    || error?.code !== "model_call_budget_exhausted"
+    || error?.tokens_complete !== true
+    || !Number.isSafeInteger(error?.completed_request_count)
+    || error.completed_request_count < 0) return null;
+  const message = String(error.message ?? "");
+  if (message.length === 0 || Buffer.byteLength(message, "utf8") > 1024) return null;
+  return {
+    classification: "harness_failure",
+    reason_code: "model_call_budget_exhausted",
+    message,
+    completed_request_count: error.completed_request_count,
+  };
+}
+
+export function responseAdmissionControllerFailure(receipt) {
+  assertion(receipt && typeof receipt === "object" && !Array.isArray(receipt),
+    "response controller receipt is required");
+  assertion(SHA256.test(receipt.receipt_sha256 ?? ""),
+    "response controller receipt digest is invalid");
+  const receiptBody = structuredClone(receipt);
+  delete receiptBody.receipt_sha256;
+  assertion(receipt.receipt_sha256 === sha256(Buffer.from(canonicalJson(receiptBody), "utf8")),
+    "response controller receipt digest drifted");
+  const outcome = receipt.outcome;
+  exactKeys(outcome, ["classification", "completed_request_count", "message", "reason_code"],
+    "response controller outcome");
+  if (outcome.classification === "completed") {
+    assertion(outcome.completed_request_count === null
+      && ["none", "typed_batch_rejections"].includes(outcome.reason_code),
+    "completed response controller outcome is invalid");
+    return null;
+  }
+  if (outcome.reason_code === "model_call_budget_exhausted") {
+    assertion(outcome.classification === "harness_failure",
+      "model-call budget exhaustion classification is invalid");
+    return new ModelCallBudgetExhaustedError({
+      completedRequestCount: outcome.completed_request_count,
+      message: outcome.message,
+    });
+  }
+  assertion(outcome.completed_request_count === null,
+    "non-budget controller failure cannot claim a completed request count");
+  assertion(["harness_failure", "product_failure"].includes(outcome.classification),
+    "response controller failure classification is invalid");
+  const error = new Error(outcome.message);
+  error.code = outcome.reason_code;
+  error.tokens_complete = true;
+  return error;
 }
 
 function prepareResponseAdmissionControllerForVersion({
@@ -464,6 +529,7 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         response_observation: null,
         admission: null,
         admission_sha256: null,
+        completed_request_count: null,
       });
       continue;
     }
@@ -508,14 +574,17 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         response_observation: admission.observation,
         admission,
         admission_sha256: admissionSha256,
+        completed_request_count: null,
       });
     } catch (error) {
+      const budgetExhaustion = modelCallBudgetExhaustion(error);
       const typed = error instanceof ModelOutputAdmissionError
         || error instanceof ModelContextCapacityError;
-      const failure = {
+      const failure = budgetExhaustion ?? {
         classification: typed ? "product_failure" : "harness_failure",
         reason_code: typed ? error.code : "controller_failure",
         message: String(error?.message ?? error),
+        completed_request_count: null,
       };
       batchOutcomes.push({
         batch_ordinal: batch.batch_ordinal,
@@ -527,6 +596,7 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
         response_observation: typed ? error.observation : null,
         admission: null,
         admission_sha256: null,
+        completed_request_count: failure.completed_request_count,
       });
       if (invoked) modelCalls += 1;
       if (typed) typedFailures.push(failure);
@@ -539,17 +609,19 @@ export async function runResponseAdmissionControllerAttempt({ plan, documentChun
 
   const completed = fatalFailure === null;
   const completedOutcome = typedFailures.length === 0
-    ? { classification: "completed", reason_code: "none", message: null }
+    ? { classification: "completed", reason_code: "none", message: null,
+        completed_request_count: null }
     : {
         classification: "completed",
         reason_code: "typed_batch_rejections",
         message: `${typedFailures.length} model batch response(s) failed strict admission`,
+        completed_request_count: null,
       };
   const sourceExtraction = completed ? materializeAdmittedSourceExtraction({
     plan, admissions, documentChunks, documentSourcePages,
   }) : null;
   const receipt = receiptWithDigest({
-    contract: { name: "pdf-tools.verified-extraction-response-controller-receipt", version: 2 },
+    contract: { name: "pdf-tools.verified-extraction-response-controller-receipt", version: 3 },
     attempt_id: plan.attempt_id,
     trial_id: plan.trial_id,
     controller_plan_sha256: plan.plan_sha256,

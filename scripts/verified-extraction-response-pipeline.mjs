@@ -41,6 +41,27 @@ function exactKeys(value, expected, label) {
     `${label} keys are invalid`);
 }
 
+export function deriveRetainedPagePartition({ pageCount, retainedPageNumbers, aggregateTraceRetained }) {
+  assertion(Number.isSafeInteger(pageCount) && pageCount > 0,
+    "pageCount must be a positive safe integer");
+  assertion(Array.isArray(retainedPageNumbers)
+    && retainedPageNumbers.every(page => Number.isSafeInteger(page) && page >= 1 && page <= pageCount)
+    && new Set(retainedPageNumbers).size === retainedPageNumbers.length,
+  "retainedPageNumbers must contain unique in-range pages");
+  const orderedRetained = [...retainedPageNumbers].sort((left, right) => left - right);
+  assertion(canonicalJson(orderedRetained) === canonicalJson(retainedPageNumbers),
+    "retainedPageNumbers must be in ascending order");
+  assertion(typeof aggregateTraceRetained === "boolean",
+    "aggregateTraceRetained must be a boolean");
+  const processed = aggregateTraceRetained ? orderedRetained : [];
+  const processedSet = new Set(processed);
+  return {
+    processed_page_numbers: processed,
+    unprocessed_page_numbers: Array.from({ length: pageCount }, (_, index) => index + 1)
+      .filter(page => !processedSet.has(page)),
+  };
+}
+
 function nonzeroSha256(value, label) {
   assertion(SHA256.test(value ?? "") && value !== "0".repeat(64), `${label} is invalid`);
   return value;
@@ -380,5 +401,5 @@ export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentC
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
   version: "1.5.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, and selects canonical source spans for the publication citation and first actual table. It performs no model or provider call by itself.",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, and selects canonical source spans for the publication citation and first actual table. Its page-partition helper derives processed pages only from the ordered retained page inventory and clears that inventory when the aggregate trace is unavailable. It performs no model or provider call by itself.",
 });

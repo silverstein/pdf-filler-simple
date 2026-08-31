@@ -6,7 +6,9 @@ import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import { buildSchemaDirectedEvidencePlan } from "../scripts/verified-extraction-evidence-router.mjs";
 import {
   materializeAdmittedSourceExtraction,
+  ModelCallBudgetExhaustedError,
   prepareResponseAdmissionController,
+  responseAdmissionControllerFailure,
   runResponseAdmissionControllerAttempt,
   validateResponseAdmissionControllerPlan,
   VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY,
@@ -410,6 +412,115 @@ describe("verified extraction response controller", () => {
         model_calls: 0, unattempted_batches: 2 },
       outcome: { classification: "harness_failure", reason_code: "controller_failure" },
       calculation_evidence: null,
+    });
+  });
+
+  it("retains typed campaign-budget exhaustion before the first document batch", async () => {
+    const result = await runController({
+      plan: plan(),
+      documentChunks: chunks,
+      invokeBatch: async () => {
+        throw new ModelCallBudgetExhaustedError({ completedRequestCount: 0 });
+      },
+    });
+    expect(result.receipt).toMatchObject({
+      contract: { version: 3 },
+      observed: { batch_outcomes: 1, model_calls: 0, unattempted_batches: 1 },
+      outcome: {
+        classification: "harness_failure",
+        reason_code: "model_call_budget_exhausted",
+        completed_request_count: 0,
+      },
+      calculation_evidence: null,
+      source_extraction: null,
+    });
+    expect(result.receipt.batch_outcomes[0]).toMatchObject({
+      status: "model_call_budget_exhausted",
+      model_call_count: 0,
+      completed_request_count: 0,
+    });
+    expect(responseAdmissionControllerFailure(result.receipt)).toMatchObject({
+      code: "model_call_budget_exhausted",
+      completed_request_count: 0,
+      tokens_complete: true,
+    });
+    const drifted = structuredClone(result.receipt);
+    drifted.outcome.completed_request_count = 1;
+    expect(() => responseAdmissionControllerFailure(drifted)).toThrow(/digest drifted/u);
+  });
+
+  it("preserves the exact campaign count after admitted document batches", async () => {
+    const splitPlan = prepareController({
+      attemptId: "successor-attempt-budget-mid-document",
+      trialId: "successor-trial-budget-mid-document",
+      predecessorRoleIds: ["v29-attempt-0001"],
+      documentValidation,
+      documentChunks: chunks,
+      batchChunkIds: [[chunkId("a")], [chunkId("b")], [chunkId("c")]],
+      expectedModel,
+      maxOutputTokens: 4096,
+      contextWindowTokens: 32768,
+    });
+    let calls = 0;
+    const result = await runController({
+      plan: splitPlan,
+      documentChunks: chunks,
+      invokeBatch: async () => {
+        calls += 1;
+        if (calls === 2) {
+          const error = new Error("campaign ceiling reached after retained request 283");
+          error.code = "model_call_budget_exhausted";
+          error.tokens_complete = true;
+          error.completed_request_count = 283;
+          throw error;
+        }
+        return artifact(response());
+      },
+    });
+    expect(calls).toBe(2);
+    expect(result.receipt).toMatchObject({
+      observed: {
+        batch_outcomes: 2,
+        admitted_batches: 1,
+        model_calls: 1,
+        unattempted_batches: 1,
+      },
+      outcome: {
+        classification: "harness_failure",
+        reason_code: "model_call_budget_exhausted",
+        completed_request_count: 283,
+      },
+      calculation_evidence: null,
+      source_extraction: null,
+    });
+    expect(result.receipt.batch_outcomes.map(item => item.status)).toEqual([
+      "admitted", "model_call_budget_exhausted",
+    ]);
+    expect(responseAdmissionControllerFailure(result.receipt)).toMatchObject({
+      code: "model_call_budget_exhausted",
+      completed_request_count: 283,
+    });
+  });
+
+  it.each([
+    ["missing count", error => { delete error.completed_request_count; }],
+    ["fractional count", error => { error.completed_request_count = 2.5; }],
+    ["unknown token state", error => { error.tokens_complete = false; }],
+  ])("does not accept a forged budget signal with %s", async (_label, mutate) => {
+    const invokeBatch = async () => {
+      const error = new Error("forged budget signal");
+      error.code = "model_call_budget_exhausted";
+      error.tokens_complete = true;
+      error.completed_request_count = 3;
+      mutate(error);
+      throw error;
+    };
+    const result = await runController({ plan: plan(), documentChunks: chunks, invokeBatch });
+    expect(result.receipt.outcome).toEqual({
+      classification: "harness_failure",
+      reason_code: "controller_failure",
+      message: "forged budget signal",
+      completed_request_count: null,
     });
   });
 

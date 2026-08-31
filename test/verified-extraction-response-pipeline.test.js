@@ -5,6 +5,7 @@ import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
   buildSourceBoundDocumentValidation,
+  deriveRetainedPagePartition,
   finalizeSourceBoundResponsePipelineAttempt,
   prepareSchemaDirectedSourceBoundResponsePipeline,
   prepareSourceBoundResponsePipeline,
@@ -411,6 +412,30 @@ describe("verified extraction response pipeline", () => {
     }));
   });
 
+  it("preserves campaign-budget exhaustion across the request callback boundary", async () => {
+    const prepared = prepare();
+    const result = await runSourceBoundResponsePipelineAttempt({
+      prepared,
+      documentChunks: chunks,
+      invokeRequest: async () => {
+        const error = new Error("frozen campaign call ceiling exhausted");
+        error.code = "model_call_budget_exhausted";
+        error.tokens_complete = true;
+        error.completed_request_count = 283;
+        throw error;
+      },
+    });
+    expect(result.receipt).toMatchObject({
+      observed: { model_calls: 0, unattempted_batches: 1 },
+      outcome: {
+        classification: "harness_failure",
+        reason_code: "model_call_budget_exhausted",
+        completed_request_count: 283,
+      },
+      source_extraction: null,
+    });
+  });
+
   it("derives the exact validation object rather than accepting caller-authored binding fields", () => {
     const validation = buildSourceBoundDocumentValidation({
       documentId,
@@ -423,6 +448,39 @@ describe("verified extraction response pipeline", () => {
       "source_page_text_bundle_sha256", "source_sha256", "table_regions",
     ]);
     expect(validation.renderer_sha256).toBe(sha(canonicalJson(documentMap.bindings.renderer)));
+  });
+
+  it.each([
+    ["before document work", [], { processed_page_numbers: [],
+      unprocessed_page_numbers: [1, 2, 3, 4, 5] }],
+    ["during the first batch", [1, 2], { processed_page_numbers: [1, 2],
+      unprocessed_page_numbers: [3, 4, 5] }],
+    ["after later successful batches", [1, 2, 3, 4], { processed_page_numbers: [1, 2, 3, 4],
+      unprocessed_page_numbers: [5] }],
+  ])("derives a truthful retained-page partition at budget exhaustion %s", (_label, retained, expected) => {
+    expect(deriveRetainedPagePartition({
+      pageCount: 5,
+      retainedPageNumbers: retained,
+      aggregateTraceRetained: true,
+    })).toEqual(expected);
+  });
+
+  it("clears processed pages when the aggregate trace is not retained", () => {
+    expect(deriveRetainedPagePartition({
+      pageCount: 5,
+      retainedPageNumbers: [1, 2, 3],
+      aggregateTraceRetained: false,
+    })).toEqual({
+      processed_page_numbers: [],
+      unprocessed_page_numbers: [1, 2, 3, 4, 5],
+    });
+    for (const retainedPageNumbers of [[2, 1], [1, 1], [0], [6]]) {
+      expect(() => deriveRetainedPagePartition({
+        pageCount: 5,
+        retainedPageNumbers,
+        aggregateTraceRetained: true,
+      })).toThrow();
+    }
   });
 
   it("remains internal experimental source", () => {
