@@ -11,6 +11,7 @@ import {
   prepareSchemaDirectedSourceBoundResponsePipeline,
   prepareSourceBoundResponsePipeline,
   projectSchemaDirectedSourceBoundResponsePipelineResult,
+  recoverSchemaDirectedSourceBoundResponsePipelineAttempt,
   runSourceBoundResponsePipelineAttempt,
   VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY,
 } from "../scripts/verified-extraction-response-pipeline.mjs";
@@ -107,6 +108,14 @@ const response = () => Buffer.from(JSON.stringify({
   id: "synthetic-response",
   model: expectedModel,
   choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(proposal()) } }],
+  usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+}));
+const responseForProposal = candidate => Buffer.from(JSON.stringify({
+  id: "synthetic-response",
+  model: expectedModel,
+  choices: [{ index: 0, finish_reason: "stop", message: {
+    role: "assistant", content: JSON.stringify(candidate),
+  } }],
   usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
 }));
 const artifact = bytes => ({
@@ -330,6 +339,178 @@ describe("verified extraction response pipeline", () => {
       canonicalProjection: projected.canonical_projection,
       documentChunks: contentDrift,
     })).toThrow(/binding is invalid/u);
+  });
+
+  it("recovers missing contributor, citation, and table fields only from retained source evidence", async () => {
+    const routed = prepareSchemaDirectedSourceBoundResponsePipeline({
+      attemptId: "successor-attempt-0001",
+      trialId: "successor-trial-0001",
+      predecessorRoleIds: ["baseline-attempt-0001", "baseline-trial-0001"],
+      documentId,
+      documentMap,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+      expectedModel,
+      maxOutputTokens: 4096,
+      contextWindowTokens: 32768,
+    });
+    const incomplete = await runSourceBoundResponsePipelineAttempt({
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      invokeRequest: async ({ batch }) => {
+        const candidate = {
+          agency: null,
+          publication_citation_excerpt: null,
+          contributors: [],
+          first_table: null,
+        };
+        if (batch.chunk_ids.includes(chunkId("a"))) {
+          candidate.agency = proposal().agency;
+          candidate.contributors = [proposal().contributors[0], {
+            name: "Stale, S.T.",
+            citation: { chunk_id: chunkId("f"), quote: "Stale, S.T." },
+          }];
+        }
+        return artifact(responseForProposal(candidate));
+      },
+    });
+    expect(incomplete.source_extraction).toMatchObject({
+      status: "incomplete",
+      selected: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: null },
+        contributors: [],
+        summary: { first_table: null },
+      },
+      missing_required_paths: [
+        "contributors", "publication.publication_citation_excerpt", "summary.first_table",
+      ],
+    });
+
+    const recovered = recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: incomplete,
+    });
+    expect(recovered.finalized).toMatchObject({
+      extraction_sha256: incomplete.source_extraction.extraction_sha256,
+      result: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+        contributors: [{ name: "Alice B. River" }],
+        summary: { contributor_count: 1,
+          first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values" } },
+      },
+      public_citations: {
+        "contributors[name=Alice B. River]": expect.objectContaining({ page: 1 }),
+        "publication.publication_citation_excerpt": expect.objectContaining({ page: 2 }),
+        "summary.first_table": expect.objectContaining({ page: 1 }),
+      },
+    });
+    expect(recovered.recovery_receipt).toMatchObject({
+      contract: { name: "pdf-tools.schema-directed-source-recovery", version: 1 },
+      source_extraction_sha256: incomplete.source_extraction.extraction_sha256,
+      recovered_paths: [
+        "contributors", "publication.publication_citation_excerpt", "summary.first_table",
+      ],
+      model_or_provider_calls_made: 0,
+      oracle_accessed: false,
+      benchmark_claim_ready: false,
+    });
+    expect(recovered.recovery_receipt.receipt_sha256).toBe(sha(Buffer.from(canonicalJson(
+      Object.fromEntries(Object.entries(recovered.recovery_receipt)
+        .filter(([key]) => key !== "receipt_sha256")),
+    ), "utf8")));
+
+    const projected = projectSchemaDirectedSourceBoundResponsePipelineResult({
+      evidencePlan: routed.evidence_plan,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      finalized: recovered.finalized,
+    });
+    expect(projected.canonical_projection.result).toEqual(recovered.finalized.result);
+    expect(projected.workspace_state).toEqual(recovered.finalized.workspace_state);
+
+    const admissionDrift = structuredClone(incomplete);
+    admissionDrift.admissions[0].submitted_proposal.contributors[0].name = "Substituted Person";
+    expect(() => recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: admissionDrift,
+    })).toThrow();
+  });
+
+  it("fails closed when deterministic recovery lacks exact source-bound authority", async () => {
+    const routed = prepareSchemaDirectedSourceBoundResponsePipeline({
+      attemptId: "successor-attempt-0001",
+      trialId: "successor-trial-0001",
+      predecessorRoleIds: ["baseline-attempt-0001", "baseline-trial-0001"],
+      documentId,
+      documentMap,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+      expectedModel,
+      maxOutputTokens: 4096,
+      contextWindowTokens: 32768,
+    });
+    const run = candidate => runSourceBoundResponsePipelineAttempt({
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      invokeRequest: async () => artifact(responseForProposal(candidate)),
+    });
+    const absentAgency = await run({
+      agency: null, publication_citation_excerpt: null, contributors: [], first_table: null,
+    });
+    expect(() => recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: absentAgency,
+    })).toThrow(/non-recoverable required path/u);
+
+    const unsupportedContributor = await run({
+      agency: proposal().agency,
+      publication_citation_excerpt: null,
+      contributors: [{ name: "Stale, S.T.",
+        citation: { chunk_id: chunkId("f"), quote: "Stale, S.T." } }],
+      first_table: null,
+    });
+    expect(() => recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: unsupportedContributor,
+    })).toThrow(/no complete source-bound display name/u);
+
+    const planDrift = structuredClone(routed.evidence_plan);
+    planDrift.byline_page_one_based = 2;
+    expect(() => recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: planDrift,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: unsupportedContributor,
+    })).toThrow(/evidence plan drifted/u);
+
+    const complete = await run(proposal());
+    expect(() => recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: complete,
+    })).toThrow(/Only an incomplete source extraction/u);
   });
 
   it("fails closed when finalized source extraction drifts from its receipt or retained admissions", async () => {

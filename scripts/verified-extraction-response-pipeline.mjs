@@ -42,6 +42,12 @@ function exactKeys(value, expected, label) {
     `${label} keys are invalid`);
 }
 
+function withoutDigest(value, key) {
+  const copy = structuredClone(value);
+  delete copy[key];
+  return copy;
+}
+
 export function deriveRetainedPagePartition({ pageCount, retainedPageNumbers, aggregateTraceRetained }) {
   assertion(Number.isSafeInteger(pageCount) && pageCount > 0,
     "pageCount must be a positive safe integer");
@@ -449,6 +455,137 @@ export function projectSchemaDirectedSourceBoundResponsePipelineResult({
   };
 }
 
+function replayCompletedControllerAttempt({ prepared, documentChunks, attempt }) {
+  exactKeys(prepared, ["document_source_pages", "plan"], "prepared pipeline");
+  exactKeys(attempt, ["admissions", "receipt", "source_extraction"], "pipeline attempt");
+  assertion(attempt.receipt?.outcome?.classification === "completed",
+    "Only a completed response-controller attempt can be replayed");
+  assertion(canonicalJson(attempt.receipt.source_extraction)
+    === canonicalJson(attempt.source_extraction),
+  "Response-controller receipt and returned source extraction drifted");
+  const expected = materializeAdmittedSourceExtraction({
+    plan: prepared.plan,
+    admissions: attempt.admissions,
+    documentChunks,
+    documentSourcePages: prepared.document_source_pages,
+  });
+  assertion(canonicalJson(attempt.source_extraction) === canonicalJson(expected),
+    "Response-controller source extraction does not replay from retained admissions");
+  return expected;
+}
+
+function submittedContributorCandidates(admissions) {
+  const names = [];
+  const seen = new Set();
+  for (const [admissionIndex, admission] of admissions.entries()) {
+    const submitted = admission?.submitted_proposal?.contributors;
+    assertion(Array.isArray(submitted),
+      `admissions[${admissionIndex}] omitted submitted contributor candidates`);
+    for (const [contributorIndex, contributor] of submitted.entries()) {
+      exactKeys(contributor, ["citation", "name"],
+        `admissions[${admissionIndex}].submitted_proposal.contributors[${contributorIndex}]`);
+      assertion(typeof contributor.name === "string" && contributor.name.length > 0,
+        `admissions[${admissionIndex}] submitted an invalid contributor name`);
+      if (seen.has(contributor.name)) continue;
+      seen.add(contributor.name);
+      names.push(contributor.name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Deterministically repairs a completed-but-incomplete schema-directed attempt from the
+ * source pages and model proposals that are already retained by that exact attempt.
+ *
+ * This path deliberately cannot recover the agency, cannot operate on a fatal controller
+ * attempt, and cannot accept model-authored field values directly. The canonical projection
+ * re-derives the publication excerpt and first-table anchor from the frozen source pages. It
+ * uses submitted contributor strings only as candidates, then requires one unique complete
+ * display name for every citation author on the frozen byline page.
+ */
+export function recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+  evidencePlan,
+  prepared,
+  documentChunks,
+  documentTableRegions,
+  documentSourcePages,
+  attempt,
+}) {
+  assertion(canonicalJson(prepared?.plan?.document_routing) === canonicalJson(evidencePlan),
+    "Recovery evidence plan drifted from the controller plan");
+  assertion(canonicalJson(prepared?.document_source_pages) === canonicalJson(documentSourcePages),
+    "Recovery source pages drifted from the prepared pipeline");
+  assertion(canonicalJson(prepared?.plan?.document_validation?.table_regions)
+    === canonicalJson(documentTableRegions),
+  "Recovery table regions drifted from the prepared pipeline");
+  const expected = replayCompletedControllerAttempt({ prepared, documentChunks, attempt });
+  assertion(expected.status === "incomplete" && expected.result === null,
+    "Only an incomplete source extraction can use deterministic recovery");
+  const recoverablePaths = new Set([
+    "contributors",
+    "publication.publication_citation_excerpt",
+    "summary.first_table",
+  ]);
+  assertion(expected.missing_required_paths.length > 0
+    && expected.missing_required_paths.every(field => recoverablePaths.has(field)),
+  "Incomplete extraction contains a non-recoverable required path");
+  assertion(typeof expected.selected.publication.agency === "string"
+    && expected.selected.publication.agency.length > 0,
+  "Deterministic recovery requires an admitted source-bound agency");
+
+  const candidateNames = submittedContributorCandidates(attempt.admissions);
+  const candidateResult = {
+    publication: {
+      agency: expected.selected.publication.agency,
+      publication_citation_excerpt: expected.selected.publication.publication_citation_excerpt,
+    },
+    contributors: candidateNames.map(name => ({ name })),
+    summary: {
+      contributor_count: candidateNames.length,
+      first_table: structuredClone(expected.selected.summary.first_table),
+    },
+  };
+  const canonicalProjection = canonicalizeSchemaDirectedExtraction({
+    plan: evidencePlan,
+    documentChunks,
+    documentTableRegions,
+    documentSourcePages,
+    result: candidateResult,
+  });
+  const workspaceState = buildSchemaDirectedWorkspaceState({
+    canonicalProjection,
+    documentChunks,
+  });
+  const finalized = {
+    extraction_sha256: expected.extraction_sha256,
+    result: structuredClone(canonicalProjection.result),
+    public_citations: structuredClone(canonicalProjection.citations),
+    workspace_state: workspaceState,
+  };
+  const receiptBody = {
+    contract: { name: "pdf-tools.schema-directed-source-recovery", version: 1 },
+    evidence_plan_sha256: evidencePlan.plan_sha256,
+    source_extraction_sha256: expected.extraction_sha256,
+    input_admission_sha256s: structuredClone(expected.input_admission_sha256s),
+    recovered_paths: structuredClone(expected.missing_required_paths),
+    submitted_contributor_candidates_sha256: sha256(Buffer.from(canonicalJson(candidateNames), "utf8")),
+    canonical_projection_sha256: canonicalProjection.projection_sha256,
+    workspace_state_sha256: sha256(Buffer.from(canonicalJson(workspaceState), "utf8")),
+    model_or_provider_calls_made: 0,
+    oracle_accessed: false,
+    benchmark_claim_ready: false,
+  };
+  const recoveryReceipt = {
+    ...receiptBody,
+    receipt_sha256: sha256(Buffer.from(canonicalJson(receiptBody), "utf8")),
+  };
+  assertion(recoveryReceipt.receipt_sha256
+    === sha256(Buffer.from(canonicalJson(withoutDigest(recoveryReceipt, "receipt_sha256")), "utf8")),
+  "Recovery receipt self-digest drifted");
+  return { finalized, recovery_receipt: recoveryReceipt };
+}
+
 export async function runSourceBoundResponsePipelineAttempt({ prepared, documentChunks, invokeRequest }) {
   exactKeys(prepared, ["document_source_pages", "plan"], "prepared pipeline");
   assertion(typeof invokeRequest === "function", "invokeRequest must be a function");
@@ -493,21 +630,7 @@ export async function runSourceBoundResponsePipelineAttempt({ prepared, document
 }
 
 export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentChunks, attempt }) {
-  exactKeys(prepared, ["document_source_pages", "plan"], "prepared pipeline");
-  exactKeys(attempt, ["admissions", "receipt", "source_extraction"], "pipeline attempt");
-  assertion(attempt.receipt?.outcome?.classification === "completed",
-    "Only a completed response-controller attempt can be finalized");
-  assertion(canonicalJson(attempt.receipt.source_extraction)
-    === canonicalJson(attempt.source_extraction),
-  "Response-controller receipt and returned source extraction drifted");
-  const expected = materializeAdmittedSourceExtraction({
-    plan: prepared.plan,
-    admissions: attempt.admissions,
-    documentChunks,
-    documentSourcePages: prepared.document_source_pages,
-  });
-  assertion(canonicalJson(attempt.source_extraction) === canonicalJson(expected),
-    "Response-controller source extraction does not replay from retained admissions");
+  const expected = replayCompletedControllerAttempt({ prepared, documentChunks, attempt });
   if (expected.status !== "complete") {
     throw Object.assign(new Error("Required extraction paths remain unsupported"), {
       code: "incomplete_extraction",
@@ -539,5 +662,5 @@ export function finalizeSourceBoundResponsePipelineAttempt({ prepared, documentC
 export const VERIFIED_EXTRACTION_RESPONSE_PIPELINE_POLICY = Object.freeze({
   name: "pdf-tools.verified-extraction-response-pipeline",
   version: "1.5.0-experimental",
-  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, selects canonical source spans for the publication citation and first actual table, and projects that same canonical state into unique exact page/chunk bindings for the verified workspace. Its page-partition helper derives processed pages only from the ordered retained page inventory and clears that inventory when the aggregate trace is unavailable. It performs no model or provider call by itself.",
+  boundary: "The pipeline derives one exact document-validation object from the retained document map and canonical source-page bundle. Its schema-directed entrypoint routes only the source-bound publication-citation, credited-byline, and first-actual-table pages, then deterministically splits those batches at every source-evidence boundary and until each multi-chunk request fits the frozen model-context upper bound. It retains a typed pre-invocation rejection when even one chunk cannot fit. It repeats and exact-compares that capacity observation immediately before invocation, passes the same source bundle through response admission and final source materialization, and constructs every model request with the controller-frozen batch policy. Its finalization boundary recomputes the complete source extraction from the retained admissions, exact-compares the controller receipt and returned extraction, and exposes both public citations and exact-chunk workspace citations. A separate recovery boundary can operate only on a completed controller attempt whose admitted agency is present and whose missing fields are contributors, publication citation, or first table. It derives citation and table values from the frozen source, accepts submitted contributor strings only as candidates for unique complete byline names in citation order, emits a digest-bound recovery receipt, and refuses every other missing path. Its projection boundary deterministically removes reference-derived contributor noise, preserves complete source-bound display names in citation order, recomputes contributor count, selects canonical source spans for the publication citation and first actual table, and projects that same canonical state into unique exact page/chunk bindings for the verified workspace. Its page-partition helper derives processed pages only from the ordered retained page inventory and clears that inventory when the aggregate trace is unavailable. It performs no model or provider call by itself.",
 });
