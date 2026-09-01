@@ -58,6 +58,15 @@ return numeric confidence.
 - Workspace data lives under
   `~/.pdf-toolkit-files/verified-extraction-workspaces` (or the configured
   private profiles root), not beside the source PDF.
+- POSIX hosts require physical `0700` workspace directories and `0600` state
+  files. Windows does not expose useful POSIX permission bits through Node, so
+  the workflow instead relies on the current-account ACL of the configured
+  private profiles root while retaining physical-file, canonical-path,
+  no-symlink, file-index, size, timestamp, and digest checks.
+- Retained files are individually flushed before publication on every host.
+  Node cannot portably `fsync` NTFS directories, so Windows does not claim the
+  same power-loss directory-metadata guarantee as POSIX hosts; process-crash
+  recovery and fail-closed generation replay remain enforced.
 - The source PDF must remain inside the configured allowed-directory boundary.
   The private workspace root cannot widen that boundary.
 - This surface does not run OCR. Raster-only or truncated evidence stays a gap;

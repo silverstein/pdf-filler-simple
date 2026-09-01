@@ -231,16 +231,41 @@ function modeBits(metadata) {
   return Number(metadata.mode & 0o777n);
 }
 
+function zeroDevice(value) {
+  return value === 0 || value === 0n;
+}
+
+export function workspacePrivateModeMatchesForPlatform(metadata, expectedMode,
+  platform = process.platform) {
+  return platform === "win32" || modeBits(metadata) === expectedMode;
+}
+
+export function workspaceDirectoryFsyncSupportedForPlatform(platform = process.platform) {
+  return platform !== "win32";
+}
+
+export function sameWorkspaceFileIdentityForPlatform(left, right,
+  platform = process.platform) {
+  const deviceMatchesExactly = left.dev === right.dev;
+  const deviceMatches = deviceMatchesExactly || (
+    platform === "win32" && (zeroDevice(left.dev) !== zeroDevice(right.dev))
+  );
+  return deviceMatches && left.ino === right.ino && left.size === right.size
+    && left.mode === right.mode && left.nlink === right.nlink
+    && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
+    && (deviceMatchesExactly || left.birthtimeNs === right.birthtimeNs);
+}
+
 function sameFileIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size
-    && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+  return sameWorkspaceFileIdentityForPlatform(left, right);
 }
 
 async function assertPrivateDirectory(directory, label) {
   const resolved = resolvedAbsolute(directory, label);
   const before = await lstat(resolved, { bigint: true });
   assertion(before.isDirectory() && !before.isSymbolicLink(), `${label} is not a physical directory`);
-  assertion(modeBits(before) === 0o700, `${label} mode must be 0700`);
+  assertion(workspacePrivateModeMatchesForPlatform(before, 0o700),
+    `${label} mode must be 0700`);
   assertion(await realpath(resolved) === resolved, `${label} uses a symlinked or aliased path`);
   const after = await lstat(resolved, { bigint: true });
   assertion(sameFileIdentity(before, after), `${label} changed during inspection`);
@@ -261,6 +286,10 @@ async function ensurePrivateRoot(rootPath) {
 }
 
 async function fsyncDirectory(directory) {
+  // Node cannot open NTFS directories for fsync. Individual retained files are
+  // still flushed before publication; Windows directory-metadata durability is
+  // therefore an explicit host limitation rather than a false POSIX claim.
+  if (!workspaceDirectoryFsyncSupportedForPlatform()) return;
   const handle = await open(directory, constants.O_RDONLY | NOFOLLOW);
   try {
     const metadata = await handle.stat({ bigint: true });
@@ -274,7 +303,8 @@ async function fsyncDirectory(directory) {
 async function readRegularFile(filename, maximumBytes, { allowEmpty = false } = {}) {
   const beforePath = await lstat(filename, { bigint: true });
   assertion(beforePath.isFile() && !beforePath.isSymbolicLink(), `${path.basename(filename)} is not a physical file`);
-  assertion(modeBits(beforePath) === 0o600, `${path.basename(filename)} mode must be 0600`);
+  assertion(workspacePrivateModeMatchesForPlatform(beforePath, 0o600),
+    `${path.basename(filename)} mode must be 0600`);
   assertion(beforePath.size <= BigInt(maximumBytes)
     && (allowEmpty || beforePath.size > 0n), `${path.basename(filename)} size is invalid`);
   const handle = await open(filename, constants.O_RDONLY | NOFOLLOW);
@@ -549,7 +579,8 @@ async function inspectGenerationDirectory(generationPath, staticContext, { stagi
   "generation contains an unexpected entry, type, or symlink");
   for (const entry of entries) {
     const metadata = await lstat(path.join(generationPath, entry.name), { bigint: true });
-    assertion(metadata.isFile() && !metadata.isSymbolicLink() && modeBits(metadata) === 0o600,
+    assertion(metadata.isFile() && !metadata.isSymbolicLink()
+      && workspacePrivateModeMatchesForPlatform(metadata, 0o600),
       "generation artifact is not a physical 0600 file");
   }
   if (!names.includes(MANIFEST_FILE)) {
@@ -2040,7 +2071,8 @@ async function assertNoLinksRecursively(directory) {
     const metadata = await lstat(entryPath, { bigint: true });
     assertion(!metadata.isSymbolicLink(), "workspace deletion refuses a symlink");
     if (metadata.isDirectory()) await assertNoLinksRecursively(entryPath);
-    else assertion(metadata.isFile() && modeBits(metadata) === 0o600,
+    else assertion(metadata.isFile()
+      && workspacePrivateModeMatchesForPlatform(metadata, 0o600),
       "workspace deletion refuses an unexpected file type or mode");
   }
 }
@@ -2085,7 +2117,8 @@ async function removePrivateTreeResumably(directory, { root, faultInjector, dele
     if (error?.code === "ENOENT") return;
     throw error;
   }
-  assertion(initial.isDirectory() && !initial.isSymbolicLink() && modeBits(initial) === 0o700,
+  assertion(initial.isDirectory() && !initial.isSymbolicLink()
+    && workspacePrivateModeMatchesForPlatform(initial, 0o700),
     "resumable deletion target is not a physical 0700 directory");
   await assertNoLinksRecursively(directory);
 
@@ -2098,7 +2131,8 @@ async function removePrivateTreeResumably(directory, { root, faultInjector, dele
         await removeDirectory(entryPath);
       } else {
         const metadata = await lstat(entryPath, { bigint: true });
-        assertion(metadata.isFile() && !metadata.isSymbolicLink() && modeBits(metadata) === 0o600,
+        assertion(metadata.isFile() && !metadata.isSymbolicLink()
+          && workspacePrivateModeMatchesForPlatform(metadata, 0o600),
           "resumable deletion refuses an unexpected file type, mode, or symlink");
         await unlink(entryPath);
         await fsyncDirectory(current);

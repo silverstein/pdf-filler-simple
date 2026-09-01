@@ -19,6 +19,9 @@ import {
   inspectExtractionWorkspace,
   readExtractionWorkspacePage,
   recoverExtractionWorkspace,
+  sameWorkspaceFileIdentityForPlatform,
+  workspaceDirectoryFsyncSupportedForPlatform,
+  workspacePrivateModeMatchesForPlatform,
 } from "../scripts/verified-extraction-workspace.mjs";
 import {
   buildSourceBoundDocumentMap,
@@ -42,6 +45,67 @@ const SCHEMA_BYTES = Buffer.from(JSON.stringify({
 }), "utf8");
 const LEAVES = ["/agency", "/amount"];
 const GENESIS_TX = "1".repeat(32);
+
+function portableWorkspaceStat(overrides = {}) {
+  return {
+    dev: 41n,
+    ino: 9001n,
+    size: 1024n,
+    mode: 0o100600n,
+    nlink: 1n,
+    mtimeNs: 123456789n,
+    ctimeNs: 123456780n,
+    birthtimeNs: 123456700n,
+    ...overrides,
+  };
+}
+
+describe("verified extraction platform filesystem contracts", () => {
+  it("uses NTFS physical identity facts when POSIX device and mode bits are unavailable", () => {
+    expect(workspaceDirectoryFsyncSupportedForPlatform("win32")).toBe(false);
+    expect(workspaceDirectoryFsyncSupportedForPlatform("darwin")).toBe(true);
+    expect(workspacePrivateModeMatchesForPlatform(
+      portableWorkspaceStat({ mode: 0o100666n }),
+      0o600,
+      "win32",
+    )).toBe(true);
+    expect(workspacePrivateModeMatchesForPlatform(
+      portableWorkspaceStat({ mode: 0o100666n }),
+      0o600,
+      "linux",
+    )).toBe(false);
+    expect(sameWorkspaceFileIdentityForPlatform(
+      portableWorkspaceStat({ dev: 0n }),
+      portableWorkspaceStat({ dev: 2660852064n }),
+      "win32",
+    )).toBe(true);
+  });
+
+  it("rejects Windows fallback identity drift and nonzero volume substitution", () => {
+    const pathname = portableWorkspaceStat({ dev: 0n });
+    const descriptor = portableWorkspaceStat({ dev: 2660852064n });
+    for (const drift of [
+      { ino: 9002n },
+      { size: 1025n },
+      { mode: 0o100644n },
+      { nlink: 2n },
+      { mtimeNs: 123456790n },
+      { ctimeNs: 123456781n },
+      { birthtimeNs: 123456701n },
+    ]) {
+      expect(sameWorkspaceFileIdentityForPlatform(
+        pathname,
+        { ...descriptor, ...drift },
+        "win32",
+      )).toBe(false);
+    }
+    expect(sameWorkspaceFileIdentityForPlatform(
+      portableWorkspaceStat({ dev: 41n }),
+      portableWorkspaceStat({ dev: 42n }),
+      "win32",
+    )).toBe(false);
+  });
+});
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");

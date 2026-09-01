@@ -19,10 +19,68 @@ import {
   preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
   readPdfMutationInputsWithinMergeLimit,
+  sameBoundedPdfFileIdentityForPlatform,
   withBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
 
 const CHANGED_MESSAGE = "PDF changed while it was being read. Retry the request.";
+
+function portableStat(overrides = {}) {
+  return {
+    dev: 41n,
+    ino: 9001n,
+    size: 1024n,
+    mode: 33206n,
+    nlink: 1n,
+    mtimeNs: 123456789n,
+    ctimeNs: 123456780n,
+    birthtimeNs: 123456700n,
+    ...overrides,
+  };
+}
+
+describe("sameBoundedPdfFileIdentityForPlatform", () => {
+  it("accepts the exact Windows pathname-device-zero shape", () => {
+    expect(sameBoundedPdfFileIdentityForPlatform(
+      portableStat({ dev: 0n }),
+      portableStat({ dev: 2660852064n }),
+      "win32",
+    )).toBe(true);
+  });
+
+  it("rejects the Windows fallback when any retained identity fact drifts", () => {
+    const pathname = portableStat({ dev: 0n });
+    const descriptor = portableStat({ dev: 2660852064n });
+    for (const drift of [
+      { ino: 9002n },
+      { size: 1025n },
+      { mode: 33188n },
+      { nlink: 2n },
+      { mtimeNs: 123456790n },
+      { ctimeNs: 123456781n },
+      { birthtimeNs: 123456701n },
+    ]) {
+      expect(sameBoundedPdfFileIdentityForPlatform(
+        pathname,
+        { ...descriptor, ...drift },
+        "win32",
+      )).toBe(false);
+    }
+  });
+
+  it("rejects different nonzero devices and keeps POSIX device matching exact", () => {
+    expect(sameBoundedPdfFileIdentityForPlatform(
+      portableStat({ dev: 41n }),
+      portableStat({ dev: 42n }),
+      "win32",
+    )).toBe(false);
+    expect(sameBoundedPdfFileIdentityForPlatform(
+      portableStat({ dev: 0n }),
+      portableStat({ dev: 42n }),
+      "linux",
+    )).toBe(false);
+  });
+});
 
 function createRaceFileSystem(hooks = {}) {
   const state = {
