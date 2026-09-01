@@ -12,6 +12,7 @@ import {
   PDF_CONCURRENT_MODIFICATION_CODE,
   PDF_RESOURCE_LIMIT_CODE,
   createPdfLibMutationRequest,
+  pdfLibStageDeviceMatches,
   runPdfLibMutation,
   selectPdfLibIsolationMode,
   terminateAllPdfLibMutations,
@@ -20,6 +21,16 @@ import { makeDeepMalformedFixtures } from "./helpers/deep-malformed-fixtures.js"
 
 const roots = [];
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("PDF-lib staged file identity", () => {
+  it("accepts only the Windows one-missing-device descriptor shape", () => {
+    expect(pdfLibStageDeviceMatches(0, 2660852064, "win32")).toBe(true);
+    expect(pdfLibStageDeviceMatches(2660852064, 0, "win32")).toBe(true);
+    expect(pdfLibStageDeviceMatches(4, 4, "win32")).toBe(true);
+    expect(pdfLibStageDeviceMatches(4, 5, "win32")).toBe(false);
+    expect(pdfLibStageDeviceMatches(0, 2660852064, "linux")).toBe(false);
+  });
+});
 
 async function fixtureRoot() {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdflib-boundary-")));
