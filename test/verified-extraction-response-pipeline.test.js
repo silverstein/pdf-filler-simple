@@ -445,6 +445,171 @@ describe("verified extraction response pipeline", () => {
     })).toThrow();
   });
 
+  // The source-replay V29 candidate campaign (2026-08-31, product identity a2aa76c) typed four
+  // of its fifteen called documents product_failure / incomplete_extraction. Each of the four
+  // was short exactly ONE required path — summary.first_table for ofr20251037 and pp1890i,
+  // publication.publication_citation_excerpt for ofr20251055 and sir20255039c — with the other
+  // five required paths already admitted. The recovery boundary added here covers both paths,
+  // but the case above exercises it only when all three recoverable paths are missing at once
+  // and nothing has been admitted. These two cases hold the field shape: recovery must supply
+  // the one absent path and carry the already-admitted ones through unchanged.
+  it("recovers a lone missing first table and preserves every already-admitted path", async () => {
+    const routed = prepareSchemaDirectedSourceBoundResponsePipeline({
+      attemptId: "successor-attempt-0001",
+      trialId: "successor-trial-0001",
+      predecessorRoleIds: ["baseline-attempt-0001", "baseline-trial-0001"],
+      documentId,
+      documentMap,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+      expectedModel,
+      maxOutputTokens: 4096,
+      contextWindowTokens: 32768,
+    });
+    const incomplete = await runSourceBoundResponsePipelineAttempt({
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      invokeRequest: async () => artifact(responseForProposal({
+        ...proposal(),
+        first_table: null,
+      })),
+    });
+    expect(incomplete.source_extraction.missing_required_paths).toEqual(["summary.first_table"]);
+    expect(incomplete.source_extraction).toMatchObject({
+      status: "incomplete",
+      selected: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+        summary: { first_table: null },
+      },
+    });
+    const admittedCitation = incomplete.source_extraction.selected.publication
+      .publication_citation_excerpt;
+    const admittedContributors = structuredClone(incomplete.source_extraction.selected.contributors);
+    expect(admittedContributors).toHaveLength(1);
+
+    const recovered = recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: incomplete,
+    });
+    expect(recovered.recovery_receipt).toMatchObject({
+      contract: { name: "pdf-tools.schema-directed-source-recovery", version: 1 },
+      source_extraction_sha256: incomplete.source_extraction.extraction_sha256,
+      recovered_paths: ["summary.first_table"],
+      model_or_provider_calls_made: 0,
+      oracle_accessed: false,
+      benchmark_claim_ready: false,
+    });
+    expect(recovered.finalized.result).toMatchObject({
+      publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+      contributors: [{ name: "Alice B. River" }],
+      summary: {
+        contributor_count: 1,
+        first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values" },
+      },
+    });
+    // The already-admitted paths must survive recovery byte-for-byte; only the absent one moves.
+    expect(recovered.finalized.result.publication.publication_citation_excerpt)
+      .toBe(admittedCitation);
+    expect(recovered.finalized.result.contributors.map(item => item.name))
+      .toEqual(admittedContributors.map(item => item.name));
+    expect(recovered.finalized.public_citations).toMatchObject({
+      "summary.first_table": expect.objectContaining({ page: 1 }),
+    });
+
+    const projected = projectSchemaDirectedSourceBoundResponsePipelineResult({
+      evidencePlan: routed.evidence_plan,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      finalized: recovered.finalized,
+    });
+    expect(projected.canonical_projection.result).toEqual(recovered.finalized.result);
+    expect(projected.workspace_state).toEqual(recovered.finalized.workspace_state);
+  });
+
+  it("recovers a lone missing publication citation and preserves every already-admitted path", async () => {
+    const routed = prepareSchemaDirectedSourceBoundResponsePipeline({
+      attemptId: "successor-attempt-0001",
+      trialId: "successor-trial-0001",
+      predecessorRoleIds: ["baseline-attempt-0001", "baseline-trial-0001"],
+      documentId,
+      documentMap,
+      documentChunks: chunks,
+      documentSourcePages: sourcePages,
+      expectedModel,
+      maxOutputTokens: 4096,
+      contextWindowTokens: 32768,
+    });
+    const incomplete = await runSourceBoundResponsePipelineAttempt({
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      invokeRequest: async () => artifact(responseForProposal({
+        ...proposal(),
+        publication_citation_excerpt: null,
+      })),
+    });
+    expect(incomplete.source_extraction.missing_required_paths)
+      .toEqual(["publication.publication_citation_excerpt"]);
+    expect(incomplete.source_extraction).toMatchObject({
+      status: "incomplete",
+      selected: {
+        publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: null },
+        summary: { first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values" } },
+      },
+    });
+    const admittedTable = structuredClone(incomplete.source_extraction.selected.summary.first_table);
+    const admittedContributors = structuredClone(incomplete.source_extraction.selected.contributors);
+    expect(admittedContributors).toHaveLength(1);
+
+    const recovered = recoverSchemaDirectedSourceBoundResponsePipelineAttempt({
+      evidencePlan: routed.evidence_plan,
+      prepared: routed.prepared,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      attempt: incomplete,
+    });
+    expect(recovered.recovery_receipt).toMatchObject({
+      contract: { name: "pdf-tools.schema-directed-source-recovery", version: 1 },
+      source_extraction_sha256: incomplete.source_extraction.extraction_sha256,
+      recovered_paths: ["publication.publication_citation_excerpt"],
+      model_or_provider_calls_made: 0,
+      oracle_accessed: false,
+      benchmark_claim_ready: false,
+    });
+    expect(recovered.finalized.result).toMatchObject({
+      publication: { agency: "U.S. Geological Survey", publication_citation_excerpt: publication },
+      contributors: [{ name: "Alice B. River" }],
+      summary: {
+        contributor_count: 1,
+        first_table: { page_one_based: 1, anchor_excerpt: "Table 1. Summary values" },
+      },
+    });
+    expect(recovered.finalized.result.summary.first_table.page_one_based)
+      .toBe(admittedTable.page_one_based);
+    expect(recovered.finalized.result.summary.first_table.anchor_excerpt)
+      .toBe(admittedTable.anchor_excerpt);
+    expect(recovered.finalized.result.contributors.map(item => item.name))
+      .toEqual(admittedContributors.map(item => item.name));
+    expect(recovered.finalized.public_citations).toMatchObject({
+      "publication.publication_citation_excerpt": expect.objectContaining({ page: 2 }),
+    });
+
+    const projected = projectSchemaDirectedSourceBoundResponsePipelineResult({
+      evidencePlan: routed.evidence_plan,
+      documentChunks: chunks,
+      documentTableRegions: tableRegions,
+      documentSourcePages: sourcePages,
+      finalized: recovered.finalized,
+    });
+    expect(projected.canonical_projection.result).toEqual(recovered.finalized.result);
+    expect(projected.workspace_state).toEqual(recovered.finalized.workspace_state);
+  });
+
   it("fails closed when deterministic recovery lacks exact source-bound authority", async () => {
     const routed = prepareSchemaDirectedSourceBoundResponsePipeline({
       attemptId: "successor-attempt-0001",
