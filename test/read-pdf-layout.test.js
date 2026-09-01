@@ -1160,6 +1160,27 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
       ],
     });
 
+    const nearAxis = await runFake([fakeOperatorFixture(
+      [2, 2],
+      [
+        linePath(4, 10.0004, 40.0004, 30.0004, 39.5004),
+        linePath(4, 20.0004, 60.0004, 20.5004, 20.0004),
+      ],
+    )]);
+    expect(nearAxis.result.pages[0].ruling_segments.items).toEqual([
+      { orientation: "horizontal", x1: 10, y1: 752.25, x2: 30, y2: 752.25, source_operator_index: 0 },
+      { orientation: "vertical", x1: 20.25, y1: 732, x2: 20.25, y2: 772, source_operator_index: 1 },
+    ]);
+    for (const segment of nearAxis.result.pages[0].ruling_segments.items) {
+      if (segment.orientation === "horizontal") {
+        expect(segment.y1).toBe(segment.y2);
+        expect(segment.x2 - segment.x1).toBeGreaterThanOrEqual(2);
+      } else {
+        expect(segment.x1).toBe(segment.x2);
+        expect(segment.y2 - segment.y1).toBeGreaterThanOrEqual(2);
+      }
+    }
+
     const operations = [];
     const argsArray = [];
     for (let index = 0; index < 1025; index += 1) {
@@ -1232,6 +1253,24 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
     expect(page.ruled_rects).toMatchObject({ status: "available", observed_count: 1, returned_count: 1 });
     expect(page.ruled_rects.items[0]).toEqual({ x: 30, y: 722, width: 20, height: 30, verb: "fill" });
     expect(page.errors.some(error => error.stage === "ruled_rects")).toBe(false);
+  });
+
+  it("retains source-bound ruled rectangles outside the visible viewport", async () => {
+    const fixture = fakeOperatorFixture([2], [rectPath(3, -20, 20, 10, 10)]);
+    const { result, bytes } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: -20, y: 762, width: 10, height: 10, verb: "fill" },
+    ]);
+
+    const validated = validateStructuredToolResult("read_pdf_layout", {
+      content: [{ type: "text", text: "signed ruled-rectangle viewport origin" }],
+      structuredContent: result,
+    });
+    expect(validated.structuredContent).toEqual(result);
+
+    const { pdfjs } = fakePdfjs([fixture]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toEqual(result);
   });
 
   it("accepts an annotations-stage page error through structured-output validation (zyx.8)", async () => {
@@ -2799,6 +2838,7 @@ describe("Extraction IR hostile reconstruction", () => {
     });
     expect(correctRuntime.state.document_options.cMapUrl).toContain("pdfjs-dist/cmaps/");
     expect(correctRuntime.state.document_options.standardFontDataUrl).toContain("pdfjs-dist/standard_fonts/");
+    expect(correctRuntime.state.document_options.wasmUrl).toContain("pdfjs-dist/wasm/");
   });
 
   it("cleans up the real PDF.js task, authenticated document, and page for the encrypted fail-soft oracle", async () => {

@@ -25,11 +25,13 @@ an `isError` result is never forced through a success schema.
 | `apply_text` | active document plus text placement |
 | `bulk_fill_from_csv` | row results and bounded record preview |
 | `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
+| `create_extraction_workspace` | exact source/schema/map identities, genesis generation, leaf obligations, and private workspace state |
 | `create_signature` | saved signature metadata |
-| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets plus document-level region truncation for abandoned table regions |
+| `convert_pdf_to_markdown` | deterministic Markdown, default-on evidence-bounded margin-furniture removal with an exact `remove_page_furniture` opt-out, typed coverage gaps (incl. `MATH_NOT_RECONSTRUCTED`, `PAGE_FURNITURE_REMOVED`, `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), gap-derived page/document conversion status, `pages_needing_vision` routing, normalization/removal counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets plus document-level region truncation for abandoned table regions |
 | `verify_table_proposal` | deterministic accepted/rejected result bound to a fresh source parse, typed B2 coverage/order/header and B3 grid/ruling/ambiguity checks, source/IR/region identity, and source-derived cells plus deterministic GFM only on acceptance; consistency is not proof of unique topology |
 
 | `detect_signature_zones` | detected coordinate zones |
+| `delete_extraction_workspace` | exact identity/generation deletion receipt with no recovery claim |
 | `display_pdf` | active document and form summary |
 | `extract_to_csv` | CSV counts, headers, and bounded row preview |
 | `fetch_pdf_from_url` | active document and download provenance |
@@ -41,6 +43,7 @@ an `isError` result is never forced through a success schema.
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
 | `get_pdf_info` | bounded source-bound page, metadata, form-widget, and inert annotation observations with typed coverage, exact accounting, and a full-envelope digest |
 | `inspect_pdf_accessibility` | source-bound eight-signal structural review with bounded observation and reason codes, fixed limitations, required human review, and `not_established` conclusions |
+| `inspect_extraction_state` | exact current generation, incomplete/abandoned state, active transaction, and retention limits |
 | `get_pdf_resource_uri` | resource URI and local file metadata |
 | `list_signatures` | saved signature summaries, including an empty array |
 | `load_signature` | signature metadata and optional preview |
@@ -51,6 +54,8 @@ an `isError` result is never forced through a success schema.
 | `read_pdf_fields` | active document and form fields |
 | `read_pdf_pages` | bounded page-numbered text |
 | `read_pdf_layout` | versioned bounded Extraction IR with source, geometry, reading order, gaps, and limits |
+| `read_extraction_chunk` | one freshly rebuilt source/schema/map-bound returned chunk |
+| `read_extraction_workspace` | cursor-bound page of chunks, pending leaves, events, proposals, or verification results |
 | `render_pdf_page` | source identity, distinct raw page and PDF.js view geometry, renderer policy, raster dimensions, and PNG/raw-pixel digest evidence |
 | `render_pdf_region` | source identity, PDF.js viewport request coordinates, rendered raster region, page/view geometry, renderer policy, and PNG/raw-pixel digest evidence |
 | `reorder_pdf_pages` | active output document and page order |
@@ -58,8 +63,10 @@ an `isError` result is never forced through a success schema.
 | `rotate_pdf_pages` | active output document and rotation outcome |
 | `search_pdf_text` | bounded page matches |
 | `set_active_document` | populated active-document state |
+| `submit_extraction_proposal` | new immutable generation containing one explicitly unverified leaf proposal |
 | `split_pdf` | input path, output directory, and the page range and page count of every file written |
 | `validate_pdf` | versioned PDF field-validation result |
+| `verify_extraction_proposal` | new immutable generation containing the deterministic cited replay result and typed status |
 
 The following four tools remain intentionally text-only and therefore do not
 advertise `outputSchema`: `list_pdfs`, `list_profiles`, `load_profile`,
@@ -137,7 +144,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete matrix of 40 structured tools and four text-only
+tests assert this complete matrix of 47 structured tools and four text-only
 tools, compile every schema through the pinned SDK validator, reject newer
 unsupported JSON Schema keywords, exercise live success and error branches, and
 require byte-identical source/share runtime files.

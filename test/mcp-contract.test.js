@@ -153,7 +153,24 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // lowered smaller glyph run and writes it as Unicode subscript characters. No
 // tool name, description, input schema, or read-only annotation changes.
 // Previously cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d.
-const TOOL_CONTRACT_SHA256 = "54287c9c708f3a6db5f0f2a6aab6e03d01c3feb1ac4931a79b3f7e42a91b3afa";
+// 2026-08-20: convert_pdf_to_markdown gains default-on evidence-bounded page-
+// furniture removal, its exact opt-out input, PAGE_FURNITURE_REMOVED, and typed
+// removal counts. The tool description, input schema, output schema, renderer
+// identity, and derived Markdown/status/digest can therefore change together.
+// Tool name and annotations remain unchanged. Previously
+// cb7b1b0e77df7bbab2b01dfa940f15cb2eaacb089b25d888c48900e3f071c6d6.
+// 2026-08-20: read_pdf_layout retains finite source-bound ruled rectangles
+// outside the visible viewport, so ruled-rectangle x/y schema coordinates are
+// signed while width and height remain nonnegative. Previously
+// a244791a2359802200a92a8e21d5922a4f129a22cfc9e3ca3ec68654eeac2baa.
+// 2026-09-01: additive model-free verified-extraction workspace lifecycle:
+// exact source/schema binding, cited proposal replay, persisted typed results,
+// and exact-identity deletion. Previously
+// 4f068d3a0a1c311c1c30b8df700e3f384473f10b4a65698ced978f7273a1bd9a.
+// 2026-09-01: reconcile the verified-extraction lifecycle with current-master
+// folder-scope behavior and the 0.12 release line. The lifecycle additions and
+// folder-scope contract are both retained in the combined runtime projection.
+const TOOL_CONTRACT_SHA256 = "06886d6c8c4246e2d1824a9ff71bc8241f7675a4d2e7d97b12e1cbc5725c8c1f";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -187,6 +204,13 @@ const OPEN_NON_IDEMPOTENT_OVERWRITE = Object.freeze({
 });
 
 const TOOL_EFFECT_ANNOTATIONS = {
+  create_extraction_workspace: CLOSED_SESSION_ACTION,
+  inspect_extraction_state: CLOSED_READ,
+  read_extraction_workspace: CLOSED_READ,
+  read_extraction_chunk: CLOSED_READ,
+  submit_extraction_proposal: CLOSED_SESSION_ACTION,
+  verify_extraction_proposal: CLOSED_SESSION_ACTION,
+  delete_extraction_workspace: CLOSED_NON_IDEMPOTENT_OVERWRITE,
   list_pdfs: CLOSED_READ,
   read_pdf_fields: CLOSED_SESSION_ACTION,
   fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
@@ -384,6 +408,7 @@ describe("MCPB static declarations", () => {
     for (const filename of [
       "accessibility-inspection.js",
       "bounded-pdf-file.js",
+      "document-map.js",
       "pdf-comparison.js",
       "index.js",
       "helpers.js",
@@ -403,6 +428,7 @@ describe("MCPB static declarations", () => {
       "qpdf-decrypt-worker.js",
       "resource-uri.js",
       "stderr-suppression.js",
+      "verified-extraction-tools.js",
     ]) {
       const source = await fs.readFile(path.join(REPO_ROOT, "server", filename));
       const share = await fs.readFile(path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "server", filename));
@@ -410,7 +436,16 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(22);
+    expect(mirrored).toHaveLength(24);
+    for (const relativePath of [
+      "scripts/eval-strict-json.mjs",
+      "scripts/verified-extraction-proposal.mjs",
+      "scripts/verified-extraction-workspace.mjs",
+    ]) {
+      const source = await fs.readFile(path.join(REPO_ROOT, relativePath));
+      const share = await fs.readFile(path.join(REPO_ROOT, "pdf-toolkit-mcp-share", relativePath));
+      expect(share, relativePath).toEqual(source);
+    }
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),
@@ -450,7 +485,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(44);
+    expect(tools).toHaveLength(51);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

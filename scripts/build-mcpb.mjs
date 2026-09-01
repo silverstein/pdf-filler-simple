@@ -34,6 +34,7 @@ import {
 import {
   isForbiddenArchivePath,
   PDFJS_EXCLUDED_DIRECTORIES,
+  VERIFIED_EXTRACTION_RUNTIME_FILES,
 } from "./mcpb-packaging-policy.mjs";
 import {
   QPDF_WASM_RUNTIME_ASSETS,
@@ -73,6 +74,7 @@ const PROTECTED_PDFJS_VERSION = "5.4.624";
 export const SERVER_FILES = [
   "accessibility-inspection.js",
   "bounded-pdf-file.js",
+  "document-map.js",
   "helpers.js",
   "index.js",
   "layout-extraction.js",
@@ -93,9 +95,12 @@ export const SERVER_FILES = [
   "table-proposal-verification.js",
   "type3-cm-pk-reference.js",
   "type3-cm-reference.js",
+  "verified-extraction-tools.js",
 ];
+export { VERIFIED_EXTRACTION_RUNTIME_FILES } from "./mcpb-packaging-policy.mjs";
 const FIRST_PARTY_TEXT_FILES = [
   ...SERVER_FILES.map(filename => `server/${filename}`),
+  ...VERIFIED_EXTRACTION_RUNTIME_FILES,
   "dist-ui/index.html",
   "LICENSE",
   "README.md",
@@ -228,6 +233,9 @@ function copyRegularFile(sourceRelativePath, destinationRelativePath, stagingDir
 function copyRuntimeSource(stagingDir) {
   scanFirstPartyInputs();
   for (const filename of SERVER_FILES) copyRegularFile(`server/${filename}`, `server/${filename}`, stagingDir);
+  for (const filename of VERIFIED_EXTRACTION_RUNTIME_FILES) {
+    copyRegularFile(filename, filename, stagingDir);
+  }
   copyRegularFile("dist-ui/index.html", "dist-ui/index.html", stagingDir);
   /*
    * The QPDF WebAssembly runtime is not first-party text, so it is bound by
@@ -944,6 +952,13 @@ function verifyStagedProductionGraph(stagingDir, packages) {
   if (JSON.stringify(archivedServerFiles) !== JSON.stringify(SERVER_FILES)) {
     throw new Error(`Staged server inventory mismatch: ${archivedServerFiles.join(", ")}`);
   }
+  const archivedVerifiedExtractionFiles = paths
+    .filter(filename => filename.startsWith("scripts/"))
+    .filter(filename => VERIFIED_EXTRACTION_RUNTIME_FILES.includes(filename));
+  if (JSON.stringify(archivedVerifiedExtractionFiles)
+    !== JSON.stringify(VERIFIED_EXTRACTION_RUNTIME_FILES)) {
+    throw new Error(`Staged verified-extraction inventory mismatch: ${archivedVerifiedExtractionFiles.join(", ")}`);
+  }
   const uiFiles = paths.filter(filename => filename.startsWith("dist-ui/"));
   if (JSON.stringify(uiFiles) !== JSON.stringify(["dist-ui/index.html"])) {
     throw new Error(`Staged UI inventory mismatch: ${uiFiles.join(", ")}`);
@@ -969,6 +984,7 @@ function verifyStagedProductionGraph(stagingDir, packages) {
     "package.json",
     SBOM_FILENAME,
     "server/index.js",
+    ...VERIFIED_EXTRACTION_RUNTIME_FILES,
     "dist-ui/index.html",
     "node_modules/pdfjs-dist/legacy/build/pdf.mjs",
     "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",

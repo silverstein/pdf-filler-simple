@@ -44,6 +44,189 @@ Passing a lower layer does not imply a higher-layer pass. In particular, direct
 stdio success does not prove Claude Desktop integration, and a screenshot does
 not prove the output file is correct.
 
+### Experimental structured-output admission
+
+The internal `scripts/verified-extraction-response-admission.mjs` helper is a
+zero-inference preparation contract for a successor to the private long-document
+evaluation. It is deliberately absent from the MCP server and release packages.
+It treats output-token-cap termination as typed truncation evidence, rejects
+duplicate JSON members before object construction, bounds contributor output,
+and admits citations only when both the submitted quote and claimed value map
+uniquely to an exact current-document chunk and to the canonical normalized
+PDF.js page text bound to the same PDF bytes. The canonical source-page bundle
+is derived only from a complete retained PDF.js text-item denominator and binds
+the PDF, PDF.js package, every page string, and its own digest. Token projection
+permits renderer-only whitespace around punctuation while preserving the exact
+canonical page span; it does not join or alter source tokens. Every admitted
+citation retains the submitted quote, chunk replay, canonical page replay,
+UTF-8 byte ranges, and all corresponding digests. Independent replay requires
+both the exact chunks and the exact source-page bundle. Reference,
+bibliography, and works-cited sections are
+evidence-ineligible and should not receive a model call. A later explicit
+`Appendix` heading reopens source eligibility for that appendix; the pipeline
+splits a caller batch at that transition so reference and appendix chunks can
+never share one request.
+
+A structurally known field that fails source replay is not allowed to erase
+independently valid fields or masquerade as valid. The admitted proposal replaces
+that field with its schema-safe `null` or empty-array value and retains a
+digest-bound `rejected/not_source_bound` field outcome and message. The original
+strictly parsed proposal and its digest remain separate from the admitted partial
+proposal and its digest. Contributor arrays are all-or-nothing: one invalid,
+duplicate, stale, or overflowed contributor rejects the whole contributor field
+rather than creating an apparently complete shortened list. Malformed envelopes,
+duplicate JSON members, unknown top-level fields, and reference-section calls
+still reject the whole response.
+
+`publication_citation_excerpt` must replay as a bounded 50–700-character
+canonical source span, begin with `Suggested citation:` whenever that label
+exists in the document, and retain DOI support. `first_table` has an additional
+source-heading gate. Its page must contain the first exact capitalized
+`Table 1.` or `Table 1.x.` heading whose longest bounded source prefix uniquely
+replays to one retained chunk;
+contents/list pages are excluded before the candidate is frozen. Abandoned
+table regions remain bound when present, but they are not a complete table
+inventory: confidently reconstructed tables do not appear in that collection.
+This source-only classifier is an experimental deterministic heuristic for the
+current evaluation corpus, not a general proof of table semantics or topology.
+The admitted
+anchor must begin with `Table 1`, contain 20–360 canonical characters, and bind
+the selected source heading prefix. The request exposes that exact prefix rather
+than asking the model to guess the source-bound extent. The admission retains
+the selection and its digest, plus the exact abandoned-region evidence when one
+exists on that page.
+Missing, ambiguous, stale, substituted, contents-only, or semantically short
+evidence produces a typed rejected field rather than an invented table
+location.
+
+The V16 retained-evidence replay exposed two composition requirements around
+that boundary. Model requests now label every source chunk with its exact
+physical PDF page, include the canonical source page text, and identify the
+first classified actual-data-table page; `first_table` is disabled in every
+other batch. Source-page prompt material is fail-closed under explicit per-page
+and aggregate UTF-8 byte limits; it is never silently truncated. The prompt
+explicitly allows unsupported fields to remain null or empty and forbids deriving a physical
+page from printed labels or table numbers. It also requires one complete
+human-readable contributor name per item and forbids combined `and`/semicolon
+names. A typed malformed or truncated batch
+is retained as rejected but does not prevent later frozen batches from running.
+Only strictly admitted proposals contribute to the aggregate, while invocation
+or controller failures remain fatal. These changes add no retry, repair
+malformed JSON, weaken citation replay, or authorize a model/provider call.
+
+The V17 retained run then isolated a representation-only boundary: 184 of 185
+model responses contained duplicate-key-safe strict JSON inside exactly one
+lowercase `json` Markdown fence, while the sole direct JSON response was
+admitted. Admission now recognizes only that one finite wrapper grammar—three
+backticks plus lowercase `json`, one LF, the strict JSON payload, one LF, and
+the closing three backticks—with no surrounding bytes. Generic or uppercase
+fences, missing boundaries, prose, multiple or nested fences, malformed JSON,
+and duplicate members still fail closed. The admission retains the exact
+payload, its digest, the raw-content digest, and an explicit representation
+kind so downstream replay can reconstruct the original content before scoring.
+This does not normalize arbitrary Markdown or weaken any source, citation,
+table, schema, chunk, or cross-document check.
+
+The caller must supply chunks from a separately validated, SHA-bound document
+map; the helper rehashes each chunk and binds the complete ordered chunk scope
+but does not replace document-map source/schema/renderer validation.
+
+Source replay is the primary evidence property. Whitespace projection does not
+silently rewrite the submitted proposal: its submitted strings remain bound by
+the parsed proposal and response digests while the exact source spans remain the
+primary replay evidence. Exact equality to one retained
+oracle quote is a separate secondary evaluation signal because a source can
+contain multiple valid literal spans. Derived counts are recomputed from admitted
+objects rather than accepted as model arithmetic. These controls do not repair
+or authorize an already-consumed campaign, invoke a model, expose the helper as
+a product feature, or make a benchmark/public claim.
+
+A measured successor must freeze a new comparison and campaign authority before
+execution. Its trial and attempt identities must be disjoint from the consumed
+V13 campaign, and it must bind the exact response-admission source, proposal
+schema, reference-section policy, document-map identity, and complete ordered
+chunk-scope digest. Zero-inference verification of those bindings precedes any
+new local-model authorization; this source-only tranche creates no such
+authorization.
+
+The matching internal `scripts/verified-extraction-response-controller.mjs`
+composes that admission boundary over one separately validated document map.
+It freezes the complete ordered chunk denominator, partitions it into
+contiguous batches, stops model-call eligibility at the first
+bibliography/references heading, and retains one attempt receipt for complete,
+truncated, malformed, source-replay-rejected, or controller-failure outcomes.
+Contributor count is derived from unique exact admitted names and admission
+digests rather than accepted from the caller. The controller accepts an
+invocation callback but performs no model/provider call itself, remains absent
+from server/share inventories, and keeps `benchmark_claim_ready: false`.
+
+The internal `scripts/verified-extraction-response-pipeline.mjs` is the required
+composition boundary for a measured caller. It derives the controller's exact
+document-validation object from the retained document map and canonical
+source-page bundle, carries that same bundle through plan replay and response
+admission, and constructs each request from the controller-frozen batch policy.
+Callers therefore do not independently author the map, source-page, table,
+renderer, schema, chunk-scope, or batch-policy bindings at each handoff. Missing,
+duplicated, substituted, or drifted bindings reject before the invocation
+callback. The helper remains internal experimental source, performs no model or
+provider call, and grants no execution or benchmark authority.
+
+This boundary closes the integration failure measured in the consumed V19
+campaign: all 30 candidate documents retained their source layouts and maps,
+then failed before inference because the caller omitted the newly mandatory
+source-page digest/object at the response-controller handoff. V19 remains
+immutable failure evidence; this source repair neither retries nor retroactively
+changes that campaign.
+
+The consumed V20 campaign then exposed a later semantic seam. Response
+admission successfully retained canonical source-page spans, including spans
+whose chunk rendering differed only in whitespace, but the measured caller
+discarded some of those admitted values by applying a second byte-exact chunk
+substring check during final merge. The controller now owns one digest-bound
+source materialization after admission. It independently replays every
+admission against the frozen batch policy, exact chunks, and canonical
+source-page bundle, then selects values and citations directly from those
+validated replay spans. Each retained citation exposes a canonical-page form
+for scoring and the separately replayed exact-chunk byte range for workspace
+verification, so callers do not reinterpret offsets between those consumers.
+It retains exact missing paths for incomplete results
+and never treats a controller-admitted span as unsupported merely because its
+chunk rendering contains different whitespace. Wrong-page, cross-chunk,
+forged, substituted, ambiguous, or drifted evidence still rejects before
+materialization. This is a source-only correction over preserved evidence; it
+does not retry V20, authorize another campaign, or qualify integration.
+
+V20 also retained one fatal local-model context failure: a 32,976-token prompt
+reached a runtime frozen at 32,768 tokens while the request reserved additional
+output. Current response plans bind the exact model context and a conservative
+two-message capacity policy. The pipeline measures the canonical UTF-8 request
+shape with a one-token-per-byte upper bound plus a fixed frozen-chat-template
+ceiling, adds the full reserved output, and deterministically splits contiguous
+multi-chunk batches until they fit. It repeats the exact capacity observation
+immediately before invocation. If even one chunk cannot fit, the batch is
+retained as a typed `model_context_capacity_exceeded` product failure with zero
+model calls; later frozen batches and the document denominator remain intact.
+The byte upper bound intentionally favors fail-closed extra splitting over an
+ambient tokenizer or an endpoint-side token-count probe. Its two-message shape,
+model identity, context, estimator, template ceiling, request digest and output
+reservation are all digest-bound. This source repair does not retry V20 or
+authorize a new campaign.
+
+The consumed V26 campaign proved the frozen 283-call ceiling, but also exposed
+a caller-side finalization defect. Seventeen documents reached a completed
+response-controller receipt. Six of those also retained a complete canonical
+source materialization, but the caller rebuilt state from raw admitted
+proposals using the obsolete chunk-substring merge and incorrectly reported
+`incomplete_extraction`. The other ten materializations were genuinely
+incomplete, usually because `summary.first_table` was absent. The pipeline now
+provides one fail-closed finalizer: it recomputes materialization from the
+retained admissions, exact-compares the returned extraction and controller
+receipt, and projects the already validated public and workspace citation forms
+into caller state. Drifted receipts, citations, admissions, and incomplete
+materializations reject; the finalizer does not infer or fill a missing field.
+V26 remains immutable zero-completion evidence, and this correction authorizes
+no campaign, retry, integration, benchmark, or public claim.
+
 ## Corpus design
 
 The corpus is versioned, anonymized, licensed for its use, and split so that
@@ -63,6 +246,91 @@ Cover at least these families:
 Public fixtures belong in the repository only when redistribution is clearly
 allowed. Confidential or user-supplied documents stay outside Git; derived
 synthetic fixtures should reproduce the failure without retaining private data.
+
+### External olmOCR-bench regression gate
+
+The tracked olmOCR-bench gate measures page-1 Markdown extraction and typed-gap
+coverage across an external 1,403-PDF corpus. The corpus is not vendored. Its
+upstream revision, seven JSONL inputs, metadata, and canonical PDF inventory are
+pinned in `test/fixtures/eval/olmocr/manifest.v1.json`. Download the ODC-BY
+dataset separately and verify all bytes before executing product code:
+
+```bash
+npm run eval:olmocr -- verify --bench-root /absolute/path/to/olmOCR-bench
+```
+
+A full release-candidate run and score run on a POSIX Linux or macOS host and
+use exclusive, atomic, mode-`0600` JSON outputs outside the repository.
+Existing outputs are never overwritten:
+
+```bash
+npm run eval:olmocr -- run \
+  --bench-root /absolute/path/to/olmOCR-bench \
+  --output /private/evidence/run.json
+# Retain the printed run SHA-256 independently before scoring.
+npm run eval:olmocr -- score \
+  --bench-root /absolute/path/to/olmOCR-bench \
+  --run /private/evidence/run.json \
+  --run-sha256 PRINTED_RUN_SHA256 \
+  --output /private/evidence/score.json
+```
+
+The runner starts the candidate and every descendant inside a fail-closed
+OS process-tree boundary with no network namespace on Linux or a deny-network
+sandbox on macOS. A pinned Node preload denies common network APIs in the main
+process as defense in depth. The report binds the isolation executable and
+policy, Node executable, Node,
+V8, ICU/Unicode, platform, architecture, the exact installed dependency tree, evaluator,
+candidate source tree, and network preload. Provider credentials and proxy
+variables are not inherited. A host without the required isolation mechanism
+cannot run or qualify. `score` accepts only a mode-`0600`, current-user
+owned run whose independently retained digest is supplied explicitly, and it
+re-verifies the exact clean Git candidate and installed runtime before scoring.
+
+The headline is the three-bucket decomposition excluding math: `pass`,
+`failed_flagged`, and `failed_silent`. Percentages use attempted tests only;
+`not_run` remains a separate count. Math is shown separately because it uses
+a normalized-string containment proxy rather than the upstream rendered-bbox
+symbol-layout test. Exact Unicode superscript and subscript presentation forms
+are folded back to their base characters for matching because the corpus uses
+flat TeX-like math strings and the retained reference predates the product's
+presentation-preserving script projection. `failed_flagged` requires a gap relevant to the test: a
+whole-text failure or truncation can cover missing content, table gaps cover
+only table tests, and the math gap covers only math. Image/OCR gaps cover a
+failure only when the scored extraction body is empty; they never excuse
+forbidden text emitted by an `absent` failure. It is not a correctness pass.
+The JavaScript fuzzy and table approximations are useful for internal
+directional regression tracking only.
+Every report therefore sets `benchmark_claim_ready` to false and prohibits a
+public benchmark claim. A limited run, dirty candidate, conversion failure,
+corpus mismatch, or binding mismatch is non-qualifying.
+
+The `score` command is an executable gate, not just a report generator. It
+exits `0` only when the run is qualifying and the pinned no-regression policy
+passes: non-math pass count cannot fall, non-math silent failures cannot rise,
+math silent failures cannot rise, and every category must preserve its pass
+and silent-failure bounds. It writes the report before returning exit `2` for a
+qualification or regression failure so the blocking evidence is retained.
+The manifest binds the reference run, scorer digest, and exact reference
+counts. Changing scorer semantics requires an explicit baseline review and
+re-pin.
+
+Ordinary candidate scores include a `deprecated_candidate_profile` section to
+show how that candidate would look under the discarded first-run rules. It is
+not a historical-compatibility assertion and is never gating. Reproducing the
+original 2026-08-19 result is a separate exact-byte operation: use the retained
+run whose digest is pinned in the manifest.
+
+```bash
+npm run eval:olmocr -- verify-reference \
+  --bench-root /absolute/path/to/olmOCR-bench \
+  --run /private/evidence/pinned-first-run.jsonl \
+  --output /private/evidence/reference-verification.json
+```
+
+That command refuses any other run bytes and succeeds only when the deprecated
+profile reproduces 921 / 2,922 / 3,176 and the primary scorer reproduces every
+threshold used by the tracked regression gate.
 
 ### Executable corpus v0
 
@@ -109,6 +377,352 @@ visibly reversed two-page PDF: it remains non-empty, parseable, and has the
 correct page count, but the geometry scorer rejects the swapped page order.
 This is the minimum adversarial guard against tests that only prove a PDF was
 written.
+
+### Verified long-document extraction contract v1
+
+`test/fixtures/eval/verified-extraction/manifest.v1.json` freezes the private
+P0 contract for a possible Verified Extraction Workspace before any candidate
+product implementation or paired model run. The admitted corpus contains only
+three deterministic ODA-authored synthetic PDFs: 288 pages, 97 schema-leaf
+values, 43 citation obligations, 27 keyed-array items, and one replayable
+calculation. It contains no personal data or third-party source-document bytes.
+
+Regenerate and verify the corpus with:
+
+```bash
+node scripts/eval-generate-verified-extraction-fixtures.mjs
+node scripts/eval-verified-extraction-contract.mjs
+```
+
+The manifest binds every PDF, target schema, truth oracle, and citation oracle
+by exact byte length and SHA-256 digest. It binds each canonical protocol
+payload and the scorer and generator sources by SHA-256. Verification independently
+checks PDF page counts with PDF.js and pdf-lib, validates truth against the
+declared schema subset, replays citation quotes on the declared pages, checks
+key uniqueness, recomputes all denominators, and replays calculations. The
+generator is byte-deterministic; any generator, scorer, protocol, or retained-
+artifact change changes the manifest digest and invalidates prior v1 results.
+A semantic contract change must be reviewed as an explicit version revision.
+
+The frozen baseline is the best agent-managed workflow available from the
+current public PDF tools. The preregistered candidate may add a source-bound
+document map, stable bounded chunks, local intermediate state, pagination,
+typed uncertainty, and deterministic replay, but it may not put a model inside
+the MCP server, expose numeric confidence, read the truth oracles, silently
+truncate, or perform unreported provider egress. A comparison must use the same
+host model and version, settings, source and schema bytes, time budget, retry
+budget, and scorer. Each role separately binds the exact exercised PDF Tools
+Git commit and either its source-tree digest or its packaged-artifact digest.
+Baseline and candidate product identities may differ, but neither may be
+missing, inferred from the branch name, or substituted after execution.
+
+The v1 manifest explicitly authorizes zero measured executions. Before any
+future baseline call, the execution lane must retain one immutable comparison
+authority. It binds the exact benchmark-manifest digest, both workflow protocol
+bindings, scorer binding, shared model/provider/version,
+host/platform/architecture/runtime, canonical settings, time and retry budgets,
+the exact baseline product identity, the full admitted-document set, both roles,
+every trial, every primary and retry attempt slot, and the
+`no_product_replacement_harness_retry_only` policy. The candidate product
+identity is deliberately absent and recorded as `pending_implementation`.
+This permits the governed current-tools baseline to run before the candidate
+exists.
+
+After candidate implementation and before candidate execution, the lane must
+retain a subordinate candidate execution authority. It adds only the exact
+candidate product identity and a derived execution-plan digest bound to the
+unchanged comparison-authority digest. It cannot override frozen protocols,
+scorer, model, host, settings, budgets, denominator, retry policy, or attempt
+identities. Creating it does not change the comparison digest, baseline
+execution-plan digest, or any retained baseline receipt. Baseline results bind
+the comparison authority as their role authority; candidate results bind both
+the comparison and later candidate authority. The scorer rejects identity,
+plan, trial, attempt, or chronology drift.
+
+A complete campaign receipt accounts for every frozen slot exactly once as a
+product result, harness
+failure, or an explicitly unused retry. Aggregate verification re-scores every
+retained product result from the frozen document context; it does not trust a
+caller-supplied score or success flag. It rejects omitted, duplicate, substituted,
+unplanned, resumed, or replacement attempts. Product failures and trials ending
+in harness failure remain in the frozen trial denominator. The aggregate receipt
+also publishes campaign-wide frozen document, leaf, citation, keyed-array, and
+calculation denominators with deterministically recomputed numerators; a trial
+ending in harness failure contributes its full obligations and zero numerators.
+Aggregate completion requires both the immutable comparison authority and the
+later candidate execution authority, even when all candidate attempts end in
+harness failure.
+
+Product identity uses the canonical `pdf-tools-product-identity.v1` shape:
+source execution binds a 40-hex Git commit and its 40-hex Git tree; packaged
+execution binds a 40-hex Git commit and the exact package SHA-256. Contract
+validation proves only syntactic shape and immutable digest binding. It does
+not prove that the Git object or package exists or that those bytes were
+actually exercised. E9E.2 therefore remains blocked until an independent
+preflight verifies the commit and observed clean tree, or the commit and
+observer-computed digest of the exact executed package. That retained preflight
+and independent observation are execution evidence, not an inference from this
+contract or its unit fixtures.
+
+E9E.2 must independently retain the comparison authority before baseline and
+the subordinate candidate authority before candidate execution; timestamp
+ordering alone is not evidence of preregistration. Missing or mismatched
+bindings are harness failures and cannot produce a role score or complete
+campaign receipt.
+
+Primary scoring is exact and deterministic: schema validity, leaf precision
+and recall, keyed-array precision and recall, citation replay, calculation
+replay, silent omissions, and truncation. The frozen denominator comes from the
+truth and citation oracles, never candidate output. Harness failures and
+product failures are separate named taxonomies. A model judge may provide
+secondary qualitative analysis but cannot change, excuse, or override a
+deterministic failure.
+Extra submitted citation paths fail the primary gate. Rates with a zero
+denominator are `null` (not applicable) and must be excluded from macro
+averages, never treated as 100 percent.
+
+Two PDFs are development cases. `citation-calculation-72` is held-out
+calibration: its truth and citation files are validator-only until both paired
+protocols and scorer bindings are frozen. Failed runs remain in the denominator;
+they cannot be replaced, tuned away, or omitted. A retry may follow a retained
+harness failure only within the frozen slots; no retry may follow or replace a
+product result, including a deterministically failing result.
+
+VAREX, RealDoc-Bench, and LongExtractBench-50 are recorded as external
+candidates but are explicitly not admitted. VAREX does not match this frozen
+long-document workload. RealDoc-Bench source documents require per-document
+license and takedown review even though its published annotations have a dataset
+license. LongExtractBench-50 says source PDFs retain their original rights. No
+external corpus bytes were downloaded or treated as rights-cleared for v1.
+
+This suite is `private_synthetic_calibration_only` and always reports
+`benchmark_claim_ready: false`. It can gate exact internal regressions and
+support a fully qualified private paired comparison. It cannot support a public
+benchmark, state-of-the-art claim, real-world-document claim, provider-quality
+claim, or numeric-confidence claim.
+
+This three-document synthetic campaign is mechanics calibration, not the real
+P1 baseline. A separate rights-admitted public-pilot corpus tranche must pass
+admission and independent review before E9E.2 can be described as a real P1
+baseline.
+
+### Experimental source-bound document map
+
+E9E.3 introduces a pure experimental contract in `server/document-map.js`.
+It is not registered as an MCP tool and is not candidate-execution authority.
+The contract consumes exact PDF and schema bytes plus already validated
+Extraction IR pages. It binds their source and schema SHA-256 identities, the
+pinned parser and IR, the deterministic renderer identity, and the complete
+chunk policy before producing a document-map digest.
+
+Chunks prefer renderer-supported heading boundaries, otherwise use fixed
+line and UTF-8 byte ceilings. Each stable chunk identity binds the source,
+schema, parser, IR, renderer, policy, page and line range, admitted item-ID
+digest, and content digest. Reading a chunk reconstructs the complete map and
+fails closed if any binding or returned descriptor has drifted.
+
+The compact map reuses the active renderer's heading, table-gap, and
+cross-page page-furniture evidence rules. It reports exact observed, returned,
+and omitted counts for pages, source items, source characters, chunks,
+headings, table regions, and typed gaps. Output caps retain counts plus a digest
+of the complete hidden inventory; omitted chunks cannot be read through the
+bounded contract. No OCR, schema filling, numeric confidence, model call,
+provider egress, truth-oracle access, or benchmark claim occurs in this layer.
+
+### Experimental transactional extraction workspace
+
+E9E.4 adds a model-free private artifact contract in
+`scripts/verified-extraction-workspace.mjs`. It is deliberately outside the
+MCP server and both package inventories. Creating a workspace revalidates the
+complete E9E.3 document map from the exact PDF bytes, schema bytes, Extraction
+IR pages, renderer, and chunk policy. It then binds that map, the admitted
+schema-leaf obligations, and strict byte, record, generation, and pagination
+limits into one immutable workspace identity. Loading a workspace recomputes
+the retained document-map digest from the map body itself; re-authoring a
+generation inventory around changed map bytes cannot preserve the workspace.
+
+Creation writes a durable root-level creator claim before exposing any
+initialization directory. That claim binds the workspace, transaction,
+initialization directory, and workspace identity. A crash before the first
+directory or static artifact can therefore be abandoned only with the exact
+physical claim digest and independently retained initialization-workspace
+identity. If static identity bytes exist, abandonment reconciles those bytes
+to the same authority before it proceeds. The claim is removed only after
+genesis publication succeeds or after an immutable root-level abandonment
+tombstone is durable.
+
+The workspace root and every generation directory are mode 0700; retained
+files are mode 0600. Physical-path, no-symlink, file-identity, exact-inventory,
+and canonical-byte checks fail closed. Static artifacts are assembled and
+fsynced in a private unique sibling directory. The canonical 0600 pointer is
+retained with those static artifacts and atomically hard-linked into the
+deterministic workspace slot with exclusive no-replacement semantics; a reader
+therefore sees either no pointer or the complete retained pointer bytes, and an
+existing file, link, or empty or non-empty directory is never replaced. A crash
+during static writes cannot expose or strand a partial authoritative workspace.
+Unpublished initialization scratch is never silently pruned; its explicit
+abandonment requires the exact current pointer identity when one exists,
+refuses a missing or substituted creator claim, reconciles any retained static
+identity, writes a nonreplaceable transaction tombstone before cleanup, refuses
+links, unsafe modes, writer or generation history, and cannot remove the
+directory named by the authoritative pointer. Creation and genesis recovery
+both consult the tombstone, so an abandoned transaction can never be reused.
+Creation, genesis recovery, and abandonment share one exclusive per-transaction
+operation lease. Its exact owner bytes are atomically hard-linked into place;
+a live owner rejects every overlapping operation, while a dead owner can be
+reclaimed by exact physical identity. Creation holds the lease from before its
+tombstone check through genesis publication, so abandonment cannot linearize
+between any check and filesystem progress.
+Writers first retain one
+exact internal transaction claim, then atomically hard-link those same bytes
+into the external per-workspace operation slot used by deletion. A writer
+cannot mutate generation state until it owns that shared exclusive slot, and
+deletion cannot publish its intent while a writer owns it. If deletion wins
+after a writer's initial scan, the unadmitted internal claim is removed before
+unpublication and cannot advance. The admitted writer then writes append-only
+events and replayed canonical
+state in a staging generation, fsync those artifacts, and write the generation
+manifest last as the commit marker. Only a complete manifest-bound generation
+may be renamed into the immutable linear history. A missing marker, retained
+claim, crash after rename, or incomplete genesis is reported as uncertain and
+requires an explicit exact-transaction recovery decision; incomplete work is
+never guessed complete. The genesis transaction is itself frozen into the
+workspace identity. If a crash occurs after the complete static workspace is
+published but before the genesis writer claim exists, inspection reports
+`initialization_recovery_required`; the dedicated recovery action accepts only
+that already-bound transaction, the exact retained creator-claim digest, and an
+otherwise empty pre-genesis history.
+Abandoned transaction IDs cannot be reused.
+
+Proposals bind an admitted leaf and one or more returned E9E.3 chunk IDs. They
+persist only as `unverified/not_replayed`; this layer has no promotion or result
+path. Stable opaque cursors bind the workspace, retained generation, collection,
+complete collection digest, offset, and page limit. Every page reports exact
+total, returned, and omitted-before/after counts and fails if even one retained
+item exceeds the frozen byte ceiling. Generations are never silently pruned.
+Irreversible workspace deletion requires the exact workspace identity and
+current generation digest, rejects links or unexpected file types, and durably
+publishes a canonical external deletion intent before it unpublishes the
+pointer or removes data. The intent binds the private directory, workspace
+identity, final generation, and pointer bytes; it blocks republication and
+survives partial recursive removal. Exact completion can therefore resume from
+any remaining safe subset without rereading artifacts already removed, and
+clears the intent only after the data directory is durably absent. Completion
+requires the originally returned pointer digest; a complete intent resumes by
+validating and unpublishing an active matching pointer when necessary. Only a
+structurally incomplete intent, or one stale against the exact active
+generation, may be abandoned while that workspace remains authoritative; a
+complete current deletion authority cannot race deletion by taking that path.
+
+This contract performs no model call, provider egress, holdout-oracle access,
+candidate execution, scoring, publication, or benchmark claim. It remains
+experimental and excluded from release artifacts until a separately reviewed
+product-integration tranche authorizes that boundary change.
+
+### Experimental source-replayed proposal verifier
+
+E9E.5 adds the model-free private verifier in
+`scripts/verified-extraction-proposal.mjs`. It loads the named proposal only
+from the exact complete current E9E.4 generation, rejects a second assignment
+to the same leaf, and revalidates the E9E.3 map from the exact PDF bytes,
+schema bytes, Extraction IR pages, renderer, and chunk policy. Citation inputs
+contain only a returned chunk ID, exact UTF-8 byte range, and quote digest. The
+verifier reconstructs the chunk and quote from fresh source; caller text,
+source identity, page, geometry, confidence, and table topology are not proof.
+
+The supported schema subset is explicit and fail-closed. It includes bounded
+objects, arrays, strings, numbers, integers, booleans, nulls, constants, enums,
+exclusive `anyOf`, calendar dates, item and length bounds, `uniqueItems`, and
+the frozen `x-key` convention for keyed arrays. Duplicate JSON members,
+unsupported schema keywords, duplicate whole-array items, missing keyed-array
+identities, and duplicate keyed-array identities reject. The verifier does not
+silently treat an unsupported JSON Schema feature as if it had been enforced.
+String lengths count Unicode code points. Every raw schema numeric token is
+accepted only when its JSON spelling is a canonical safe integer. Decimal,
+exponent, negative-zero, and out-of-range spellings reject from the raw UTF-8
+text before ordinary JSON construction can round or underflow them.
+
+`verified_exact` means a declared identity or narrow ASCII normalization
+replayed the proposed value. `computed_with_inputs` means an allowlisted sum,
+difference, product, or quotient over two or more bounded decimal citations
+replayed exactly as a rational calculation; its retained input-selection status
+remains `unverified_reasoning` because arithmetic replay does not prove that the
+right business inputs were chosen. `source_supported`, `ambiguous`,
+and `unverified_reasoning` retain exact source citations while explicitly
+preserving the semantic judgment that this layer cannot prove. `not_found`
+requires a null proposal, no citations, every returned chunk ID, complete
+accounting, no omitted admitted bytes or chunk material, complete page
+extraction, and no visual-inspection flag. It cannot turn missing or truncated
+scope into an absence claim.
+
+`decimal_ascii` never converts source text to a floating-point value before
+comparison. It compares the bounded source decimal and the canonical JSON
+representation of the proposed number as exact fractions, and rejects proposal
+representations that require exponent or otherwise unsupported numeric syntax.
+
+The canonical result retains and replays the complete content-addressed proposal
+event, including its workspace identity, leaf, proposal value, chunk inventory,
+and unverified state, as well as the proposal value digest. A `not_found` result
+also retains the exact map digest, returned chunk inventory, page states, and
+zero-omission accounting that authorized the complete search. Standalone result
+validation deterministically replays those bindings and the method over retained
+citation bytes, and requires the status, reasons, derived value, and every
+calculation field to match that replay. These hashes prove internal binding, not
+that re-authored bytes belonged to an actual workspace generation; authentic
+workspace membership still requires the exact external workspace and map bytes
+used by `verifyWorkspaceExtractionProposal`. The canonical digest is integrity
+formatting and cannot make an internally impossible re-authored result valid.
+
+This general verifier never promotes table topology. The separately shipped
+`verify_table_proposal` contract remains the only specialized table-structure
+verifier, with its existing fresh-parse, coverage, ordering, and ruling checks.
+E9E.5 performs no model call, provider egress, holdout scoring, candidate
+execution, release packaging, publication, or benchmark claim, and remains
+excluded from both package inventories.
+
+### Experimental source-supported agency evidence
+
+The failed E9E.6 candidate retained source-backed contributors, table regions,
+and occasional publication citations, but every valid model proposal left the
+required publication agency unset. The bounded repair in
+`scripts/verified-extraction-agency-evidence.mjs` does not infer an agency from
+the filename, corpus, report family, or a later-page organizational mention.
+It proposes an agency only when one page-one document-map chunk contains the
+literal parent organization, literal agency, and a recognized publication
+series line. The proposal cites the exact agency string in that same chunk.
+
+The current experimental policy admits only the exact U.S. Department of the
+Interior / U.S. Geological Survey title-page signature. Case changes,
+normalization, missing hierarchy or series evidence, later-page evidence,
+unbalanced duplicated lines, and more than one qualifying chunk reject. A
+completely duplicated title block is admitted only when the parent, agency,
+and identical series line repeat in balanced counts, matching observed
+renderer duplication while preserving one exact citation value.
+
+Document-map version `1.1.0-experimental` preserves every retained first-page
+line even when the renderer's cross-page furniture detector recognizes the
+same masthead elsewhere. This keeps cover-page agency evidence source-citable
+without disabling bounded furniture removal on later pages.
+
+This helper supplies a source-supported candidate proposal; it does not weaken
+the measured schema, scorer, citation replay, or complete-result contract. It
+performs no model call, provider egress, holdout-oracle access, scoring,
+execution authorization, or benchmark claim. It remains internal and excluded
+from the MCP server and both package inventories. Any measured use requires a
+wholly new comparison authority with new trial and attempt identities.
+
+The same internal module also exposes a bounded publication-citation proposal.
+It accepts one exact page 1–4 document-map chunk containing the literal standard
+USGS public-domain disclaimer followed immediately by either the exact
+`Suggested citation:` marker or the standard unlabeled citation form. It retains
+the exact source bytes only through the first DOI-ending sentence and excludes
+associated-data material. Missing or normalized labels, later-page references,
+unsupported series, missing DOI evidence, ambiguous chunks, and non-map chunk
+identities fail closed. As with agency evidence, the helper only proposes; the
+candidate controller must explicitly invoke it and replay its exact citation.
+One labelled citation may follow the last of multiple byte-identical standard
+disclaimers because the sole exact marker makes that source block unambiguous;
+multiple unlabelled disclaimer blocks still reject.
 
 ## Scoring contracts
 
@@ -354,6 +968,142 @@ start and completion timestamps independently for every call, and execute the
 native-host matrix below. Synthetic calibration records cannot satisfy any of
 those prerequisites.
 
+## Schema-directed verified-extraction routing
+
+The experimental verified-extraction pipeline does not treat every document
+chunk as equally relevant to every schema. Its schema-directed entrypoint first
+builds a deterministic evidence plan from the retained document map and
+canonical source-page bundle. For the current publication schema, the plan
+selects only the labeled or source-identified front-matter publication-citation
+page, an earlier credited-name page, and the earliest classified
+actual-data-table page. Reference-section chunks are ineligible. The response
+controller retains the complete document
+chunk denominator while separately binding the routed and unrouted counts, and
+it rejects a routing plan that cannot be rebuilt from the exact retained source
+evidence.
+
+A zero-inference private replay over the 30-document development corpus reduced
+the worst-case context-split request count from the approximately 590 calls
+projected for near-exhaustive coverage to 108 routed calls. On the 11 completed
+results available from the consumed predecessor run, deterministic source-bound
+projection produced 11 semantically valid results and replayed all 74 citation
+obligations under the private source-replay-v2 contract. The older exact-window
+diagnostic matched 21 of those 74 citations; it remains a secondary diagnostic
+because a different literal source span can support the same value.
+
+These are internal product-development measurements, not a rerun campaign or a
+public benchmark. The router and projection perform no model or provider call,
+do not read the private truth or citation oracle while choosing evidence, and
+retain `benchmark_claim_ready: false`. A future measured campaign must freeze
+the exact router/controller bytes and demonstrate its own complete receipts,
+resource usage, and private score before any integration or performance claim.
+
+Private acceptance uses the experimental source-replay scorer rather than
+requiring equality with one hidden excerpt window. The scorer binds the exact
+schema bytes, normalized source-page bundle, PDF and document-map identities,
+and the complete retained chunk inventory. Every required citation must be a
+literal span on the submitted page, support the canonical submitted value, and
+map to a page represented in that bound chunk inventory. Missing, extra,
+duplicated, substituted, stale, or unsupported evidence fails closed. Exact
+equality with the frozen oracle window is reported separately as a diagnostic
+and does not override valid source support.
+
+The routed canonical projection is also the verified-workspace state; it is not
+merely a scoring overlay. Publication, contributors, summary, and citation keys
+are identical between the canonical result and workspace proposal state. Each
+workspace citation deterministically selects the strongest exact retained
+source chunk by literal support, quote and value token coverage, cited-page
+agreement, and finally the frozen document-map chunk order. Its workspace page,
+quote, byte range, and digest describe that replayed chunk itself; the public
+canonical citation remains separately unchanged. This distinction handles
+repeated report headers and renderer/oracle text-window differences without
+inventing support or silently choosing an unbound representation. Missing,
+stale-content, cross-document, or unsupported mappings fail before workspace
+mutation, so reference-derived extras cannot survive in a parallel
+pre-canonical state.
+
+The retained V29 projections were replayed again through the repository scorer:
+11/11 documents were semantically valid, all 74/74 citation obligations replayed
+from their bound source, and zero deterministic failures remained. Only 21/74
+quotes equal the oracle author's chosen window byte-for-byte. This private
+offline replay used no model or provider call, leaves prior scores immutable,
+and does not authorize a benchmark or public claim.
+
+Future verified-extraction campaign writers must keep execution completion and
+product acceptance separate. The repository campaign-completion summary
+consumes the exact retained index bytes rather than a caller-authored parsed
+object. It binds those bytes by both physical and canonical digest, checks the
+seven index authority/runtime bindings plus preflight state against a separate
+trusted expected-binding file, and checks the exact frozen document ID/order
+denominator. Every indexed receipt digest must then bind one exact retained
+receipt file whose document ID and outcome match its row. Result rows are
+retained in frozen order and counted only from their exact `completed`,
+`product_failure`, or `harness_failure` classification. The summary never emits
+an unqualified `ok`; it reports
+`controller_index_completion_status: complete` separately from
+`product_acceptance_status: not_evaluated`. Semantic product acceptance can be
+decided only by the later offline scorer, including when every document row is
+completed.
+
+The exact physical execution-index SHA-256, expected-binding file, and that
+file's separately supplied exact physical SHA-256 pin are trust inputs. They
+must come from the independently frozen authority and denominator, never be
+regenerated from the candidate index being checked. This prevents a fully
+resealed receipt and matching index outcome from replacing the frozen result.
+Replacing all of those trust inputs and the retained artifacts together remains
+outside what an unsigned post-hoc source contract can authenticate. Index,
+expected-binding, and receipt JSON also reject duplicate object members at any
+depth before any binding or outcome is admitted.
+
+The source-controlled post-hoc boundary is read-only:
+
+```bash
+node scripts/summarize-verified-extraction-campaign.mjs \
+  --index /exact/retained/execution-index.json \
+  --index-sha256 <trusted-index-physical-sha256> \
+  --expected-bindings /trusted/expected-bindings.json \
+  --expected-bindings-sha256 <trusted-physical-sha256> \
+  --receipt /exact/retained/receipt-1.json \
+  --receipt /exact/retained/receipt-2.json
+```
+
+It exits zero only when the complete index/receipt set authenticates, regardless
+of the later product-acceptance decision, and exits nonzero on any integrity or
+denominator failure. There is no source-controlled V29/V30 campaign writer to
+wire: the historical stdout producer exists only inside immutable sealed
+evidence. This adapter does not mutate or reinterpret that historical stdout.
+Future executable campaign authorities must call this contract or bind
+equivalent logic before claiming execution completion. Real V29/V30 retained
+indexes and receipts are private evidence rather than stable source-controlled
+fixtures, so repository tests exercise byte-exact synthetic replays; real
+retained replay remains an external evidence-validation step and cannot be
+closed by this repository alone.
+
+A campaign controller may therefore exit zero after it durably retains every
+frozen attempt and the final execution index even when one or more document
+outcomes failed. That exit means only that campaign execution and indexing are
+complete; it is not a product pass. The calibration command keeps its existing
+pass/fail `ok` field and matching exit behavior because calibration is a
+different, one-call mechanics gate rather than a multi-document campaign
+completion contract.
+
+Campaign-wide model-call exhaustion is a typed, denominator-preserving outcome,
+including when it occurs between document batches. Response-controller receipt
+version 3 retains `model_call_budget_exhausted` without silently renaming the
+historical `completed_request_count`; malformed lookalike errors remain ordinary
+controller failures. The field's retained meaning is versioned by campaign:
+V29 historical tool-model trace failure events use a document-local
+completed-request count, while the V30-and-later typed ledger contract uses the
+campaign-wide reserved-call ledger count. In both cases `observed.model_calls`
+and each batch's model-call count
+remain local to that document attempt. A caller can reconstruct the typed error
+only from a digest-valid receipt. Attempt page partitions must be derived from
+the ordered, durably retained page inventory: retained pages survive a later
+model-budget failure, while failure to retain the aggregate trace clears
+processed pages rather than claiming unsupported work. Zero retry and no
+replacement still apply, and every
+later frozen slot remains in the campaign index.
+
 Each trial set includes an invocation run plan that defines the denominator
 before execution. The plan binds the trial-set ID, suite ID and digest, claim
 boundary, semantic operation, fixture instance, and seed. Its signature uses a
@@ -413,6 +1163,22 @@ rather than being discarded as malformed or relabeled as a harness failure.
 Real L5 claims must retain run/host metadata and references without committing
 private document content. A host timeout remains a harness failure even when
 the same task later passes.
+
+## Verified extraction product surface
+
+The model-free workspace primitives qualified during the private verified-
+extraction evaluation are now exposed as an experimental local MCP lifecycle:
+create an exact PDF/schema-bound workspace, page through its document map and
+leaf obligations, submit an explicitly unverified proposal, replay citations
+against fresh source bytes, retain a typed result, inspect state, and delete
+under exact identity/generation bindings. The server does not run a model,
+accept numeric confidence as proof, or import the private benchmark scorer or
+truth oracle. See `docs/VERIFIED_EXTRACTION.md`.
+
+Shipping the workspace does not convert any private campaign into a public
+benchmark claim. Product tests prove deterministic contract behavior; benchmark
+claims still require their separately frozen corpus, authority, denominator,
+execution, score, and rights gates.
 
 ## Native host matrix
 

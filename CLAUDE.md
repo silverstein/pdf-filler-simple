@@ -306,6 +306,11 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 31. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
 32. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
 33. **get_allowed_directories** - Report the folders this server may reach, which configuration layer supplied them, and where the stored config file lives. Read-only; it cannot change the boundary.
+34. **create_extraction_workspace** - Create a private exact PDF-and-schema-bound extraction workspace
+35. **read_extraction_workspace** - Page through returned chunks, pending leaves, proposals, results, or events
+36. **read_extraction_chunk** - Rebuild one returned chunk from fresh PDF bytes
+37. **submit_extraction_proposal** - Retain one explicitly unverified cited leaf proposal
+38. **verify_extraction_proposal** - Replay citations deterministically and retain the typed result without a model inside PDF Tools
 
 ### Current Extraction Boundary
 

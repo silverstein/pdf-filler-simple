@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { openVerifiedRegularFile } from "../server/helpers.js";
+import {
+  openVerifiedRegularFile,
+  outputIdentity,
+  portableFilesystemDevice,
+} from "../server/helpers.js";
 
 // openVerifiedRegularFile defends a TOCTOU race that a real-filesystem test
 // cannot force reliably: the swap has to happen in the window between the lstat
@@ -26,6 +30,25 @@ function fakeHandle(descriptorStat) {
 }
 
 describe("openVerifiedRegularFile identity guard", () => {
+  it("normalizes the unavailable Windows pathname device without weakening POSIX", () => {
+    expect(portableFilesystemDevice({ dev: 0 }, "win32")).toBe("win32-unavailable");
+    expect(portableFilesystemDevice({ dev: 2660852064 }, "win32"))
+      .toBe("win32-unavailable");
+    expect(portableFilesystemDevice({ dev: 41 }, "linux")).toBe("41");
+  });
+  it("uses the portable Windows device identity when reopening transaction artifacts", () => {
+    const shared = {
+      ino: 91,
+      mode: 0o100666,
+      size: 17,
+      mtimeMs: 100,
+      ctimeMs: 101,
+    };
+    expect(outputIdentity({ ...shared, dev: 0 }, "win32"))
+      .toBe(outputIdentity({ ...shared, dev: 2660852064 }, "win32"));
+    expect(outputIdentity({ ...shared, dev: 0 }, "linux"))
+      .not.toBe(outputIdentity({ ...shared, dev: 2660852064 }, "linux"));
+  });
   it("rejects a file whose inode changed between lstat and open", async () => {
     // The name was inspected as inode 100 and opened as inode 200 — a
     // replacement that reused the path in the race window.
@@ -46,6 +69,38 @@ describe("openVerifiedRegularFile identity guard", () => {
 
     await expect(openVerifiedRegularFile(fsOps, "/allowed/doc.pdf"))
       .rejects.toThrow(/changed while it was being opened/);
+  });
+
+  it("accepts only the Windows pathname-device-zero compatibility shape", async () => {
+    const descriptorStat = regularFileStat({ dev: 2660852064, ino: 100 });
+    const fsOps = {
+      lstat: async () => regularFileStat({ dev: 0, ino: 100 }),
+      open: async () => fakeHandle(descriptorStat),
+    };
+
+    await expect(openVerifiedRegularFile(
+      fsOps,
+      "C:\\allowed\\doc.pdf",
+      { platform: "win32" },
+    )).resolves.toMatchObject({ stat: descriptorStat });
+    await expect(openVerifiedRegularFile(
+      fsOps,
+      "/allowed/doc.pdf",
+      { platform: "linux" },
+    )).rejects.toThrow(/changed while it was being opened/);
+  });
+
+  it("still rejects different nonzero Windows volumes", async () => {
+    const fsOps = {
+      lstat: async () => regularFileStat({ dev: 1, ino: 100 }),
+      open: async () => fakeHandle(regularFileStat({ dev: 9, ino: 100 })),
+    };
+
+    await expect(openVerifiedRegularFile(
+      fsOps,
+      "C:\\allowed\\doc.pdf",
+      { platform: "win32" },
+    )).rejects.toThrow(/changed while it was being opened/);
   });
 
   it("closes the descriptor when the identity check fails", async () => {

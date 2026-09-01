@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.17.0",
+  version: "1.19.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.6.0";
 
@@ -67,7 +67,9 @@ const GAP_CODES = new Set([
   "INVALID_TEXT_GEOMETRY",
   "LINK_ANNOTATIONS_UNAVAILABLE",
   "LINK_MAPPING_AMBIGUOUS",
+  "MATH_NOT_RECONSTRUCTED",
   "OCR_NOT_PERFORMED",
+  "PAGE_FURNITURE_REMOVED",
   "PAGE_RANGE_INCOMPLETE",
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
   "SOURCE_CHARACTER_LIMIT_REACHED",
@@ -83,6 +85,7 @@ const GAP_CODES = new Set([
 
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics, centered English-language source structure with section spacing, or numbered or lettered research-paper structure at an established body margin with spacing plus font, size, or exact small-caps evidence. Wrapped heading lines are joined only from matching font and height, a very small vertical gap, and bounded alignment. Narrow vertical labels and ambiguous, very short, or unsupported heading styles remain body text.",
+  "Page furniture is removed only from an extreme top or bottom margin band when a compact line of at most 120 Unicode characters is separated from the body and is either an explicit page-number or provenance pattern, or repeats in the same band on at least two selected pages after bounded digit normalization. Detected headings, their geometric continuations, and source-evidenced table-region lines, including abandoned table regions, are never removed. Every removal is reported by a typed page gap and counted by kind; callers can disable removal to preserve every source line.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
   "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. An inline single-digit stacked fraction is rendered only when consecutive same-font source items, explicit source whitespace, smaller exactly aligned numerator and denominator digits, ordinary prose on both sides, and exactly one thin matching solid-mask bar agree. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and witness glyph-program matches, and a complete operator/text sequence binding. Two witnesses are required unless the source font subset cannot supply them, in which case the entry must declare that font's complete enrolled footprint and every code in it must be present and match. General equations, other fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "A glyph run the source painted smaller and displaced from the baseline of the text it is attached to is written as Unicode superscript characters when it was raised and Unicode subscript characters when it was lowered. This records how the page is set and nothing more: a page raises a mathematical exponent and a footnote reference in exactly the same way, so this does not distinguish the two, does not assert that a raised digit is a power, and does not assert that a lowered one is an index. A displaced run is written only when every one of its characters has a real Unicode form in that direction and the whole run is present on one line, so a run stays flat entire rather than being written in part. Unicode subscript coverage is much thinner than superscript coverage, with no capital letters and only some lowercase ones, so many lowered runs stay flat for that reason alone. A stacked fraction numerator is raised by the same amount but stands clear of the text before it, and is left alone. Where the source set a displaced run without changing font and without leaving any of its base's advance unused, the text layer reports it as part of the base run and no displacement survives to be read, so that run stays flat too and is indistinguishable here from text the page never displaced. A line whose source items cannot all be located within its own extracted text, and a line the stacked-fraction projection rebuilt, keep the text they had rather than being partly rewritten.",
@@ -485,6 +488,123 @@ function headingContinuationIds(page, headings) {
     }
   }
   return continuations;
+}
+
+const PAGE_FURNITURE_BAND_FRACTION = 0.12;
+const PAGE_FURNITURE_LABELLED_PAGE_NUMBER = /^(?:page|p(?:age)?\.?|p[aá]gina|pagina|seite)\s*[:.\-]?\s*(?:\d{1,4}|[ivxlcdm]{1,8})(?:\s*(?:of|de|\/|-)\s*(?:\d{1,4}|[ivxlcdm]{1,8}))?$/iu;
+const PAGE_FURNITURE_BARE_PAGE_NUMBER = /^(?:\d{1,4}|[ivxlcdm]{2,8})(?:\s*(?:of|de|\/|-)\s*(?:\d{1,4}|[ivxlcdm]{1,8}))?$/iu;
+const PAGE_FURNITURE_PROVENANCE = /^(?:©|copyright\b|printed\b|downloaded\s+from\b|please\s+cite\b|journal\s+homepage\b|contents\s+lists\s+available\s+at\b|article\s+in\s+press\b|single-user\s+licen[cs]e\b|https?:\/\/|www\.)/iu;
+
+function pageFurniturePageNumber(text) {
+  // A bare single Roman glyph (especially "I") is ordinary prose often
+  // enough that removing it would be worse than retaining a page number.
+  return PAGE_FURNITURE_LABELLED_PAGE_NUMBER.test(text)
+    || PAGE_FURNITURE_BARE_PAGE_NUMBER.test(text);
+}
+
+function pageFurnitureBand(page, line) {
+  const pageHeight = page.geometry?.display_height;
+  if (!Number.isFinite(pageHeight) || pageHeight <= 0) return null;
+  if (line.y + line.height <= pageHeight * PAGE_FURNITURE_BAND_FRACTION) return "header";
+  if (line.y >= pageHeight * (1 - PAGE_FURNITURE_BAND_FRACTION)) return "footer";
+  return null;
+}
+
+function normalizedPageFurnitureKey(text) {
+  return text.normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/\p{N}+/gu, "#")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function pageFurnitureCandidates(page) {
+  const headings = headingLevels(page);
+  const headingContinuations = headingContinuationIds(page, headings);
+  const analysis = segmentPageLines(page);
+  const tableLineIds = new Set(analysis.segments.flatMap(segment => (
+    segment.kind === "table" ? segment.rows.map(row => row.line.id) : []
+  )));
+  // An abandoned table region is still source-evidenced table content. Keep
+  // all of its rows even if one resembles a page number or repeated footer;
+  // the existing typed table gap is the safe representation of uncertainty.
+  for (const region of analysis.regions) {
+    for (const row of region.run) tableLineIds.add(row.line.id);
+  }
+  const fontEvidence = new Map(lineFontEvidence(page).map(value => [value.line.id, value]));
+  const innerBody = page.lines.filter(line => (
+    pageFurnitureBand(page, line) === null
+    && !headings.has(line.id)
+    && !headingContinuations.has(line.id)
+    && !tableLineIds.has(line.id)
+    && (line.text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 10
+  ));
+  if (innerBody.length < 2) return [];
+  const bodyTop = Math.min(...innerBody.map(line => line.y));
+  const bodyBottom = Math.max(...innerBody.map(line => line.y + line.height));
+  const bodyHeight = median(innerBody
+    .map(line => fontEvidence.get(line.id)?.height ?? line.height)
+    .filter(Number.isFinite));
+  if (!Number.isFinite(bodyHeight) || bodyHeight <= 0) return [];
+
+  return page.lines.flatMap(line => {
+    const band = pageFurnitureBand(page, line);
+    if (band === null || headings.has(line.id) || headingContinuations.has(line.id)
+      || tableLineIds.has(line.id)) return [];
+    const text = line.text.trim();
+    // Long legal/provenance sentences can still be semantically referenced by
+    // the document body. Keep them: this lane removes compact furniture, not
+    // arbitrary margin paragraphs.
+    if (text.length === 0 || text.length > 120) return [];
+    const height = fontEvidence.get(line.id)?.height ?? line.height;
+    if (!Number.isFinite(height) || height > bodyHeight * 1.15) return [];
+    const separation = band === "header"
+      ? bodyTop - (line.y + line.height)
+      : line.y - bodyBottom;
+    if (separation < Math.max(4, bodyHeight * 0.4)) return [];
+    return [{
+      page: page.page,
+      lineId: line.id,
+      text,
+      characters: [...text].length,
+      band,
+      key: normalizedPageFurnitureKey(text),
+      explicitKind: pageFurniturePageNumber(text)
+        ? "page_number"
+        : PAGE_FURNITURE_PROVENANCE.test(text)
+          ? `running_${band}`
+          : null,
+    }];
+  });
+}
+
+function planDocumentPageFurniture(pages, enabled) {
+  const plans = new Map(pages.map(page => [page.page, []]));
+  if (!enabled) return plans;
+  const candidates = pages.flatMap(pageFurnitureCandidates);
+  const repeated = new Map();
+  for (const candidate of candidates) {
+    if (candidate.key.length === 0) continue;
+    const groupKey = `${candidate.band}:${candidate.key}`;
+    if (!repeated.has(groupKey)) repeated.set(groupKey, []);
+    repeated.get(groupKey).push(candidate);
+  }
+  const repeatedKeys = new Set([...repeated]
+    .filter(([, values]) => new Set(values.map(value => value.page)).size >= 2)
+    .map(([key]) => key));
+
+  for (const candidate of candidates) {
+    const groupKey = `${candidate.band}:${candidate.key}`;
+    const kind = candidate.explicitKind
+      ?? (repeatedKeys.has(groupKey) ? `running_${candidate.band}` : null);
+    if (kind === null) continue;
+    plans.get(candidate.page).push({
+      lineId: candidate.lineId,
+      kind,
+      characters: candidate.characters,
+    });
+  }
+  return plans;
 }
 
 /**
@@ -1140,6 +1260,118 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
     || rowHasSpecificMathOperator(row)
     || (row.cells.some(item => /^[()]$/u.test(item.text.trim()))
       && nearbyEquationEvidence(rows, rowIndex));
+}
+
+/**
+ * MATH_NOT_RECONSTRUCTED evidence.
+ *
+ * The renderer never reconstructs mathematics: an equation reaches the Markdown
+ * as the source's own reading-order text, which the `## Conversion limitations`
+ * section has always said in prose. This rule adds nothing to that behaviour.
+ * It only decides, per page, whether the renderer can *prove* from source
+ * evidence that mathematical content was on the page, so a consumer can route
+ * those pages rather than re-read a global paragraph. A page that cannot be
+ * proven mathematical emits nothing: a missing declaration is preferable to a
+ * fabricated one.
+ *
+ * A page qualifies when at least one line the renderer emitted as flat
+ * reading-order text carries all three of:
+ *
+ *   S1 — run shape. The line is upright left-to-right, at most
+ *        MATH_RUN_MAX_LINE_CHARACTERS long, holds at least two structural
+ *        source items, and *every* one of them is a compact math token
+ *        (`compactMathItemText`: one letter, one digit, math punctuation, or
+ *        the operator `log`) or a named operator word. This is the same "short
+ *        compact left-to-right math run" shape the bounded `log`-spacing repair
+ *        already uses to recognise a nearby equation, reused verbatim rather
+ *        than reinvented.
+ *   S2 — an independent mathematical marker on that same line: either an
+ *        unambiguous mathematical glyph (`∑`, `∫`, or `∞`), or a relation `=`
+ *        in a run of at least three items that switches source font resource
+ *        across an adjacent same-baseline pair including a single letter — the
+ *        roman-operator / italic-variable alternation that mathematical
+ *        typesetting produces and running prose does not.
+ *   S3 — the line really was left flat: it is not inside a reconstructed table
+ *        segment, and the stacked-fraction projection neither consumed nor
+ *        rewrote it. Where a construct *was* reconstructed, nothing is claimed
+ *        lost.
+ *
+ * S1 alone is not enough, which is the whole point of the conjunction: a line
+ * of single-character items can be a column of initials or a run of separated
+ * digits. The words `Lim`, `Max`, and `Min` are admitted by S1 so a relation
+ * can corroborate them, but they are not S2 evidence by themselves: `Max 5`
+ * may be prose, a header, or a label. A mathematical symbol or the independent
+ * relation-plus-font evidence is required rather than fabricating a loss
+ * declaration from an ambiguous word.
+ *
+ * Deliberately rejected as triggers:
+ *
+ *   - A raised or lowered run on its own. The renderer's own limitation prose
+ *     states that a page sets a mathematical exponent and a footnote reference
+ *     identically, so a raised run cannot distinguish the two and would emit
+ *     this gap over every footnoted page.
+ *   - `glyph_recoveries` / legacy Computer-Modern Type-3 evidence on its own.
+ *     A recovery record marks a glyph the version-pinned registry *did*
+ *     recover, so it evidences a repair rather than a loss, and the same
+ *     Computer Modern families also set accents and symbols in ordinary prose.
+ *     It proves neither that content was mathematical nor that anything was
+ *     dropped.
+ *   - `text_integrity.status === "suspect"` on its own. Damaged text is not
+ *     mathematics, and it already has its own typed gap
+ *     (TEXT_INTEGRITY_SUSPECT) which this one must not duplicate or weaken.
+ *   - Character-class scoring over the rendered line text ("this looks mathy").
+ *     That is a heuristic guess, not source evidence, and would put a numeric
+ *     judgement where this vocabulary allows none.
+ */
+const NAMED_MATH_OPERATOR = /^(?:Lim|Max|Min)$/u;
+const MATH_RUN_MAX_LINE_CHARACTERS = 80;
+const MATH_RUN_MIN_ITEMS = 2;
+const MATH_RELATION_MIN_ITEMS = 3;
+
+function isMathRunItemText(value) {
+  const text = String(value).trim();
+  return compactMathItemText(text) || NAMED_MATH_OPERATOR.test(text);
+}
+
+function mathRunStructuralItems(row) {
+  return row.cells.filter(item => !isCollapsedWhitespaceRecovery(item)
+    && typeof item.text === "string"
+    && item.text.trim().length > 0);
+}
+
+function hasCrossFontRelationEvidence(items) {
+  if (items.length < MATH_RELATION_MIN_ITEMS) return false;
+  if (!items.some(item => item.text.trim() === "=")) return false;
+  for (let index = 0; index < items.length - 1; index += 1) {
+    const left = items[index];
+    const right = items[index + 1];
+    if (typeof left.font_name !== "string" || typeof right.font_name !== "string"
+      || left.font_name === right.font_name) continue;
+    if (!/^\p{L}$/u.test(left.text.trim()) && !/^\p{L}$/u.test(right.text.trim())) continue;
+    if (sameMathBaseline(left, right)) return true;
+  }
+  return false;
+}
+
+function rowHasSymbolicMathOperator(row) {
+  return row.cells.some(item => /^[∑∫∞]$/u.test(item.text.trim()));
+}
+
+function isUnreconstructedMathRow(row) {
+  const { line } = row;
+  if (line.direction !== "ltr" || line.text.length > MATH_RUN_MAX_LINE_CHARACTERS) return false;
+  const items = mathRunStructuralItems(row);
+  if (items.length < MATH_RUN_MIN_ITEMS
+    || !items.every(item => isMathRunItemText(item.text))
+    || items.some(item => containsUnsafeText(item.text))) return false;
+  return rowHasSymbolicMathOperator(row) || hasCrossFontRelationEvidence(items);
+}
+
+function pageMathNotReconstructed(analysis, fractionPlan) {
+  return analysis.segments.some(segment => segment.kind !== "table"
+    && segment.rows.some(row => !fractionPlan.skipped.has(row.line.id)
+      && !fractionPlan.replacements.has(row.line.id)
+      && isUnreconstructedMathRow(row)));
 }
 
 /**
@@ -2453,9 +2685,25 @@ function emptyNormalizations() {
   return {
     dot_leaders_collapsed: 0,
     page_number_lines_removed: 0,
+    running_header_lines_removed: 0,
+    running_footer_lines_removed: 0,
+    page_furniture_characters_removed: 0,
+    page_furniture_pages: [],
     spaced_hyphens_joined: 0,
     normalized_pages: [],
   };
+}
+
+function recordPageFurnitureNormalizations(normalizations, page, furniture) {
+  if (furniture.length === 0) return normalizations;
+  for (const entry of furniture) {
+    if (entry.kind === "page_number") normalizations.page_number_lines_removed += 1;
+    if (entry.kind === "running_header") normalizations.running_header_lines_removed += 1;
+    if (entry.kind === "running_footer") normalizations.running_footer_lines_removed += 1;
+    normalizations.page_furniture_characters_removed += entry.characters;
+  }
+  normalizations.page_furniture_pages.push(page);
+  return normalizations;
 }
 
 function isPageNumberLine(value) {
@@ -2554,7 +2802,7 @@ function normalizePlainLines(entries, {
  * Table runs cannot carry inline links in this renderer, so their lines are
  * excluded from the plan and any link landing there degrades to a typed gap.
  */
-function analyzePageLinks(page, analysis, headings) {
+function analyzePageLinks(page, analysis, headings, furnitureLineIds = new Set()) {
   const links = page.link_annotations;
   // A truncated annotation list cannot prove that an omitted annotation does
   // not overlap a retained label. Suppress the whole page's explicit-link
@@ -2572,7 +2820,9 @@ function analyzePageLinks(page, analysis, headings) {
     segment.kind === "table" ? [] : segment.rows
   ));
   const excluded = new Set(rows
-    .filter(row => headings.get(row.line.id) || rewritesLineStructure(row.line))
+    .filter(row => headings.get(row.line.id)
+      || furnitureLineIds.has(row.line.id)
+      || rewritesLineStructure(row.line))
     .map(row => row.line.id));
   const plan = planPageLinks(rows, links.items ?? [], excluded);
   return {
@@ -2584,7 +2834,10 @@ function analyzePageLinks(page, analysis, headings) {
   };
 }
 
-function pageGaps(page, analysis, linkState) {
+function pageGaps(page, analysis, linkState, {
+  mathNotReconstructed = false,
+  pageFurniture = [],
+} = {}) {
   const gaps = [];
   const add = (code, message) => gaps.push({ code, page: page.page, message });
   if (linkState?.unavailable) {
@@ -2632,6 +2885,13 @@ function pageGaps(page, analysis, linkState) {
   } else if (page.modality_hint === "mixed-content-candidate" && page.has_image_operations) {
     add("OCR_NOT_PERFORMED", "Images may contain text that is absent because OCR was not performed.");
     add("IMAGE_CONTENT_NOT_RENDERED", "Image content was not rendered into Markdown.");
+  }
+  if (mathNotReconstructed) {
+    add("MATH_NOT_RECONSTRUCTED", "Source-evidenced mathematical content was present on this page and was not reconstructed as mathematics; it remains source reading-order text.");
+  }
+  if (pageFurniture.length > 0) {
+    const kinds = [...new Set(pageFurniture.map(entry => entry.kind))].sort().join(", ");
+    add("PAGE_FURNITURE_REMOVED", `${pageFurniture.length} source line${pageFurniture.length === 1 ? " was" : "s were"} removed as page furniture (${kinds}); removal counts and kinds are reported in normalizations.`);
   }
   if (page.has_vector_paint_operations) {
     add("VECTOR_CONTENT_NOT_INTERPRETED", "Vector-painted content beyond reconstructed ruled or bounded solid-mask table grids was not interpreted as text or table structure.");
@@ -2723,12 +2983,14 @@ function renderPage(page, {
   pageBoundaryBefore = false,
   pageBoundaryAfter = false,
   collectTableProposals = false,
+  pageFurniture = [],
 } = {}) {
+  const furnitureLineIds = new Set(pageFurniture.map(entry => entry.lineId));
   const pageItems = paintedItems(page);
   const headings = headingLevels(page);
   const headingContinuations = headingContinuationIds(page, headings);
   const analysis = segmentPageLines(page);
-  const linkState = analyzePageLinks(page, analysis, headings);
+  const linkState = analyzePageLinks(page, analysis, headings, furnitureLineIds);
   const unsafePage = analysis.tableReason !== null
     || linkState.unavailable
     || linkState.ambiguous
@@ -2749,6 +3011,7 @@ function renderPage(page, {
         }));
     }
     return segment.rows.flatMap(({ line, cells }, rowIndex, rows) => {
+        if (furnitureLineIds.has(line.id)) return [];
         if (fractionPlan.skipped.has(line.id)) return [];
         const spans = linkState.spansByLine.get(line.id);
         const offsets = linkState.offsetsByLine.get(line.id);
@@ -2810,11 +3073,15 @@ function renderPage(page, {
   const normalized = compact
     ? normalizePlainLines(entries, { page: page.page, pageBoundaryBefore, pageBoundaryAfter })
     : { lines: entries.map(entry => entry.text), normalizations: emptyNormalizations() };
+  recordPageFurnitureNormalizations(normalized.normalizations, page.page, pageFurniture);
   const lines = normalized.lines;
   const markdown = lines.length > 0
     ? lines.join("\n")
     : "[No source-backed text was available on this page.]";
-  const gaps = pageGaps(page, analysis, linkState);
+  const gaps = pageGaps(page, analysis, linkState, {
+    mathNotReconstructed: pageMathNotReconstructed(analysis, fractionPlan),
+    pageFurniture,
+  });
   const rendered = {
     page: page.page,
     conversion_status: pageStatus(page, gaps),
@@ -2897,17 +3164,30 @@ function aggregateNormalizations(renderedPages) {
   for (const page of renderedPages) {
     normalizations.dot_leaders_collapsed += page.normalizations.dot_leaders_collapsed;
     normalizations.page_number_lines_removed += page.normalizations.page_number_lines_removed;
+    normalizations.running_header_lines_removed += page.normalizations.running_header_lines_removed;
+    normalizations.running_footer_lines_removed += page.normalizations.running_footer_lines_removed;
+    normalizations.page_furniture_characters_removed += page.normalizations.page_furniture_characters_removed;
+    normalizations.page_furniture_pages.push(...page.normalizations.page_furniture_pages);
     normalizations.spaced_hyphens_joined += page.normalizations.spaced_hyphens_joined;
     normalizations.normalized_pages.push(...page.normalizations.normalized_pages);
   }
   normalizations.normalized_pages = [...new Set(normalizations.normalized_pages)].sort((left, right) => left - right);
+  normalizations.page_furniture_pages = [...new Set(normalizations.page_furniture_pages)]
+    .sort((left, right) => left - right);
   return normalizations;
 }
 
 function validateNormalizations(normalizations) {
   assertion(normalizations && typeof normalizations === "object" && !Array.isArray(normalizations),
     "normalizations must be an object");
-  for (const key of ["dot_leaders_collapsed", "page_number_lines_removed", "spaced_hyphens_joined"]) {
+  for (const key of [
+    "dot_leaders_collapsed",
+    "page_number_lines_removed",
+    "running_header_lines_removed",
+    "running_footer_lines_removed",
+    "page_furniture_characters_removed",
+    "spaced_hyphens_joined",
+  ]) {
     assertion(Number.isSafeInteger(normalizations[key]) && normalizations[key] >= 0,
       `${key} must be a non-negative integer`);
   }
@@ -2915,6 +3195,11 @@ function validateNormalizations(normalizations) {
     && normalizations.normalized_pages.every(page => Number.isSafeInteger(page) && page >= 1)
     && sameJson(normalizations.normalized_pages, [...new Set(normalizations.normalized_pages)].sort((left, right) => left - right)),
   "normalized_pages must be a sorted unique page-number array");
+  assertion(Array.isArray(normalizations.page_furniture_pages)
+    && normalizations.page_furniture_pages.every(page => Number.isSafeInteger(page) && page >= 1)
+    && sameJson(normalizations.page_furniture_pages,
+      [...new Set(normalizations.page_furniture_pages)].sort((left, right) => left - right)),
+  "page_furniture_pages must be a sorted unique page-number array");
 }
 
 /**
@@ -2929,6 +3214,9 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
     "include_page_boundaries must be boolean");
   assertion(result.options?.compact === true || result.options?.compact === false,
     "compact must be boolean");
+  assertion(result.options?.remove_page_furniture === true
+    || result.options?.remove_page_furniture === false,
+  "remove_page_furniture must be boolean");
   assertion(Number.isSafeInteger(result.limits?.max_markdown_bytes)
     && result.limits.max_markdown_bytes >= 1
     && result.limits.max_markdown_bytes <= MAX_MARKDOWN_BYTES_LIMIT, "max_markdown_bytes is out of range");
@@ -2965,6 +3253,10 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
   if (layout !== null) {
     validatePdfLayoutSemantics(layout, { enforceOutputBudget: false });
     validateSupportedLayoutIdentity(layout);
+    const furniturePlans = planDocumentPageFurniture(
+      layout.pages,
+      result.options.remove_page_furniture,
+    );
     assertion(sameJson(result.provenance, provenanceFromLayout(layout)), "source or layout provenance mismatch");
     assertion(result.pages.length === layout.pages.length, "page count does not match layout IR");
     for (let index = 0; index < layout.pages.length; index += 1) {
@@ -2972,6 +3264,7 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
         compact: result.options.compact,
         pageBoundaryBefore: index > 0,
         pageBoundaryAfter: true,
+        pageFurniture: furniturePlans.get(layout.pages[index].page),
       });
       const actual = result.pages[index];
       assertion(actual.page === expected.page, `page ${expected.page} order mismatch`);
@@ -2986,6 +3279,7 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
         compact: result.options.compact,
         pageBoundaryBefore: index > 0,
         pageBoundaryAfter: true,
+        pageFurniture: furniturePlans.get(page.page),
       })),
     )), "normalizations do not match the bound layout IR");
     const expectedMarkdown = renderDocumentMarkdown(
@@ -2993,6 +3287,7 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
         compact: result.options.compact,
         pageBoundaryBefore: index > 0,
         pageBoundaryAfter: true,
+        pageFurniture: furniturePlans.get(page.page),
       })),
       result.options.include_page_boundaries,
       flattenedGaps,
@@ -3177,6 +3472,71 @@ export function boundTableProposalRegions(regions) {
 }
 
 /**
+ * Return the renderer's deterministic structural evidence for the experimental
+ * document-map layer. The caller must first validate every source layout; this
+ * helper deliberately reuses the renderer's heading, table-gap, and
+ * cross-page furniture rules instead of growing a second set of heuristics.
+ * It performs no I/O and does not expose a new MCP tool.
+ */
+export function analyzeValidatedPdfPagesForDocumentMap(pages) {
+  assertion(Array.isArray(pages) && pages.length > 0,
+    "document-map pages must be a non-empty array");
+  const furniturePlans = planDocumentPageFurniture(pages, true);
+  return pages.map(page => {
+    const headings = headingLevels(page);
+    const headingContinuations = headingContinuationIds(page, headings);
+    // A cover/title page is itself source evidence. Cross-page furniture
+    // planning can correctly recognize repeated masthead lines while still
+    // being wrong about their semantic role on page 1 (for example, the
+    // publishing agency on a report cover). Preserve every retained page-1
+    // line in the source-bound map; later pages continue to use the renderer's
+    // bounded furniture rules.
+    const pageFurniture = page.page === 1 ? [] : furniturePlans.get(page.page) ?? [];
+    const furnitureLineIds = new Set(pageFurniture.map(entry => entry.lineId));
+    const analysis = segmentPageLines(page);
+    const linkState = analyzePageLinks(page, analysis, headings, furnitureLineIds);
+    const unsafePage = analysis.tableReason !== null
+      || linkState.unavailable
+      || linkState.ambiguous
+      || linkState.unsupportedTarget;
+    const fractionPlan = pageStackedFractionPlan(page, analysis.segments, {
+      headings,
+      linkState,
+      unsafePage,
+    });
+    const gaps = pageGaps(page, analysis, linkState, {
+      mathNotReconstructed: pageMathNotReconstructed(analysis, fractionPlan),
+      pageFurniture,
+    });
+    return {
+      page: page.page,
+      headings: page.lines.flatMap(line => headings.has(line.id) ? [{
+        line_id: line.id,
+        level: headings.get(line.id),
+        text: line.text,
+      }] : []),
+      heading_continuation_line_ids: page.lines
+        .filter(line => headingContinuations.has(line.id))
+        .map(line => line.id),
+      furniture: pageFurniture.map(entry => ({ ...entry })),
+      table_regions: analysis.regions.map((region, index) => (
+        buildTableProposalRegion(page, region.run, region.reason, index + 1)
+      )),
+      gaps: gaps.map(gap => ({ ...gap })),
+      content_lines: page.lines
+        .filter(line => !furnitureLineIds.has(line.id))
+        .map(line => ({
+          line_id: line.id,
+          text: line.text,
+          item_ids: [...line.item_ids],
+          heading_level: headings.get(line.id) ?? null,
+          heading_continuation: headingContinuations.has(line.id),
+        })),
+    };
+  });
+}
+
+/**
  * Render an already source-validated PDF Tools layout IR to deterministic
  * Markdown. This function rechecks IR semantics but deliberately performs no
  * I/O, PDF parsing, rendering, OCR, or annotation lookup. Table reconstruction
@@ -3190,6 +3550,7 @@ export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,
   maxMarkdownBytes = 50000,
   compact = false,
+  removePageFurniture = true,
   emitTableProposals = false,
 } = {}) {
   validatePdfLayoutSemantics(layout, { enforceOutputBudget: false });
@@ -3200,6 +3561,9 @@ export function renderPdfLayoutToMarkdown(layout, {
   if (typeof compact !== "boolean") {
     throw new TypeError("compact must be a boolean.");
   }
+  if (typeof removePageFurniture !== "boolean") {
+    throw new TypeError("removePageFurniture must be a boolean.");
+  }
   if (typeof emitTableProposals !== "boolean") {
     throw new TypeError("emitTableProposals must be a boolean.");
   }
@@ -3209,6 +3573,7 @@ export function renderPdfLayoutToMarkdown(layout, {
     throw new RangeError(`maxMarkdownBytes must be an integer from 1 through ${MAX_MARKDOWN_BYTES_LIMIT}.`);
   }
 
+  const furniturePlans = planDocumentPageFurniture(layout.pages, removePageFurniture);
   const renderedPages = layout.pages.map((page, index) => renderPage(page, {
     compact,
     pageBoundaryBefore: index > 0,
@@ -3217,6 +3582,7 @@ export function renderPdfLayoutToMarkdown(layout, {
     // number from a single-page selection.
     pageBoundaryAfter: true,
     collectTableProposals: emitTableProposals,
+    pageFurniture: furniturePlans.get(page.page),
   }));
   const gaps = renderedPages.flatMap(page => page.gaps);
   const markdown = renderDocumentMarkdown(renderedPages, includePageBoundaries, gaps);
@@ -3237,7 +3603,11 @@ export function renderPdfLayoutToMarkdown(layout, {
     markdown,
     markdown_sha256: sha256(markdown),
     markdown_bytes: markdownBytes,
-    options: { include_page_boundaries: includePageBoundaries, compact },
+    options: {
+      include_page_boundaries: includePageBoundaries,
+      compact,
+      remove_page_furniture: removePageFurniture,
+    },
     limits: { max_markdown_bytes: maxMarkdownBytes },
     pages: renderedPages.map(({
       markdown: _markdown,

@@ -46,6 +46,10 @@ import {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLAIN_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const EXTRACTION_PDF = path.join(
+  REPO_ROOT,
+  "test/fixtures/eval/extraction/synthetic/born-digital-flat.pdf",
+);
 const RUNTIME_ENTRY = path.join(REPO_ROOT, "vendor", "qpdf-wasm", "runtime", "qpdf.mjs");
 const OWNER_PASSWORD = "owner-secret";
 
@@ -81,9 +85,11 @@ let temporaryRoot;
 let client;
 let transport;
 const fixturePaths = {};
+let workspaceSequence = 0;
 
 beforeAll(async () => {
   temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-permission-consistency-"));
+  await fs.mkdir(path.join(temporaryRoot, "profiles"), { mode: 0o700 });
   const plainBytes = await fs.readFile(PLAIN_PDF);
   fixturePaths.plain = path.join(temporaryRoot, "plain.pdf");
   await fs.writeFile(fixturePaths.plain, plainBytes);
@@ -92,11 +98,22 @@ beforeAll(async () => {
     await fs.writeFile(target, await encryptFixture(plainBytes, args));
     fixturePaths[name] = target;
   }
+  const extractionBytes = await fs.readFile(EXTRACTION_PDF);
+  for (const [name, args] of Object.entries(FIXTURE_RECIPES)) {
+    const directory = path.join(temporaryRoot, `${name}-extraction`);
+    await fs.mkdir(directory, { mode: 0o700 });
+    const target = path.join(directory, "extraction.pdf");
+    await fs.writeFile(target, await encryptFixture(extractionBytes, args));
+    fixturePaths[`${name}Extraction`] = target;
+  }
   transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(REPO_ROOT, "server/index.js")],
     cwd: REPO_ROOT,
-    env: { ALLOWED_DIRECTORIES: [REPO_ROOT, temporaryRoot].join(path.delimiter) },
+    env: {
+      ALLOWED_DIRECTORIES: [REPO_ROOT, temporaryRoot].join(path.delimiter),
+      DEFAULT_PROFILES_DIR: path.join(temporaryRoot, "profiles"),
+    },
     stderr: "ignore",
   });
   client = new Client({ name: "pdf-tools-permission-consistency", version: "1.0.0" });
@@ -118,6 +135,42 @@ afterAll(async () => {
  * says so. That is deliberate: the alternative is a new tool silently escaping
  * the rule, which is the failure this whole file exists to prevent.
  */
+async function extractionWorkspace(document, tag) {
+  const sourceDocument = document === fixturePaths.extractDenied
+    ? fixturePaths.extractDeniedExtraction
+    : fixturePaths.extractAllowedExtraction;
+  workspaceSequence += 1;
+  const workspaceId = `permission-${workspaceSequence}-${tag.replace(/[^a-z0-9_-]/gu, "-")}`;
+  const created = await client.callTool({
+    name: "create_extraction_workspace",
+    arguments: {
+      pdf_path: sourceDocument,
+      workspace_id: workspaceId,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["missing"],
+        properties: { missing: { anyOf: [{ type: "string" }, { type: "null" }] } },
+      },
+    },
+  });
+  const chunks = await client.callTool({
+    name: "read_extraction_workspace",
+    arguments: {
+      workspace_id: workspaceId,
+      workspace_identity_sha256: created.structuredContent.workspace_identity_sha256,
+      collection: "document_map_chunks",
+      limit: 100,
+    },
+  });
+  return {
+    workspaceId,
+    sourceDocument,
+    created: created.structuredContent,
+    chunks: chunks.structuredContent.items,
+  };
+}
+
 const READ_CALL_RECIPES = Object.freeze({
   compare_pdfs: (doc, extras) => ({
     before_pdf_path: doc,
@@ -126,6 +179,14 @@ const READ_CALL_RECIPES = Object.freeze({
     ...(extras.password ? { before_password: extras.password } : {}),
   }),
   convert_pdf_to_markdown: (doc, extras) => ({ pdf_path: doc, start_page: 1, end_page: 1, ...extras }),
+  create_extraction_workspace: (doc, extras) => ({
+    pdf_path: doc === fixturePaths.extractDenied
+      ? fixturePaths.extractDeniedExtraction
+      : fixturePaths.extractAllowedExtraction,
+    workspace_id: `permission-create-${path.basename(doc, ".pdf")}${extras.tag}`
+      .replace(/[^a-z0-9_-]/gu, "-"),
+    schema: { type: "object", properties: { value: { type: "string" } } },
+  }),
   detect_signature_zones: (doc, extras) => ({ pdf_path: doc, ...extras }),
   display_pdf: doc => ({ pdf_path: doc }),
   extract_to_csv: (doc, extras) => ({
@@ -137,6 +198,15 @@ const READ_CALL_RECIPES = Object.freeze({
   get_pdf_info: (doc, extras) => ({ pdf_path: doc, ...extras }),
   get_pdf_resource_uri: doc => ({ pdf_path: doc }),
   inspect_pdf_accessibility: doc => ({ pdf_path: doc }),
+  read_extraction_chunk: async (doc, extras) => {
+    const prepared = await extractionWorkspace(doc, `chunk${extras.tag}`);
+    return {
+      pdf_path: prepared.sourceDocument,
+      workspace_id: prepared.workspaceId,
+      workspace_identity_sha256: prepared.created.workspace_identity_sha256,
+      chunk_id: prepared.chunks[0].chunk_id,
+    };
+  },
   read_pdf_bytes: doc => ({ pdf_path: doc, offset: 0, byteCount: 4096 }),
   read_pdf_content: doc => ({ pdf_path: doc }),
   read_pdf_fields: (doc, extras) => ({ pdf_path: doc, ...extras }),
@@ -149,6 +219,29 @@ const READ_CALL_RECIPES = Object.freeze({
   search_pdf_text: doc => ({ pdf_path: doc, query: "Name" }),
   set_active_document: doc => ({ pdf_path: doc }),
   validate_pdf: (doc, extras) => ({ pdf_path: doc, ...extras }),
+  verify_extraction_proposal: async (doc, extras) => {
+    const prepared = await extractionWorkspace(doc, `verify${extras.tag}`);
+    const proposal = await client.callTool({
+      name: "submit_extraction_proposal",
+      arguments: {
+        workspace_id: prepared.workspaceId,
+        workspace_identity_sha256: prepared.created.workspace_identity_sha256,
+        parent_generation_sha256: prepared.created.generation_sha256,
+        leaf_pointer: "/missing",
+        proposed_value: null,
+        chunk_ids: prepared.chunks.map(chunk => chunk.chunk_id),
+      },
+    });
+    return {
+      pdf_path: prepared.sourceDocument,
+      workspace_id: prepared.workspaceId,
+      workspace_identity_sha256: prepared.created.workspace_identity_sha256,
+      proposal_generation_sha256: proposal.structuredContent.generation_sha256,
+      proposal_event_id: proposal.structuredContent.event.event_id,
+      citations: [],
+      method: { kind: "not_found" },
+    };
+  },
   verify_table_proposal: (doc, extras) => ({
     pdf_path: doc,
     password: extras.password,
@@ -187,7 +280,7 @@ async function observe(name, document, extras = { tag: "" }) {
   const build = READ_CALL_RECIPES[name];
   let result;
   try {
-    result = await client.callTool({ name, arguments: build(document, extras) });
+    result = await client.callTool({ name, arguments: await build(document, extras) });
   } catch (error) {
     return { outcome: "transport-error", detail: String(error?.message ?? error).slice(0, 80) };
   }
@@ -317,9 +410,11 @@ describe("every tool that reads a document treats /P the same way", () => {
     // The two documents are the same document with one bit flipped, so any
     // observable difference is the bit being consulted.
     expect(divergent.map(entry => entry.name)).toEqual([]);
-    // Not vacuous: most of the family really does read these documents, so
-    // "identical" is not "identically refused".
-    expect(allowed.length).toBeGreaterThanOrEqual(Math.ceil(family.length * 0.6));
+    // Not vacuous: a strict majority of the family really does read these
+    // documents, so "identical" is not "identically refused". Transactional
+    // workspace tools may fail later on lifecycle/schema prerequisites; that
+    // failure is intentionally compared above but is not a permission success.
+    expect(allowed.length).toBeGreaterThan(Math.floor(family.length / 2));
   }, 600_000);
 
   it("refuses no read on /P, whatever else it may refuse on", async () => {

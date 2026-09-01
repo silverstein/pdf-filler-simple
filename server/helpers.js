@@ -1661,7 +1661,16 @@ const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
 // fsOps is injected so this window can be forced in a test: a filesystem whose
 // open() reaches a different inode than the preceding lstat() must be rejected
 // here rather than read.
-export async function openVerifiedRegularFile(fsOps, canonicalPath) {
+function openFileDeviceIdentityMatches(left, right, platform) {
+  if (left.dev === right.dev) return true;
+  const leftMissing = left.dev === 0 || left.dev === 0n;
+  const rightMissing = right.dev === 0 || right.dev === 0n;
+  return platform === "win32" && leftMissing !== rightMissing;
+}
+
+export async function openVerifiedRegularFile(fsOps, canonicalPath, {
+  platform = process.platform,
+} = {}) {
   const beforeStat = await fsOps.lstat(canonicalPath);
   if (beforeStat.isSymbolicLink() || !beforeStat.isFile()) {
     throw new Error(`Not a regular file: ${path.basename(canonicalPath)}`);
@@ -1671,7 +1680,7 @@ export async function openVerifiedRegularFile(fsOps, canonicalPath) {
     const descriptorStat = await handle.stat();
     if (
       !descriptorStat.isFile()
-      || descriptorStat.dev !== beforeStat.dev
+      || !openFileDeviceIdentityMatches(descriptorStat, beforeStat, platform)
       || descriptorStat.ino !== beforeStat.ino
     ) {
       throw new Error("The file changed while it was being opened. Retry the request.");
@@ -1693,9 +1702,13 @@ function atomicOutputDirectoryChangedError(cause = null) {
     cause,
   );
 }
+export function portableFilesystemDevice(stat, platform = process.platform) {
+  return platform === "win32" ? "win32-unavailable" : String(stat.dev);
+}
+
 function stableDirectoryIdentity(stat) {
   return {
-    device: String(stat.dev),
+    device: portableFilesystemDevice(stat),
     inode: String(stat.ino),
   };
 }
@@ -1879,11 +1892,11 @@ async function syncAtomicOutputDirectory(
 }
 function recoveryIdentity(stat) {
   if (!stat) return null;
-  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs].join(":");
+  return [portableFilesystemDevice(stat), stat.ino, stat.mode, stat.size, stat.mtimeMs].join(":");
 }
 function lockDirectoryIdentity(stat) {
   if (!stat) return null;
-  return `${stat.dev}:${stat.ino}`;
+  return `${portableFilesystemDevice(stat)}:${stat.ino}`;
 }
 function portableOutputNameKey(name) {
   return name.normalize("NFC").toLowerCase();
@@ -2636,9 +2649,16 @@ async function stageAtomicOutput(
   }
 }
 
-function outputIdentity(stat) {
+export function outputIdentity(stat, platform = process.platform) {
   if (!stat) return null;
-  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+  return [
+    portableFilesystemDevice(stat, platform),
+    stat.ino,
+    stat.mode,
+    stat.size,
+    stat.mtimeMs,
+    stat.ctimeMs,
+  ].join(":");
 }
 
 async function lstatIfPresent(fsOps, targetPath) {
