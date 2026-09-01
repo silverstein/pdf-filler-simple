@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openVerifiedRegularFile } from "../server/helpers.js";
+import { openVerifiedRegularFile, portableFilesystemDevice } from "../server/helpers.js";
 
 // openVerifiedRegularFile defends a TOCTOU race that a real-filesystem test
 // cannot force reliably: the swap has to happen in the window between the lstat
@@ -26,6 +26,12 @@ function fakeHandle(descriptorStat) {
 }
 
 describe("openVerifiedRegularFile identity guard", () => {
+  it("normalizes the unavailable Windows pathname device without weakening POSIX", () => {
+    expect(portableFilesystemDevice({ dev: 0 }, "win32")).toBe("win32-unavailable");
+    expect(portableFilesystemDevice({ dev: 2660852064 }, "win32"))
+      .toBe("win32-unavailable");
+    expect(portableFilesystemDevice({ dev: 41 }, "linux")).toBe("41");
+  });
   it("rejects a file whose inode changed between lstat and open", async () => {
     // The name was inspected as inode 100 and opened as inode 200 — a
     // replacement that reused the path in the race window.

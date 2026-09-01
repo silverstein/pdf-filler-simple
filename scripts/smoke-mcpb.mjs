@@ -522,10 +522,12 @@ async function main() {
         degrees: 90,
       },
     });
+    if (rotated.isError) {
+      throw new Error(`Packed rotate_pdf_pages mutation call failed: ${JSON.stringify(rotated)}`);
+    }
     const rotatedDocument = await PDFDocument.load(readFileSync(rotatedPath));
     if (
-      rotated.isError
-      || rotated.structuredContent?.last_mutation_tool !== "rotate_pdf_pages"
+      rotated.structuredContent?.last_mutation_tool !== "rotate_pdf_pages"
       // realpathSync.native expands Windows 8.3 short names the way the
       // server's canonicalization does; the JS implementation does not, and
       // runner temp paths arrive short-named, so only the native form states

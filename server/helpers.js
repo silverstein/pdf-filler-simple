@@ -1702,9 +1702,13 @@ function atomicOutputDirectoryChangedError(cause = null) {
     cause,
   );
 }
+export function portableFilesystemDevice(stat, platform = process.platform) {
+  return platform === "win32" ? "win32-unavailable" : String(stat.dev);
+}
+
 function stableDirectoryIdentity(stat) {
   return {
-    device: String(stat.dev),
+    device: portableFilesystemDevice(stat),
     inode: String(stat.ino),
   };
 }
@@ -1888,11 +1892,11 @@ async function syncAtomicOutputDirectory(
 }
 function recoveryIdentity(stat) {
   if (!stat) return null;
-  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs].join(":");
+  return [portableFilesystemDevice(stat), stat.ino, stat.mode, stat.size, stat.mtimeMs].join(":");
 }
 function lockDirectoryIdentity(stat) {
   if (!stat) return null;
-  return `${stat.dev}:${stat.ino}`;
+  return `${portableFilesystemDevice(stat)}:${stat.ino}`;
 }
 function portableOutputNameKey(name) {
   return name.normalize("NFC").toLowerCase();
