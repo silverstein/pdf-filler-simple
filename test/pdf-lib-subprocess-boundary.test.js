@@ -231,9 +231,10 @@ describe.sequential("pdf-lib subprocess boundary", () => {
 parentPort.postMessage({ unexpected: true });
 parentPort.close();`,
       "malformed_control_output",
+      1_000,
     ],
-    ["wall timeout", `setInterval(() => {}, 1000);`, "timeout"],
-  ])("fails closed on worker-thread %s", async (_label, body, reason) => {
+    ["wall timeout", `setInterval(() => {}, 1000);`, "timeout", 150],
+  ])("fails closed on worker-thread %s", async (_label, body, reason, timeoutMs) => {
     const fixture = await threadWorker(body);
     await expect(runPdfLibMutation({
       operation: "rotate_pdf_pages",
@@ -244,7 +245,7 @@ parentPort.close();`,
       throw new Error("must not consume");
     }, {
       isolationMode: "worker_thread",
-      timeoutMs: 150,
+      timeoutMs,
       workerPath: fixture.workerPath,
     })).rejects.toMatchObject({
       code: PDF_RESOURCE_LIMIT_CODE,
