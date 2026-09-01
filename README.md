@@ -48,6 +48,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - **URL-to-PDF workflows:** fetch HTTP(S) PDF links to the local machine when sandboxed web fetches are blocked
 - **Page organization:** merge, split, rotate, reorder, and apply full page plans in one pass
 - **Extraction and analysis:** page-bounded reads, text search, page/region rendering, CSV export, page-level analysis, metadata, and validation
+- **Verified extraction workspaces:** bind a PDF and JSON Schema, inspect source chunks, submit cited leaf proposals, and retain deterministic replay results without a model inside the MCP server
 - **Local file operations:** PDF Tools reads, renders, edits, and saves files on your machine instead of uploading them to a separate PDF service
 - **Directory sandbox:** Claude Desktop users can choose which local folders PDF Tools may read from or write to
 
@@ -100,6 +101,10 @@ content, so the complete workflow is not necessarily zero egress.
 - Inspect page-level details like orientation, text presence, images, and likely blank pages
 - Review source-bound page geometry, bounded metadata, form widgets, ordinary annotations, and file identity
 - Inspect exactly eight shallow catalog-level accessibility signals with explicit missing or unavailable states and required human review
+- Build a private schema-bound extraction workspace, cite source chunks, and retain exact, computed, ambiguous, not-found, or failed verification states without numeric confidence
+
+See [Verified extraction workspaces](docs/VERIFIED_EXTRACTION.md) for the
+complete lifecycle, supported methods, privacy boundary, and current limits.
 
 PDF Tools does not currently bundle an OCR engine. Text reads use the PDF.js
 text layer. If the selected `read_pdf_content` result contains no text, the tool
@@ -233,6 +238,13 @@ the `.mcpb` manifest that ordinary model workflows discover.
 - `get_pdf_info`
 - `inspect_pdf_accessibility`
 - `get_page_analysis`
+- `create_extraction_workspace`
+- `inspect_extraction_state`
+- `read_extraction_workspace`
+- `read_extraction_chunk`
+- `submit_extraction_proposal`
+- `verify_extraction_proposal`
+- `delete_extraction_workspace`
 
 ### Active Document and Host Helpers
 

@@ -104,6 +104,10 @@ import {
   assertBoundedPdfStreamDecodes,
   assertBoundedPdfStructure,
 } from "./pdf-lib-worker.js";
+import {
+  VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
+  createVerifiedExtractionToolHandler,
+} from "./verified-extraction-tools.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
   "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
@@ -1490,6 +1494,10 @@ const DEFAULT_DOWNLOAD_DIR = envPathOrDefault("DEFAULT_DOWNLOAD_DIR", path.join(
 const PROFILES_DIR = envPathOrDefault("DEFAULT_PROFILES_DIR", path.join(homedir(), ".pdf-toolkit-files"));
 const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
+const VERIFIED_EXTRACTION_WORKSPACES_DIR = path.join(
+  PROFILES_DIR,
+  "verified-extraction-workspaces",
+);
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
 
 function parsePathListValue(rawValue) {
@@ -1726,6 +1734,9 @@ const PDFJS_TOOL_NAMES = new Set([
   "render_pdf_page",
   "render_pdf_region",
   "search_pdf_text",
+  "create_extraction_workspace",
+  "read_extraction_chunk",
+  "verify_extraction_proposal",
 ]);
 
 async function bindPdfjsSubprocessSource(resolvedPath) {
@@ -1766,6 +1777,58 @@ async function runPdfjsOperation(resolvedPath, {
   }), { timeoutMs });
   return { result, source };
 }
+
+async function extractCompleteVerifiedExtractionLayouts({
+  resolvedPath,
+  password,
+  sourceBytes,
+  maxPages,
+}) {
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error("max_pages must be an integer from 1 to 200.");
+  }
+  const layouts = [];
+  let totalPages = null;
+  for (let page = 1; totalPages === null || page <= totalPages; page += 1) {
+    const { result } = await runPdfjsOperation(resolvedPath, {
+      operation: "extract_layout",
+      password,
+      options: {
+        source_path: resolvedPath,
+        source_file_name: path.basename(resolvedPath),
+        start_page: page,
+        end_page: page,
+        max_items: 5000,
+        max_characters: 100000,
+        max_output_characters: 200000,
+      },
+    });
+    const layout = validatePdfLayoutSemantics(result.layout, { sourceBytes });
+    if (totalPages === null) {
+      totalPages = layout.page_range.total_pages;
+      if (totalPages > maxPages) {
+        throw new Error(
+          `The PDF has ${totalPages} pages; this workspace is limited to ${maxPages}. `
+          + "Raise max_pages up to 200 or use a smaller PDF.",
+        );
+      }
+    } else if (layout.page_range.total_pages !== totalPages) {
+      throw new Error("The PDF page count changed while the workspace was being created.");
+    }
+    layouts.push(layout);
+  }
+  return layouts;
+}
+
+const handleVerifiedExtractionTool = createVerifiedExtractionToolHandler({
+  workspaceRoot: VERIFIED_EXTRACTION_WORKSPACES_DIR,
+  resolvePdfPath: resolvePath,
+  readPdfBytes: readCurrentPdfMutationBytes,
+  extractLayouts: extractCompleteVerifiedExtractionLayouts,
+});
+const VERIFIED_EXTRACTION_TOOL_NAMES = new Set(
+  VERIFIED_EXTRACTION_TOOL_DEFINITIONS.map(tool => tool.name),
+);
 
 function comparisonSourceChangedError() {
   const error = new Error("A comparison source changed while it was being inspected.");
@@ -4386,7 +4449,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           idempotentHint: false,
           openWorldHint: false
         }
-      }
+      },
+      ...VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
     ].map(withToolOutputSchema),
   };
 });
@@ -4396,6 +4460,18 @@ async function handleToolCall(request) {
   const { name, arguments: args } = request.params;
 
   try {
+    if (VERIFIED_EXTRACTION_TOOL_NAMES.has(name)) {
+      const structuredContent = await handleVerifiedExtractionTool(name, args ?? {});
+      const summary = name === "create_extraction_workspace"
+        ? `Created verified extraction workspace ${structuredContent.workspace_identity_sha256} at generation ${structuredContent.generation_sha256}.`
+        : name === "verify_extraction_proposal"
+          ? `Retained ${structuredContent.result.status} verification for ${structuredContent.result.leaf_pointer} at generation ${structuredContent.generation_sha256}.`
+          : `${name} completed.`;
+      return {
+        content: [{ type: "text", text: summary }],
+        structuredContent,
+      };
+    }
     switch (name) {
       case "list_pdfs": {
         const directory = resolvePath(args.directory || DEFAULT_PDF_DIRECTORY);

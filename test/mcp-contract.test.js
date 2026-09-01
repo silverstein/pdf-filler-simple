@@ -163,7 +163,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // outside the visible viewport, so ruled-rectangle x/y schema coordinates are
 // signed while width and height remain nonnegative. Previously
 // a244791a2359802200a92a8e21d5922a4f129a22cfc9e3ca3ec68654eeac2baa.
-const TOOL_CONTRACT_SHA256 = "4f068d3a0a1c311c1c30b8df700e3f384473f10b4a65698ced978f7273a1bd9a";
+// 2026-09-01: additive model-free verified-extraction workspace lifecycle:
+// exact source/schema binding, cited proposal replay, persisted typed results,
+// and exact-identity deletion. Previously
+// 4f068d3a0a1c311c1c30b8df700e3f384473f10b4a65698ced978f7273a1bd9a.
+const TOOL_CONTRACT_SHA256 = "db82ccc5a836b931cdfa64e24b29db5d86d45c09cd13716b0fcaba2f0dca70e3";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -197,6 +201,13 @@ const OPEN_NON_IDEMPOTENT_OVERWRITE = Object.freeze({
 });
 
 const TOOL_EFFECT_ANNOTATIONS = {
+  create_extraction_workspace: CLOSED_SESSION_ACTION,
+  inspect_extraction_state: CLOSED_READ,
+  read_extraction_workspace: CLOSED_READ,
+  read_extraction_chunk: CLOSED_READ,
+  submit_extraction_proposal: CLOSED_SESSION_ACTION,
+  verify_extraction_proposal: CLOSED_SESSION_ACTION,
+  delete_extraction_workspace: CLOSED_NON_IDEMPOTENT_OVERWRITE,
   list_pdfs: CLOSED_READ,
   read_pdf_fields: CLOSED_SESSION_ACTION,
   fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
@@ -414,6 +425,7 @@ describe("MCPB static declarations", () => {
       "qpdf-decrypt-worker.js",
       "resource-uri.js",
       "stderr-suppression.js",
+      "verified-extraction-tools.js",
     ]) {
       const source = await fs.readFile(path.join(REPO_ROOT, "server", filename));
       const share = await fs.readFile(path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "server", filename));
@@ -421,7 +433,16 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(23);
+    expect(mirrored).toHaveLength(24);
+    for (const relativePath of [
+      "scripts/eval-strict-json.mjs",
+      "scripts/verified-extraction-proposal.mjs",
+      "scripts/verified-extraction-workspace.mjs",
+    ]) {
+      const source = await fs.readFile(path.join(REPO_ROOT, relativePath));
+      const share = await fs.readFile(path.join(REPO_ROOT, "pdf-toolkit-mcp-share", relativePath));
+      expect(share, relativePath).toEqual(source);
+    }
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),
@@ -461,7 +482,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(44);
+    expect(tools).toHaveLength(51);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

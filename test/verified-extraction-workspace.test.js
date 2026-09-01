@@ -181,7 +181,7 @@ describe("transactional verified extraction workspace", () => {
     ...overrides,
   });
 
-  it("creates a private source/schema-bound genesis and keeps the experiment out of packages", async () => {
+  it("creates a private source/schema-bound genesis with an experimental package identity", async () => {
     const created = await create();
     expect(created).toMatchObject({ state: "complete", generation_sequence: 0 });
     const inspection = await inspectExtractionWorkspace({
@@ -199,7 +199,7 @@ describe("transactional verified extraction workspace", () => {
       retention: { automatic_pruning: false, deletion_requires_exact_current_generation: true },
     });
     expect(SERVER_FILES).not.toContain("verified-extraction-workspace.mjs");
-    expect(SHARE_FILES).not.toContain("scripts/verified-extraction-workspace.mjs");
+    expect(SHARE_FILES).toContain("scripts/verified-extraction-workspace.mjs");
     await assertPrivateTree(created.workspace_path);
 
     const identity = await readJson(path.join(created.workspace_path, "workspace-identity.v1.json"));
@@ -207,7 +207,7 @@ describe("transactional verified extraction workspace", () => {
       source: documentMap.bindings.source,
       schema: documentMap.bindings.schema,
       document_map_sha256: documentMap.document_map_sha256,
-      package_inclusion: "disabled_experimental",
+      package_inclusion: "enabled_experimental",
     });
     const externalPointer = await fs.lstat(path.join(rootPath,
       `workspace-${sha256(Buffer.from("test-workspace", "utf8")).slice(0, 32)}.pointer.v1.json`),

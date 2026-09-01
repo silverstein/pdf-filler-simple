@@ -21,7 +21,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
+import {
+  SERVER_FILES,
+  VERIFIED_EXTRACTION_RUNTIME_FILES,
+} from "../scripts/build-mcpb.mjs";
 import { SHARE_FILES, SHARE_MIRRORED_FILES, SHARE_SERVER_FILES } from "../package-for-friend.js";
 import {
   QPDF_WASM_RUNTIME_DIRECTORY,
@@ -71,6 +74,7 @@ describe("share packager server coverage", () => {
     // archived.
     expect(SHARE_MIRRORED_FILES).toEqual([
       ...SHARE_SERVER_FILES,
+      ...VERIFIED_EXTRACTION_RUNTIME_FILES,
       "dist-ui/index.html",
       ...QPDF_WASM_RUNTIME_FILES,
     ]);
@@ -190,6 +194,12 @@ describe("staged server import graph", () => {
       for (const specifier of specifiers) {
         relativeImports += 1;
         const resolved = path.relative(SERVER_DIR, path.resolve(SERVER_DIR, specifier));
+        const resolvedFromRoot = path.relative(REPO_ROOT, path.resolve(SERVER_DIR, specifier))
+          .split(path.sep).join("/");
+        if (VERIFIED_EXTRACTION_RUNTIME_FILES.includes(resolvedFromRoot)) {
+          expect(SHARE_FILES).toContain(resolvedFromRoot);
+          continue;
+        }
         expect(
           SERVER_FILES,
           `${filename} imports ${specifier}, which the production packager does not stage`,
@@ -201,5 +211,23 @@ describe("staged server import graph", () => {
       }
     }
     expect(relativeImports).toBeGreaterThan(5);
+  });
+
+  it("resolves the verified extraction runtime import graph inside the shipped set", async () => {
+    for (const relativePath of VERIFIED_EXTRACTION_RUNTIME_FILES) {
+      const source = await fs.readFile(path.join(REPO_ROOT, relativePath), "utf8");
+      const directory = path.dirname(path.join(REPO_ROOT, relativePath));
+      const specifiers = [...source.matchAll(/(?:^|[^\w$])(?:import|export)[^;'"]*?from\s*"(\.[^"]*)"/gmu)]
+        .map(match => match[1]);
+      for (const specifier of specifiers) {
+        const resolved = path.relative(REPO_ROOT, path.resolve(directory, specifier))
+          .split(path.sep).join("/");
+        expect(
+          [...VERIFIED_EXTRACTION_RUNTIME_FILES, ...SERVER_FILES.map(name => `server/${name}`)],
+          `${relativePath} imports ${specifier}, which neither packager stages`,
+        ).toContain(resolved);
+        expect(SHARE_FILES).toContain(resolved);
+      }
+    }
   });
 });

@@ -75,6 +75,10 @@ export const SHARE_FILES = [
   "server/table-proposal-verification.js",
   "server/type3-cm-pk-reference.js",
   "server/type3-cm-reference.js",
+  "server/verified-extraction-tools.js",
+  "scripts/eval-strict-json.mjs",
+  "scripts/verified-extraction-proposal.mjs",
+  "scripts/verified-extraction-workspace.mjs",
   "smart-install.sh",
   /*
    * The QPDF WebAssembly runtime and its complete notice directory, derived
@@ -95,6 +99,9 @@ export const SHARE_SERVER_FILES = SHARE_FILES.filter(relativePath => relativePat
  */
 export const SHARE_MIRRORED_FILES = [
   ...SHARE_SERVER_FILES,
+  "scripts/eval-strict-json.mjs",
+  "scripts/verified-extraction-proposal.mjs",
+  "scripts/verified-extraction-workspace.mjs",
   "dist-ui/index.html",
   ...QPDF_WASM_RUNTIME_FILES,
 ];

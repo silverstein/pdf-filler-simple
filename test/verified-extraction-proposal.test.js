@@ -9,13 +9,16 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import {
+  compileExtractionLeafObligations,
   validateExtractionProposalVerificationResult,
   verifyWorkspaceExtractionProposal,
 } from "../scripts/verified-extraction-proposal.mjs";
 import {
+  appendVerifiedWorkspaceResult,
   appendUnverifiedWorkspaceProposal,
   canonicalWorkspaceJson,
   createExtractionWorkspace,
+  readExtractionWorkspacePage,
 } from "../scripts/verified-extraction-workspace.mjs";
 import {
   buildSourceBoundDocumentMap,
@@ -256,12 +259,59 @@ describe("source-replayed verified extraction proposals", () => {
       caller_geometry_accepted_as_proof: false,
       caller_confidence_accepted_as_proof: false,
       table_topology_proven: false,
-      package_inclusion: "disabled_experimental",
+      package_inclusion: "enabled_experimental",
     });
     expect(result.proposal_event).toEqual(appended.event);
     expect(result.citations[0]).toMatchObject({ quote: "INV-1001", status: "replayed", page: 1 });
     expect(SERVER_FILES).not.toContain("verified-extraction-proposal.mjs");
-    expect(SHARE_FILES).not.toContain("scripts/verified-extraction-proposal.mjs");
+    expect(SHARE_FILES).toContain("scripts/verified-extraction-proposal.mjs");
+  });
+
+  it("compiles schema leaves and durably settles an exact verified result", async () => {
+    expect(compileExtractionLeafObligations(SCHEMA_BYTES)).toEqual(LEAVES);
+    const created = await create();
+    const appended = await append(created, {
+      leafPointer: "/invoice_id",
+      proposedValue: "INV-1001",
+    });
+    const result = await verify(created, appended);
+    const retained = await appendVerifiedWorkspaceResult({
+      rootPath,
+      workspaceId: "proposal-verifier",
+      expectedWorkspaceIdentitySha256: created.workspace_identity_sha256,
+      expectedParentGenerationSha256: appended.generation_sha256,
+      verificationResult: result,
+      transactionId: "3".repeat(32),
+    });
+    expect(retained).toMatchObject({
+      generation_sequence: 2,
+      result: { status: "verified_exact", leaf_pointer: "/invoice_id" },
+    });
+    const results = await readExtractionWorkspacePage({
+      rootPath,
+      workspaceId: "proposal-verifier",
+      expectedWorkspaceIdentitySha256: created.workspace_identity_sha256,
+      collection: "results",
+      limit: 10,
+    });
+    expect(results.items).toEqual([result]);
+    const pending = await readExtractionWorkspacePage({
+      rootPath,
+      workspaceId: "proposal-verifier",
+      expectedWorkspaceIdentitySha256: created.workspace_identity_sha256,
+      collection: "pending_leaves",
+      limit: 20,
+    });
+    expect(pending.items).not.toContain("/invoice_id");
+    expect(pending.counts.total).toBe(LEAVES.length - 1);
+    await expect(appendVerifiedWorkspaceResult({
+      rootPath,
+      workspaceId: "proposal-verifier",
+      expectedWorkspaceIdentitySha256: created.workspace_identity_sha256,
+      expectedParentGenerationSha256: retained.generation_sha256,
+      verificationResult: result,
+      transactionId: "4".repeat(32),
+    })).rejects.toThrow(/different workspace generation|already has/u);
   });
 
   it("replays typed decimal projection and exact rational calculations", async () => {
@@ -430,7 +480,7 @@ describe("source-replayed verified extraction proposals", () => {
     });
   });
 
-  it("rejects duplicate citations, undeclared chunks, and duplicate leaf proposals", async () => {
+  it("rejects duplicate citations, undeclared chunks, and concurrent leaf proposals", async () => {
     const created = await create();
     const first = await append(created, { leafPointer: "/invoice_id", proposedValue: "INV-1001" });
     const exact = citation("INV-1001");
@@ -439,13 +489,46 @@ describe("source-replayed verified extraction proposals", () => {
     await expect(verify(created, first, {
       citations: [{ ...exact, chunk_id: `chunk.${"f".repeat(64)}` }],
     })).rejects.toThrow(/undeclared chunk/u);
-    const second = await append({ ...created, generation_sha256: first.generation_sha256 }, {
+    await expect(append({ ...created, generation_sha256: first.generation_sha256 }, {
       leafPointer: "/invoice_id",
       proposedValue: "INV-1001",
       transactionId: "3".repeat(32),
+    })).rejects.toThrow(/unverified pending proposal/u);
+  });
+
+  it("allows a new exact proposal after a retained citation failure but not after settlement", async () => {
+    const created = await create();
+    const first = await append(created, { leafPointer: "/invoice_id", proposedValue: "INV-1001" });
+    const forged = citation("INV-1001");
+    forged.quote_sha256 = "f".repeat(64);
+    const failedResult = await verify(created, first, { citations: [forged] });
+    const failed = await appendVerifiedWorkspaceResult({
+      rootPath,
+      workspaceId: "proposal-verifier",
+      expectedWorkspaceIdentitySha256: created.workspace_identity_sha256,
+      expectedParentGenerationSha256: first.generation_sha256,
+      verificationResult: failedResult,
+      transactionId: "3".repeat(32),
     });
-    await expect(verify(created, second, { proposalEventId: first.event.event_id }))
-      .rejects.toThrow(/duplicate proposals for the same leaf/u);
+    const retry = await append({ ...created, generation_sha256: failed.generation_sha256 }, {
+      leafPointer: "/invoice_id",
+      proposedValue: "INV-1001",
+      transactionId: "4".repeat(32),
+    });
+    const exactResult = await verify(created, retry);
+    const settled = await appendVerifiedWorkspaceResult({
+      rootPath,
+      workspaceId: "proposal-verifier",
+      expectedWorkspaceIdentitySha256: created.workspace_identity_sha256,
+      expectedParentGenerationSha256: retry.generation_sha256,
+      verificationResult: exactResult,
+      transactionId: "5".repeat(32),
+    });
+    await expect(append({ ...created, generation_sha256: settled.generation_sha256 }, {
+      leafPointer: "/invoice_id",
+      proposedValue: "INV-1001",
+      transactionId: "6".repeat(32),
+    })).rejects.toThrow(/already settled/u);
   });
 
   it("rejects schema-invalid arrays and does not let caller metadata or table claims become proof", async () => {

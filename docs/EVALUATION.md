@@ -1100,6 +1100,22 @@ Real L5 claims must retain run/host metadata and references without committing
 private document content. A host timeout remains a harness failure even when
 the same task later passes.
 
+## Verified extraction product surface
+
+The model-free workspace primitives qualified during the private verified-
+extraction evaluation are now exposed as an experimental local MCP lifecycle:
+create an exact PDF/schema-bound workspace, page through its document map and
+leaf obligations, submit an explicitly unverified proposal, replay citations
+against fresh source bytes, retain a typed result, inspect state, and delete
+under exact identity/generation bindings. The server does not run a model,
+accept numeric confidence as proof, or import the private benchmark scorer or
+truth oracle. See `docs/VERIFIED_EXTRACTION.md`.
+
+Shipping the workspace does not convert any private campaign into a public
+benchmark claim. Product tests prove deterministic contract behavior; benchmark
+claims still require their separately frozen corpus, authority, denominator,
+execution, score, and rights gates.
+
 ## Native host matrix
 
 The release matrix distinguishes server compatibility from official host

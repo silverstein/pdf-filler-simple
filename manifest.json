@@ -223,6 +223,34 @@
       "description": "Stamp a plain text string at a location (for date zones or arbitrary text fills; no intent required)"
     },
     {
+      "name": "create_extraction_workspace",
+      "description": "Create a private local workspace bound to exact PDF and JSON Schema bytes"
+    },
+    {
+      "name": "inspect_extraction_state",
+      "description": "Inspect the exact current generation and recovery state of a verified extraction workspace"
+    },
+    {
+      "name": "read_extraction_workspace",
+      "description": "Read bounded pages of chunks, pending leaves, proposals, results, or events"
+    },
+    {
+      "name": "read_extraction_chunk",
+      "description": "Rebuild one source-bound chunk from fresh local PDF bytes"
+    },
+    {
+      "name": "submit_extraction_proposal",
+      "description": "Append one explicitly unverified schema-leaf proposal bound to source chunks"
+    },
+    {
+      "name": "verify_extraction_proposal",
+      "description": "Deterministically replay and retain one cited extraction proposal without a model or network"
+    },
+    {
+      "name": "delete_extraction_workspace",
+      "description": "Delete a private extraction workspace only under exact identity and generation bindings"
+    },
+    {
       "name": "reveal_in_finder",
       "description": "Open the OS file manager with the given file selected. Used by the viewer to surface the active PDF or its backup"
     }
