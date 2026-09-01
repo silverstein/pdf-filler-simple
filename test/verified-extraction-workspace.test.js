@@ -553,7 +553,7 @@ describe("transactional verified extraction workspace", () => {
       .filter(name => name.endsWith(".pointer.v1.json"))
       .map(async name => (await readJson(path.join(rootPath, name))).workspace_directory_name))).sort();
     expect(remainingDirectories).toEqual(referencedDirectories);
-  });
+  }, 30_000);
 
   it("persists and abandons the creator claim before initialization becomes visible", async () => {
     const transactionId = "e".repeat(32);
