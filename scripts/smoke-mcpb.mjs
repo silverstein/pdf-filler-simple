@@ -239,7 +239,7 @@ export function validateAccessibilitySmokeResult(result, expectedSource) {
 
 async function main() {
   const bundlePath = path.resolve(process.argv[2] || path.join(REPO_ROOT, "pdf-toolkit-mcp.mcpb"));
-  const tempRoot = mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-smoke-"));
+  const tempRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-smoke-")));
   const extensionDir = path.join(tempRoot, "extension");
   const specialFilename = process.platform === "win32"
     ? "smoke # quarterly draft.pdf"
