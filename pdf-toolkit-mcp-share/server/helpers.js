@@ -1661,7 +1661,16 @@ const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
 // fsOps is injected so this window can be forced in a test: a filesystem whose
 // open() reaches a different inode than the preceding lstat() must be rejected
 // here rather than read.
-export async function openVerifiedRegularFile(fsOps, canonicalPath) {
+function openFileDeviceIdentityMatches(left, right, platform) {
+  if (left.dev === right.dev) return true;
+  const leftMissing = left.dev === 0 || left.dev === 0n;
+  const rightMissing = right.dev === 0 || right.dev === 0n;
+  return platform === "win32" && leftMissing !== rightMissing;
+}
+
+export async function openVerifiedRegularFile(fsOps, canonicalPath, {
+  platform = process.platform,
+} = {}) {
   const beforeStat = await fsOps.lstat(canonicalPath);
   if (beforeStat.isSymbolicLink() || !beforeStat.isFile()) {
     throw new Error(`Not a regular file: ${path.basename(canonicalPath)}`);
@@ -1671,7 +1680,7 @@ export async function openVerifiedRegularFile(fsOps, canonicalPath) {
     const descriptorStat = await handle.stat();
     if (
       !descriptorStat.isFile()
-      || descriptorStat.dev !== beforeStat.dev
+      || !openFileDeviceIdentityMatches(descriptorStat, beforeStat, platform)
       || descriptorStat.ino !== beforeStat.ino
     ) {
       throw new Error("The file changed while it was being opened. Retry the request.");

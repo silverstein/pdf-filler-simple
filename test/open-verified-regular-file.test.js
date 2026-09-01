@@ -48,6 +48,38 @@ describe("openVerifiedRegularFile identity guard", () => {
       .rejects.toThrow(/changed while it was being opened/);
   });
 
+  it("accepts only the Windows pathname-device-zero compatibility shape", async () => {
+    const descriptorStat = regularFileStat({ dev: 2660852064, ino: 100 });
+    const fsOps = {
+      lstat: async () => regularFileStat({ dev: 0, ino: 100 }),
+      open: async () => fakeHandle(descriptorStat),
+    };
+
+    await expect(openVerifiedRegularFile(
+      fsOps,
+      "C:\\allowed\\doc.pdf",
+      { platform: "win32" },
+    )).resolves.toMatchObject({ stat: descriptorStat });
+    await expect(openVerifiedRegularFile(
+      fsOps,
+      "/allowed/doc.pdf",
+      { platform: "linux" },
+    )).rejects.toThrow(/changed while it was being opened/);
+  });
+
+  it("still rejects different nonzero Windows volumes", async () => {
+    const fsOps = {
+      lstat: async () => regularFileStat({ dev: 1, ino: 100 }),
+      open: async () => fakeHandle(regularFileStat({ dev: 9, ino: 100 })),
+    };
+
+    await expect(openVerifiedRegularFile(
+      fsOps,
+      "C:\\allowed\\doc.pdf",
+      { platform: "win32" },
+    )).rejects.toThrow(/changed while it was being opened/);
+  });
+
   it("closes the descriptor when the identity check fails", async () => {
     let closed = false;
     const fsOps = {
