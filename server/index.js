@@ -7671,9 +7671,10 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 // Initialize and start the server
 async function main() {
   // Ensure profiles and signatures directories exist
-  await fs.mkdir(PROFILES_DIR, { recursive: true }).catch(() => {});
-  await fs.mkdir(SIGNATURES_DIR, { recursive: true }).catch(() => {});
-  await fs.mkdir(BACKUPS_DIR, { recursive: true }).catch(() => {});
+  for (const directory of [PROFILES_DIR, SIGNATURES_DIR, BACKUPS_DIR]) {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 }).catch(() => {});
+    await fs.chmod(directory, 0o700).catch(() => {});
+  }
 
   // Migrate profiles from old directory (~/.pdf-filler-profiles) if it exists
   try {
