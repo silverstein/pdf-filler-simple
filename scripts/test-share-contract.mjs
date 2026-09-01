@@ -29,6 +29,7 @@ import {
   QPDF_WASM_RUNTIME_FILES,
   verifyQpdfWasmRuntime,
 } from "./qpdf-wasm-runtime.mjs";
+import { SHARE_MIRRORED_FILES } from "../package-for-friend.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -50,6 +51,14 @@ const EXPECTED_SHARE_EXECUTABLES = new Set([
   "install.sh",
   "server/index.js",
   "smart-install.sh",
+]);
+const ISOLATED_PACKAGER_SCRIPT_SOURCES = Object.freeze([
+  "scripts/eval-strict-json.mjs",
+  "scripts/npm-license-provenance.mjs",
+  "scripts/qpdf-wasm-runtime.mjs",
+  "scripts/qpdf-wasm-sbom.mjs",
+  "scripts/verified-extraction-proposal.mjs",
+  "scripts/verified-extraction-workspace.mjs",
 ]);
 
 function sha256(bytes) {
@@ -328,11 +337,20 @@ function populatePackageBuildRoot(buildRoot) {
    * whole recipe: `vendor/qpdf-wasm/sources/` holds fetched upstream tarballs
    * that are ignored by Git and irrelevant to packaging.
    */
-  mkdirSync(path.join(buildRoot, "scripts"), { recursive: true });
-  for (const filename of ["npm-license-provenance.mjs", "qpdf-wasm-runtime.mjs", "qpdf-wasm-sbom.mjs"]) {
+  const isolatedScriptSources = new Set(ISOLATED_PACKAGER_SCRIPT_SOURCES);
+  const missingMirroredScriptSources = SHARE_MIRRORED_FILES.filter(relativePath =>
+    relativePath.startsWith("scripts/") && !isolatedScriptSources.has(relativePath));
+  if (missingMirroredScriptSources.length > 0) {
+    throw new Error(
+      `Isolated package build root omits mirrored script sources: ${missingMirroredScriptSources.join(", ")}`,
+    );
+  }
+  for (const relativePath of ISOLATED_PACKAGER_SCRIPT_SOURCES) {
+    const destination = path.join(buildRoot, ...relativePath.split("/"));
+    mkdirSync(path.dirname(destination), { recursive: true });
     copyFileSync(
-      path.join(REPO_ROOT, "scripts", filename),
-      path.join(buildRoot, "scripts", filename),
+      path.join(REPO_ROOT, ...relativePath.split("/")),
+      destination,
     );
   }
   /*
