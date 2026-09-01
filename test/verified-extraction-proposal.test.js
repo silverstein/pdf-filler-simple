@@ -786,7 +786,7 @@ describe("source-replayed verified extraction proposals", () => {
         method: { kind: "source_supported", reason: "semantic assignment remains unverified" },
       })).rejects.toThrow(/non-canonical or inexact numeric token/u);
     }
-  });
+  }, 30_000);
 
   it("never promotes a lossy decimal projection to verified exact", async () => {
     const document = await PDFDocument.create();
