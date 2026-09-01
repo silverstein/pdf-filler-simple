@@ -14,6 +14,7 @@ import {
   observeSourceBoundExtractionRequestCapacity,
 } from "./verified-extraction-response-request.mjs";
 import { validateSchemaDirectedEvidencePlan } from "./verified-extraction-evidence-router.mjs";
+import { parseStrictJson } from "./eval-strict-json.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
@@ -35,6 +36,26 @@ const MODEL_CONTEXT_CONTROLLER_VERSIONS = new Set([
   CURRENT_CONTROLLER_VERSION,
 ]);
 const ROUTED_CONTROLLER_VERSIONS = new Set([CURRENT_CONTROLLER_VERSION]);
+const CAMPAIGN_EXECUTION_INDEX_KEYS = [
+  "version", "comparison_authority_sha256", "candidate_authority_sha256",
+  "candidate_execution_plan_sha256", "candidate_slot_claim_sha256",
+  "prerequisite_manifest_sha256", "model_runtime_preflight_sha256", "runtime_identity_sha256",
+  "campaign_preflight_failure", "results",
+];
+const CAMPAIGN_EXPECTED_BINDING_KEYS = [
+  "comparison_authority_sha256", "candidate_authority_sha256",
+  "candidate_execution_plan_sha256", "candidate_slot_claim_sha256",
+  "prerequisite_manifest_sha256", "model_runtime_preflight_sha256", "runtime_identity_sha256",
+  "campaign_preflight_failure", "ordered_document_ids",
+];
+const CAMPAIGN_REQUIRED_SHA256_BINDINGS = [
+  "comparison_authority_sha256", "candidate_authority_sha256",
+  "candidate_execution_plan_sha256", "candidate_slot_claim_sha256",
+  "prerequisite_manifest_sha256",
+];
+const CAMPAIGN_NULLABLE_SHA256_BINDINGS = [
+  "model_runtime_preflight_sha256", "runtime_identity_sha256",
+];
 
 export class ModelCallBudgetExhaustedError extends Error {
   constructor({ completedRequestCount, message = "The exact campaign-wide local model-call ceiling is exhausted" }) {
@@ -74,6 +95,201 @@ function exactKeys(value, expected, label) {
 function boundedString(value, label, maximum = 1024) {
   assertion(typeof value === "string" && value.length > 0, `${label} must be a non-empty string`);
   assertion(Buffer.byteLength(value, "utf8") <= maximum, `${label} exceeds its UTF-8 byte limit`);
+}
+
+function validateCanonicalJsonValue(value, label, ancestors = new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    assertion(Number.isFinite(value), `${label} must contain only finite JSON numbers`);
+    return;
+  }
+  assertion(value && typeof value === "object", `${label} must contain only JSON values`);
+  assertion(!ancestors.has(value), `${label} must not contain cycles`);
+  const nextAncestors = new Set(ancestors).add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      assertion(Object.hasOwn(value, index), `${label} must not be a sparse array`);
+      validateCanonicalJsonValue(value[index], `${label}[${index}]`, nextAncestors);
+    }
+    return;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  assertion(prototype === Object.prototype || prototype === null,
+    `${label} must contain only plain JSON objects`);
+  for (const [key, item] of Object.entries(value)) {
+    assertion(item !== undefined, `${label}.${key} must not be undefined`);
+    validateCanonicalJsonValue(item, `${label}.${key}`, nextAncestors);
+  }
+}
+
+function validateNonzeroSha256(value, label) {
+  assertion(SHA256.test(value ?? "") && value !== "0".repeat(64), `${label} is invalid`);
+}
+
+function parseExactJsonBytes(bytes, label) {
+  assertion(Buffer.isBuffer(bytes) && bytes.length > 0, `${label} must be non-empty exact bytes`);
+  const text = bytes.toString("utf8");
+  assertion(Buffer.from(text, "utf8").equals(bytes), `${label} is not valid UTF-8`);
+  const value = parseStrictJson(text, label);
+  validateCanonicalJsonValue(value, label);
+  return value;
+}
+
+function validateCampaignBindingFields(value, label) {
+  for (const field of CAMPAIGN_REQUIRED_SHA256_BINDINGS) {
+    validateNonzeroSha256(value[field], `${label}.${field}`);
+  }
+  for (const field of CAMPAIGN_NULLABLE_SHA256_BINDINGS) {
+    if (value[field] !== null) validateNonzeroSha256(value[field], `${label}.${field}`);
+  }
+  const preflightFailure = value.campaign_preflight_failure;
+  assertion(preflightFailure === null || (typeof preflightFailure === "object"
+    && !Array.isArray(preflightFailure)
+    && (Object.getPrototypeOf(preflightFailure) === Object.prototype
+      || Object.getPrototypeOf(preflightFailure) === null)),
+  `${label}.campaign_preflight_failure must be null or a plain canonical JSON object`);
+}
+
+function validateCampaignResultOutcome(outcome, label) {
+  exactKeys(outcome, ["classification", "reason_code"], `${label}.outcome`);
+  const { classification, reason_code: reasonCode } = outcome;
+  assertion(["completed", "harness_failure", "product_failure"].includes(classification),
+    `${label}.outcome.classification is invalid`);
+  boundedString(reasonCode, `${label}.outcome.reason_code`, 512);
+  if (classification === "completed") {
+    assertion(reasonCode === "none", `${label}.outcome completed reason_code must be none`);
+    return;
+  }
+  assertion(reasonCode !== "none", `${label}.outcome failed reason_code must not be none`);
+  if (reasonCode === "model_call_budget_exhausted") {
+    assertion(classification === "harness_failure",
+      `${label}.outcome model-call budget exhaustion must be a harness failure`);
+  }
+}
+
+export function buildVerifiedExtractionCampaignCompletionSummary({
+  executionIndexBytes, executionIndexPhysicalSha256,
+  expectedBindingBytes, expectedBindingPhysicalSha256, retainedReceiptBytes,
+}) {
+  validateNonzeroSha256(executionIndexPhysicalSha256, "executionIndexPhysicalSha256");
+  assertion(Buffer.isBuffer(executionIndexBytes)
+    && sha256(executionIndexBytes) === executionIndexPhysicalSha256,
+  "executionIndexPhysicalSha256 does not bind the exact execution-index bytes");
+  validateNonzeroSha256(expectedBindingPhysicalSha256, "expectedBindingPhysicalSha256");
+  assertion(Buffer.isBuffer(expectedBindingBytes)
+    && sha256(expectedBindingBytes) === expectedBindingPhysicalSha256,
+  "expectedBindingPhysicalSha256 does not bind the exact expected-binding bytes");
+  const executionIndex = parseExactJsonBytes(executionIndexBytes, "executionIndexBytes");
+  const expectedBindings = parseExactJsonBytes(expectedBindingBytes, "expectedBindingBytes");
+  exactKeys(executionIndex, CAMPAIGN_EXECUTION_INDEX_KEYS, "executionIndex");
+  exactKeys(expectedBindings, CAMPAIGN_EXPECTED_BINDING_KEYS, "expectedBindings");
+  assertion(executionIndex.version === 1, "executionIndex.version is unsupported");
+  validateCampaignBindingFields(executionIndex, "executionIndex");
+  validateCampaignBindingFields(expectedBindings, "expectedBindings");
+  for (const field of [...CAMPAIGN_REQUIRED_SHA256_BINDINGS, ...CAMPAIGN_NULLABLE_SHA256_BINDINGS,
+    "campaign_preflight_failure"]) {
+    assertion(canonicalJson(executionIndex[field]) === canonicalJson(expectedBindings[field]),
+      `executionIndex.${field} drifted from the independently expected binding`);
+  }
+  const orderedResults = executionIndex.results;
+  assertion(Array.isArray(orderedResults) && orderedResults.length > 0,
+    "executionIndex.results must be a non-empty array");
+  assertion(Array.isArray(expectedBindings.ordered_document_ids)
+    && expectedBindings.ordered_document_ids.length > 0,
+  "expectedBindings.ordered_document_ids must be a non-empty array");
+  const expectedDocumentIds = new Set();
+  expectedBindings.ordered_document_ids.forEach((documentId, index) => {
+    boundedString(documentId, `expectedBindings.ordered_document_ids[${index}]`, 512);
+    assertion(!expectedDocumentIds.has(documentId),
+      "expectedBindings.ordered_document_ids must be unique");
+    expectedDocumentIds.add(documentId);
+  });
+  assertion(canonicalJson(orderedResults.map(row => row?.document_id))
+    === canonicalJson(expectedBindings.ordered_document_ids),
+  "executionIndex.results document IDs/order drifted from the independently frozen denominator");
+  assertion(Array.isArray(retainedReceiptBytes)
+    && retainedReceiptBytes.length === orderedResults.length,
+  "retainedReceiptBytes must contain exactly one receipt for every indexed result");
+
+  const receiptsByPhysicalSha256 = new Map();
+  retainedReceiptBytes.forEach((bytes, index) => {
+    const label = `retainedReceiptBytes[${index}]`;
+    const receipt = parseExactJsonBytes(bytes, label);
+    assertion(receipt && typeof receipt === "object" && !Array.isArray(receipt),
+      `${label} must contain a receipt object`);
+    const digest = sha256(bytes);
+    assertion(!receiptsByPhysicalSha256.has(digest),
+      "retainedReceiptBytes contains a duplicated physical receipt");
+    receiptsByPhysicalSha256.set(digest, { receipt, label });
+  });
+
+  const seenDocumentIds = new Set();
+  const seenReceiptSha256s = new Set();
+  const classifications = { completed: 0, harness_failure: 0, product_failure: 0 };
+  orderedResults.forEach((row, index) => {
+    const label = `executionIndex.results[${index}]`;
+    exactKeys(row, ["document_id", "outcome", "receipt_sha256"], label);
+    boundedString(row.document_id, `${label}.document_id`, 512);
+    assertion(!seenDocumentIds.has(row.document_id),
+      `${label}.document_id duplicates an earlier result`);
+    seenDocumentIds.add(row.document_id);
+    validateNonzeroSha256(row.receipt_sha256, `${label}.receipt_sha256`);
+    assertion(!seenReceiptSha256s.has(row.receipt_sha256),
+      `${label}.receipt_sha256 duplicates an earlier indexed receipt`);
+    seenReceiptSha256s.add(row.receipt_sha256);
+    validateCampaignResultOutcome(row.outcome, label);
+    const retained = receiptsByPhysicalSha256.get(row.receipt_sha256);
+    assertion(retained, `${label}.receipt_sha256 does not bind an exact retained receipt`);
+    const receipt = retained.receipt;
+    assertion(receipt.document_id === row.document_id,
+      `${label}.document_id does not match its exact retained receipt`);
+    assertion(receipt.outcome && typeof receipt.outcome === "object" && !Array.isArray(receipt.outcome),
+      `${retained.label}.outcome must be an object`);
+    const receiptOutcome = {
+      classification: receipt.outcome.classification,
+      reason_code: receipt.outcome.reason_code,
+    };
+    validateCampaignResultOutcome(receiptOutcome, retained.label);
+    assertion(canonicalJson(receiptOutcome) === canonicalJson(row.outcome),
+      `${label}.outcome does not match its exact retained receipt`);
+    if (Object.hasOwn(receipt, "receipt_sha256")) {
+      assertion(receipt.contract?.name === "pdf-tools.verified-extraction-response-controller-receipt"
+        && receipt.contract?.version === 3,
+      `${retained.label} has an unsupported internal receipt digest contract`);
+      responseAdmissionControllerFailure(receipt);
+    } else {
+      exactKeys(receipt.outcome, ["classification", "reason_code"], `${retained.label}.outcome`);
+    }
+    classifications[row.outcome.classification] += 1;
+  });
+
+  const failed = classifications.harness_failure + classifications.product_failure;
+  const body = {
+    contract: { name: "pdf-tools.verified-extraction-campaign-completion-summary", version: 1 },
+    execution_index_digest: {
+      physical_sha256: sha256(executionIndexBytes),
+      canonical_sha256: sha256(Buffer.from(canonicalJson(executionIndex), "utf8")),
+    },
+    expected_binding_digest: {
+      physical_sha256: sha256(expectedBindingBytes),
+      canonical_sha256: sha256(Buffer.from(canonicalJson(expectedBindings), "utf8")),
+    },
+    controller_index_completion_status: "complete",
+    product_acceptance_status: "not_evaluated",
+    product_acceptance_basis: "requires_later_offline_scoring",
+    document_counts: {
+      total: orderedResults.length,
+      completed: classifications.completed,
+      failed,
+      harness_failure: classifications.harness_failure,
+      product_failure: classifications.product_failure,
+    },
+    ordered_results: structuredClone(orderedResults),
+  };
+  return {
+    ...body,
+    completion_summary_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
+  };
 }
 
 function validateDocumentValidation(value) {

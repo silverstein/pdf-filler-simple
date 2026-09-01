@@ -1029,15 +1029,79 @@ quotes equal the oracle author's chosen window byte-for-byte. This private
 offline replay used no model or provider call, leaves prior scores immutable,
 and does not authorize a benchmark or public claim.
 
+Future verified-extraction campaign writers must keep execution completion and
+product acceptance separate. The repository campaign-completion summary
+consumes the exact retained index bytes rather than a caller-authored parsed
+object. It binds those bytes by both physical and canonical digest, checks the
+seven index authority/runtime bindings plus preflight state against a separate
+trusted expected-binding file, and checks the exact frozen document ID/order
+denominator. Every indexed receipt digest must then bind one exact retained
+receipt file whose document ID and outcome match its row. Result rows are
+retained in frozen order and counted only from their exact `completed`,
+`product_failure`, or `harness_failure` classification. The summary never emits
+an unqualified `ok`; it reports
+`controller_index_completion_status: complete` separately from
+`product_acceptance_status: not_evaluated`. Semantic product acceptance can be
+decided only by the later offline scorer, including when every document row is
+completed.
+
+The exact physical execution-index SHA-256, expected-binding file, and that
+file's separately supplied exact physical SHA-256 pin are trust inputs. They
+must come from the independently frozen authority and denominator, never be
+regenerated from the candidate index being checked. This prevents a fully
+resealed receipt and matching index outcome from replacing the frozen result.
+Replacing all of those trust inputs and the retained artifacts together remains
+outside what an unsigned post-hoc source contract can authenticate. Index,
+expected-binding, and receipt JSON also reject duplicate object members at any
+depth before any binding or outcome is admitted.
+
+The source-controlled post-hoc boundary is read-only:
+
+```bash
+node scripts/summarize-verified-extraction-campaign.mjs \
+  --index /exact/retained/execution-index.json \
+  --index-sha256 <trusted-index-physical-sha256> \
+  --expected-bindings /trusted/expected-bindings.json \
+  --expected-bindings-sha256 <trusted-physical-sha256> \
+  --receipt /exact/retained/receipt-1.json \
+  --receipt /exact/retained/receipt-2.json
+```
+
+It exits zero only when the complete index/receipt set authenticates, regardless
+of the later product-acceptance decision, and exits nonzero on any integrity or
+denominator failure. There is no source-controlled V29/V30 campaign writer to
+wire: the historical stdout producer exists only inside immutable sealed
+evidence. This adapter does not mutate or reinterpret that historical stdout.
+Future executable campaign authorities must call this contract or bind
+equivalent logic before claiming execution completion. Real V29/V30 retained
+indexes and receipts are private evidence rather than stable source-controlled
+fixtures, so repository tests exercise byte-exact synthetic replays; real
+retained replay remains an external evidence-validation step and cannot be
+closed by this repository alone.
+
+A campaign controller may therefore exit zero after it durably retains every
+frozen attempt and the final execution index even when one or more document
+outcomes failed. That exit means only that campaign execution and indexing are
+complete; it is not a product pass. The calibration command keeps its existing
+pass/fail `ok` field and matching exit behavior because calibration is a
+different, one-call mechanics gate rather than a multi-document campaign
+completion contract.
+
 Campaign-wide model-call exhaustion is a typed, denominator-preserving outcome,
 including when it occurs between document batches. Response-controller receipt
-version 3 retains `model_call_budget_exhausted` and the exact campaign
-`completed_request_count`; malformed lookalike errors remain ordinary controller
-failures. A caller can reconstruct the typed error only from a digest-valid
-receipt. Attempt page partitions must be derived from the ordered, durably
-retained page inventory: retained pages survive a later model-budget failure,
-while failure to retain the aggregate trace clears processed pages rather than
-claiming unsupported work. Zero retry and no replacement still apply, and every
+version 3 retains `model_call_budget_exhausted` without silently renaming the
+historical `completed_request_count`; malformed lookalike errors remain ordinary
+controller failures. The field's retained meaning is versioned by campaign:
+V29 historical tool-model trace failure events use a document-local
+completed-request count, while the V30-and-later typed ledger contract uses the
+campaign-wide reserved-call ledger count. In both cases `observed.model_calls`
+and each batch's model-call count
+remain local to that document attempt. A caller can reconstruct the typed error
+only from a digest-valid receipt. Attempt page partitions must be derived from
+the ordered, durably retained page inventory: retained pages survive a later
+model-budget failure, while failure to retain the aggregate trace clears
+processed pages rather than claiming unsupported work. Zero retry and no
+replacement still apply, and every
 later frozen slot remains in the campaign index.
 
 Each trial set includes an invocation run plan that defines the denominator

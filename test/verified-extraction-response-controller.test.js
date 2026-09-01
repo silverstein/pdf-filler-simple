@@ -1,10 +1,16 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { SHARE_FILES } from "../package-for-friend.js";
 import { SERVER_FILES } from "../scripts/build-mcpb.mjs";
 import { buildSchemaDirectedEvidencePlan } from "../scripts/verified-extraction-evidence-router.mjs";
 import {
+  buildVerifiedExtractionCampaignCompletionSummary,
   materializeAdmittedSourceExtraction,
   ModelCallBudgetExhaustedError,
   prepareResponseAdmissionController,
@@ -128,8 +134,341 @@ const plan = () => prepareController({
   maxOutputTokens: 4096,
   contextWindowTokens: 32768,
 });
+const campaignOutcome = classification => classification === "completed"
+  ? { classification, reason_code: "none" }
+  : { classification, reason_code: classification === "product_failure"
+      ? "incomplete_extraction" : "controller_failure" };
+const prettyJsonBytes = value => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+const campaignExecutionIndex = results => ({
+  version: 1,
+  comparison_authority_sha256: "1".repeat(64),
+  candidate_authority_sha256: "2".repeat(64),
+  candidate_execution_plan_sha256: "3".repeat(64),
+  candidate_slot_claim_sha256: "4".repeat(64),
+  prerequisite_manifest_sha256: "5".repeat(64),
+  model_runtime_preflight_sha256: null,
+  runtime_identity_sha256: null,
+  campaign_preflight_failure: null,
+  results,
+});
+const expectedCampaignBindings = executionIndex => ({
+  comparison_authority_sha256: executionIndex.comparison_authority_sha256,
+  candidate_authority_sha256: executionIndex.candidate_authority_sha256,
+  candidate_execution_plan_sha256: executionIndex.candidate_execution_plan_sha256,
+  candidate_slot_claim_sha256: executionIndex.candidate_slot_claim_sha256,
+  prerequisite_manifest_sha256: executionIndex.prerequisite_manifest_sha256,
+  model_runtime_preflight_sha256: executionIndex.model_runtime_preflight_sha256,
+  runtime_identity_sha256: executionIndex.runtime_identity_sha256,
+  campaign_preflight_failure: structuredClone(executionIndex.campaign_preflight_failure),
+  ordered_document_ids: executionIndex.results.map(row => row.document_id),
+});
+const campaignArtifacts = classifications => {
+  const receipts = classifications.map((classification, index) => ({
+    document_id: `campaign-document-${String(index + 1).padStart(2, "0")}`,
+    outcome: campaignOutcome(classification),
+  }));
+  const results = receipts.map(receipt => ({
+    document_id: receipt.document_id,
+    receipt_sha256: sha(prettyJsonBytes(receipt)),
+    outcome: structuredClone(receipt.outcome),
+  }));
+  const executionIndex = campaignExecutionIndex(results);
+  return {
+    executionIndex,
+    expectedBindings: expectedCampaignBindings(executionIndex),
+    receipts,
+  };
+};
+const campaignSummaryInput = value => {
+  const executionIndexBytes = prettyJsonBytes(value.executionIndex);
+  const expectedBindingBytes = prettyJsonBytes(value.expectedBindings);
+  return {
+    executionIndexBytes,
+    executionIndexPhysicalSha256: sha(executionIndexBytes),
+    expectedBindingBytes,
+    expectedBindingPhysicalSha256: sha(expectedBindingBytes),
+    retainedReceiptBytes: value.receipts.map(prettyJsonBytes),
+  };
+};
 
 describe("verified extraction response controller", () => {
+  it("reports 11 completed and 19 failed documents as execution-complete but not product-accepted", () => {
+    const value = campaignArtifacts([
+      ...Array(11).fill("completed"),
+      ...Array(4).fill("product_failure"),
+      ...Array(15).fill("harness_failure"),
+    ]);
+    const input = campaignSummaryInput(value);
+    const summary = buildVerifiedExtractionCampaignCompletionSummary(input);
+    expect(summary).toEqual({
+      contract: { name: "pdf-tools.verified-extraction-campaign-completion-summary", version: 1 },
+      execution_index_digest: {
+        physical_sha256: sha(input.executionIndexBytes),
+        canonical_sha256: sha(Buffer.from(canonicalJson(value.executionIndex), "utf8")),
+      },
+      expected_binding_digest: {
+        physical_sha256: sha(input.expectedBindingBytes),
+        canonical_sha256: sha(Buffer.from(canonicalJson(value.expectedBindings), "utf8")),
+      },
+      controller_index_completion_status: "complete",
+      product_acceptance_status: "not_evaluated",
+      product_acceptance_basis: "requires_later_offline_scoring",
+      document_counts: {
+        total: 30,
+        completed: 11,
+        failed: 19,
+        harness_failure: 15,
+        product_failure: 4,
+      },
+      ordered_results: value.executionIndex.results,
+      completion_summary_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(summary).not.toHaveProperty("ok");
+    expect(summary.ordered_results.map(row => row.document_id))
+      .toEqual(value.executionIndex.results.map(row => row.document_id));
+    expect(buildVerifiedExtractionCampaignCompletionSummary(input)).toEqual(summary);
+  });
+
+  it("does not infer product acceptance when every document completed", () => {
+    const value = campaignArtifacts(Array(30).fill("completed"));
+    const summary = buildVerifiedExtractionCampaignCompletionSummary(campaignSummaryInput(value));
+    expect(summary).toMatchObject({
+      controller_index_completion_status: "complete",
+      product_acceptance_status: "not_evaluated",
+      document_counts: { total: 30, completed: 30, failed: 0 },
+    });
+    expect(summary).not.toHaveProperty("ok");
+  });
+
+  it("requires the exact physical SHA-256 pin for the independently trusted bindings", () => {
+    const input = campaignSummaryInput(campaignArtifacts(["completed"]));
+    input.expectedBindingPhysicalSha256 = "0".repeat(64);
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(input))
+      .toThrow(/expectedBindingPhysicalSha256/u);
+    delete input.expectedBindingPhysicalSha256;
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(input))
+      .toThrow(/expectedBindingPhysicalSha256/u);
+  });
+
+  it("requires the independently trusted exact physical execution-index SHA-256 pin", () => {
+    const wrong = campaignSummaryInput(campaignArtifacts(["completed"]));
+    wrong.executionIndexPhysicalSha256 = "0".repeat(64);
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(wrong))
+      .toThrow(/executionIndexPhysicalSha256/u);
+    const missing = campaignSummaryInput(campaignArtifacts(["completed"]));
+    delete missing.executionIndexPhysicalSha256;
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(missing))
+      .toThrow(/executionIndexPhysicalSha256/u);
+  });
+
+  it("rejects a fully resealed receipt and matching index outcome against the frozen index pin", () => {
+    const value = campaignArtifacts(["completed"]);
+    const trustedIndexSha256 = campaignSummaryInput(value).executionIndexPhysicalSha256;
+    value.receipts[0].outcome = campaignOutcome("product_failure");
+    value.executionIndex.results[0].outcome = campaignOutcome("product_failure");
+    value.executionIndex.results[0].receipt_sha256 = sha(prettyJsonBytes(value.receipts[0]));
+    const resealed = campaignSummaryInput(value);
+    resealed.executionIndexPhysicalSha256 = trustedIndexSha256;
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(resealed))
+      .toThrow(/executionIndexPhysicalSha256 does not bind/u);
+  });
+
+  it.each([
+    ["execution index", () => {
+      const input = campaignSummaryInput(campaignArtifacts(["completed"]));
+      input.executionIndexBytes = Buffer.from(input.executionIndexBytes.toString("utf8").replace(
+        '"classification": "completed",',
+        '"classification": "completed",\n        "classification": "completed",',
+      ));
+      input.executionIndexPhysicalSha256 = sha(input.executionIndexBytes);
+      return input;
+    }],
+    ["expected bindings", () => {
+      const value = campaignArtifacts(["completed"]);
+      value.executionIndex.campaign_preflight_failure = { reason_code: "synthetic_preflight" };
+      value.expectedBindings.campaign_preflight_failure = { reason_code: "synthetic_preflight" };
+      const input = campaignSummaryInput(value);
+      input.expectedBindingBytes = Buffer.from(input.expectedBindingBytes.toString("utf8").replace(
+        '"reason_code": "synthetic_preflight"',
+        '"reason_code": "synthetic_preflight",\n    "reason_code": "synthetic_preflight"',
+      ));
+      input.expectedBindingPhysicalSha256 = sha(input.expectedBindingBytes);
+      return input;
+    }],
+    ["retained receipt", () => {
+      const value = campaignArtifacts(["completed"]);
+      const duplicateReceiptBytes = Buffer.from(prettyJsonBytes(value.receipts[0]).toString("utf8").replace(
+        '"classification": "completed",',
+        '"classification": "completed",\n    "classification": "completed",',
+      ));
+      value.executionIndex.results[0].receipt_sha256 = sha(duplicateReceiptBytes);
+      const input = campaignSummaryInput(value);
+      input.retainedReceiptBytes[0] = duplicateReceiptBytes;
+      return input;
+    }],
+  ])("rejects duplicate object members at any depth in %s bytes", (_label, buildInput) => {
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(buildInput()))
+      .toThrow(/duplicate object key/u);
+  });
+
+  it("CLI exits zero for an authenticated mixed-outcome campaign and nonzero on receipt drift", async () => {
+    const value = campaignArtifacts(["completed", "product_failure", "harness_failure"]);
+    const directory = await mkdtemp(path.join(tmpdir(), "pdf-tools-campaign-summary-"));
+    try {
+      const indexPath = path.join(directory, "execution-index.json");
+      const expectedBindingsPath = path.join(directory, "expected-bindings.json");
+      const receiptPaths = value.receipts.map((_, index) => (
+        path.join(directory, `receipt-${index + 1}.json`)
+      ));
+      await Promise.all([
+        writeFile(indexPath, prettyJsonBytes(value.executionIndex)),
+        writeFile(expectedBindingsPath, prettyJsonBytes(value.expectedBindings)),
+        ...receiptPaths.map((receiptPath, index) => (
+          writeFile(receiptPath, prettyJsonBytes(value.receipts[index]))
+        )),
+      ]);
+      const scriptPath = fileURLToPath(new URL(
+        "../scripts/summarize-verified-extraction-campaign.mjs", import.meta.url,
+      ));
+      const args = [scriptPath, "--index", indexPath,
+        "--index-sha256", sha(prettyJsonBytes(value.executionIndex)),
+        "--expected-bindings", expectedBindingsPath,
+        "--expected-bindings-sha256", sha(prettyJsonBytes(value.expectedBindings)),
+        ...receiptPaths.flatMap(receiptPath => ["--receipt", receiptPath])];
+      const completed = spawnSync(process.execPath, args, { encoding: "utf8" });
+      expect(completed.status).toBe(0);
+      expect(completed.stderr).toBe("");
+      expect(JSON.parse(completed.stdout)).toMatchObject({
+        controller_index_completion_status: "complete",
+        product_acceptance_status: "not_evaluated",
+        document_counts: { total: 3, completed: 1, failed: 2 },
+      });
+      expect(JSON.parse(completed.stdout)).not.toHaveProperty("ok");
+
+      await writeFile(receiptPaths[1], prettyJsonBytes({
+        ...value.receipts[1],
+        document_id: "substituted-document",
+      }));
+      const drifted = spawnSync(process.execPath, args, { encoding: "utf8" });
+      expect(drifted.status).toBe(1);
+      expect(drifted.stdout).toBe("");
+      expect(drifted.stderr).toMatch(/does not bind an exact retained receipt/u);
+
+      const withoutFlag = (values, flag) => {
+        const flagIndex = values.indexOf(flag);
+        return [...values.slice(0, flagIndex), ...values.slice(flagIndex + 2)];
+      };
+      for (const [flag, requiredMessage] of [
+        ["--index-sha256", /--index-sha256 is required/u],
+        ["--expected-bindings-sha256", /--expected-bindings-sha256 is required/u],
+      ]) {
+        const missingPin = spawnSync(process.execPath, withoutFlag(args, flag), { encoding: "utf8" });
+        expect(missingPin.status).toBe(1);
+        expect(missingPin.stderr).toMatch(requiredMessage);
+      }
+
+      for (const [flag, errorPattern] of [
+        ["--index-sha256", /executionIndexPhysicalSha256/u],
+        ["--expected-bindings-sha256", /expectedBindingPhysicalSha256/u],
+      ]) {
+        const wrongPinArgs = [...args];
+        wrongPinArgs[wrongPinArgs.indexOf(flag) + 1] = "0".repeat(64);
+        const wrongPin = spawnSync(process.execPath, wrongPinArgs, { encoding: "utf8" });
+        expect(wrongPin.status).toBe(1);
+        expect(wrongPin.stderr).toMatch(errorPattern);
+
+        const duplicatePinArgs = [...args, flag, "6".repeat(64)];
+        const duplicatePin = spawnSync(process.execPath, duplicatePinArgs, { encoding: "utf8" });
+        expect(duplicatePin.status).toBe(1);
+        expect(duplicatePin.stderr).toMatch(/may be supplied only once/u);
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["malformed result keys", value => { value.executionIndex.results[0].unexpected = true; }],
+    ["duplicated document IDs", value => {
+      value.executionIndex.results[1].document_id = value.executionIndex.results[0].document_id;
+    }],
+    ["valid-reseal authority substitution", value => {
+      value.executionIndex.comparison_authority_sha256 = "9".repeat(64);
+    }],
+    ["valid-reseal runtime-preflight substitution", value => {
+      value.executionIndex.model_runtime_preflight_sha256 = "6".repeat(64);
+    }],
+    ["valid-reseal preflight-failure substitution", value => {
+      value.executionIndex.campaign_preflight_failure = { reason_code: "substituted_preflight" };
+    }],
+    ["valid-reseal receipt document substitution", value => {
+      value.receipts[0].document_id = "substituted-document";
+      value.executionIndex.results[0].receipt_sha256 = sha(prettyJsonBytes(value.receipts[0]));
+    }],
+    ["valid-reseal receipt outcome substitution", value => {
+      value.receipts[0].outcome = campaignOutcome("product_failure");
+      value.executionIndex.results[0].receipt_sha256 = sha(prettyJsonBytes(value.receipts[0]));
+    }],
+    ["valid-reseal frozen-document substitution", value => {
+      value.receipts[0].document_id = "substituted-document";
+      value.executionIndex.results[0].document_id = "substituted-document";
+      value.executionIndex.results[0].receipt_sha256 = sha(prettyJsonBytes(value.receipts[0]));
+    }],
+    ["fully resealed invalid comparison-authority binding", value => {
+      value.executionIndex.comparison_authority_sha256 = "A".repeat(64);
+      value.expectedBindings.comparison_authority_sha256 = "A".repeat(64);
+    }],
+    ["invalid comparison-authority binding", value => {
+      value.executionIndex.comparison_authority_sha256 = "A".repeat(64);
+    }],
+    ["invalid candidate-authority binding", value => {
+      value.executionIndex.candidate_authority_sha256 = "0".repeat(64);
+    }],
+    ["invalid execution-plan binding", value => {
+      value.executionIndex.candidate_execution_plan_sha256 = "3".repeat(63);
+    }],
+    ["invalid slot-claim binding", value => {
+      value.executionIndex.candidate_slot_claim_sha256 = null;
+    }],
+    ["invalid prerequisite-manifest binding", value => {
+      value.executionIndex.prerequisite_manifest_sha256 = "not-a-digest";
+    }],
+    ["invalid nullable model-runtime-preflight binding", value => {
+      value.executionIndex.model_runtime_preflight_sha256 = "0".repeat(64);
+    }],
+    ["invalid nullable runtime-identity binding", value => {
+      value.executionIndex.runtime_identity_sha256 = "F".repeat(64);
+    }],
+    ["array campaign-preflight failure", value => {
+      value.executionIndex.campaign_preflight_failure = [{ reason_code: "synthetic" }];
+    }],
+    ["primitive campaign-preflight failure", value => {
+      value.executionIndex.campaign_preflight_failure = "synthetic";
+    }],
+    ["sparse result rows", value => { delete value.executionIndex.results[0]; }],
+    ["invalid receipt digest", value => {
+      value.executionIndex.results[0].receipt_sha256 = "not-a-digest";
+    }],
+    ["unknown outcome classification", value => {
+      value.executionIndex.results[0].outcome.classification = "unknown";
+    }],
+    ["completed outcome with a failure reason", value => {
+      value.executionIndex.results[0].outcome.reason_code = "controller_failure";
+    }],
+    ["failed outcome with a completion reason", value => {
+      value.executionIndex.results[0].outcome = { classification: "product_failure", reason_code: "none" };
+    }],
+    ["forged typed budget classification", value => {
+      value.executionIndex.results[0].outcome = {
+        classification: "product_failure", reason_code: "model_call_budget_exhausted",
+      };
+    }],
+  ])("rejects a campaign completion summary with %s", (_label, mutate) => {
+    const value = campaignArtifacts(["completed", "completed"]);
+    mutate(value);
+    expect(() => buildVerifiedExtractionCampaignCompletionSummary(campaignSummaryInput(value))).toThrow();
+  });
+
   it("binds the complete ordered scope and never calls the reference-section batch", async () => {
     const invokeBatch = vi.fn(async () => artifact(response()));
     const result = await runController({ plan: plan(), documentChunks: chunks, invokeBatch });
@@ -449,11 +788,31 @@ describe("verified extraction response controller", () => {
     expect(() => responseAdmissionControllerFailure(drifted)).toThrow(/digest drifted/u);
   });
 
-  it("preserves the exact campaign count after admitted document batches", async () => {
+  it("does not reinterpret a V29 document-local trace count as a current receipt field", async () => {
+    const result = await runController({
+      plan: plan(),
+      documentChunks: chunks,
+      invokeBatch: async () => { throw new Error("historical V29 controller failure"); },
+    });
+    const conflated = structuredClone(result.receipt);
+    conflated.outcome.completed_request_count = 13;
+    const body = structuredClone(conflated);
+    delete body.receipt_sha256;
+    conflated.receipt_sha256 = sha(Buffer.from(canonicalJson(body), "utf8"));
+    expect(conflated.outcome).toMatchObject({
+      classification: "harness_failure",
+      reason_code: "controller_failure",
+      completed_request_count: 13,
+    });
+    expect(() => responseAdmissionControllerFailure(conflated))
+      .toThrow(/non-budget controller failure cannot claim a completed request count/u);
+  });
+
+  it("preserves the exact V30+ campaign count after admitted document batches", async () => {
     const splitPlan = prepareController({
       attemptId: "successor-attempt-budget-mid-document",
       trialId: "successor-trial-budget-mid-document",
-      predecessorRoleIds: ["v29-attempt-0001"],
+      predecessorRoleIds: ["prior-attempt-0001"],
       documentValidation,
       documentChunks: chunks,
       batchChunkIds: [[chunkId("a")], [chunkId("b")], [chunkId("c")]],
@@ -493,6 +852,9 @@ describe("verified extraction response controller", () => {
       calculation_evidence: null,
       source_extraction: null,
     });
+    expect(result.receipt.outcome.completed_request_count).toBe(283);
+    expect(result.receipt.observed.model_calls).toBe(1);
+    expect(result.receipt.batch_outcomes.map(item => item.model_call_count)).toEqual([1, 0]);
     expect(result.receipt.batch_outcomes.map(item => item.status)).toEqual([
       "admitted", "model_call_budget_exhausted",
     ]);
