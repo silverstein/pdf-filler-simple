@@ -2649,9 +2649,16 @@ async function stageAtomicOutput(
   }
 }
 
-function outputIdentity(stat) {
+export function outputIdentity(stat, platform = process.platform) {
   if (!stat) return null;
-  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+  return [
+    portableFilesystemDevice(stat, platform),
+    stat.ino,
+    stat.mode,
+    stat.size,
+    stat.mtimeMs,
+    stat.ctimeMs,
+  ].join(":");
 }
 
 async function lstatIfPresent(fsOps, targetPath) {

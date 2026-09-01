@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { openVerifiedRegularFile, portableFilesystemDevice } from "../server/helpers.js";
+import {
+  openVerifiedRegularFile,
+  outputIdentity,
+  portableFilesystemDevice,
+} from "../server/helpers.js";
 
 // openVerifiedRegularFile defends a TOCTOU race that a real-filesystem test
 // cannot force reliably: the swap has to happen in the window between the lstat
@@ -31,6 +35,19 @@ describe("openVerifiedRegularFile identity guard", () => {
     expect(portableFilesystemDevice({ dev: 2660852064 }, "win32"))
       .toBe("win32-unavailable");
     expect(portableFilesystemDevice({ dev: 41 }, "linux")).toBe("41");
+  });
+  it("uses the portable Windows device identity when reopening transaction artifacts", () => {
+    const shared = {
+      ino: 91,
+      mode: 0o100666,
+      size: 17,
+      mtimeMs: 100,
+      ctimeMs: 101,
+    };
+    expect(outputIdentity({ ...shared, dev: 0 }, "win32"))
+      .toBe(outputIdentity({ ...shared, dev: 2660852064 }, "win32"));
+    expect(outputIdentity({ ...shared, dev: 0 }, "linux"))
+      .not.toBe(outputIdentity({ ...shared, dev: 2660852064 }, "linux"));
   });
   it("rejects a file whose inode changed between lstat and open", async () => {
     // The name was inspected as inode 100 and opened as inode 200 — a
