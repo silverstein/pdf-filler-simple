@@ -5,6 +5,7 @@ import {
   copyFileSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -39,13 +40,24 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+export function packedArchiveExtractionCommand(bundlePath, destination,
+  platform = process.platform) {
+  return platform === "win32"
+    ? { command: "tar", args: ["-xf", bundlePath, "-C", destination] }
+    : { command: "unzip", args: ["-q", bundlePath, "-d", destination] };
+}
+
 function extract(bundlePath, destination) {
-  const result = spawnSync("unzip", ["-q", bundlePath, "-d", destination], {
+  const planned = packedArchiveExtractionCommand(bundlePath, destination);
+  mkdirSync(destination, { recursive: false });
+  const result = spawnSync(planned.command, planned.args, {
     encoding: "utf8",
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`unzip exited with status ${result.status}: ${result.stderr || result.stdout}`);
+    throw new Error(
+      `${planned.command} exited with status ${result.status}: ${result.stderr || result.stdout}`,
+    );
   }
 }
 
