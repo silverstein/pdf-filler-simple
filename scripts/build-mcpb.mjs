@@ -34,6 +34,7 @@ import {
 import {
   isForbiddenArchivePath,
   PDFJS_EXCLUDED_DIRECTORIES,
+  VERIFIED_EXTRACTION_RUNTIME_FILES,
 } from "./mcpb-packaging-policy.mjs";
 import {
   QPDF_WASM_RUNTIME_ASSETS,
@@ -96,11 +97,7 @@ export const SERVER_FILES = [
   "type3-cm-reference.js",
   "verified-extraction-tools.js",
 ];
-export const VERIFIED_EXTRACTION_RUNTIME_FILES = [
-  "scripts/eval-strict-json.mjs",
-  "scripts/verified-extraction-proposal.mjs",
-  "scripts/verified-extraction-workspace.mjs",
-];
+export { VERIFIED_EXTRACTION_RUNTIME_FILES } from "./mcpb-packaging-policy.mjs";
 const FIRST_PARTY_TEXT_FILES = [
   ...SERVER_FILES.map(filename => `server/${filename}`),
   ...VERIFIED_EXTRACTION_RUNTIME_FILES,
