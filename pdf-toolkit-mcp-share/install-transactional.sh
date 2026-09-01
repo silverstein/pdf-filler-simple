@@ -88,6 +88,7 @@ REQUIRED_ITEMS=(
     "install.sh"
     "package-lock.json"
     "package.json"
+    "scripts"
     "server"
     "smart-install.sh"
     "vendor"
