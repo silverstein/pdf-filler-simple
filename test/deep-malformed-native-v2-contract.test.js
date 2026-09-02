@@ -25,9 +25,13 @@ const CONTROL_SHA =
   "289a4cf752399fad51e42c1ba9c06dc1e6b8d471dfbc8403f2045b8ea2f8ecef";
 const HEAD = "d".repeat(40);
 const TREE = "e".repeat(40);
-const WORK_ROOT = "/private/tmp/pdf-tools-v2-test/row/work";
-const FIXTURE_PATH =
-  "/private/tmp/pdf-tools-v2-test/corpus/deep-nested-arrays.pdf";
+const nativeTestPath = value => path.resolve(value);
+const WORK_ROOT = nativeTestPath(
+  "/private/tmp/pdf-tools-v2-test/row/work",
+);
+const FIXTURE_PATH = nativeTestPath(
+  "/private/tmp/pdf-tools-v2-test/corpus/deep-nested-arrays.pdf",
+);
 const ROOT_LABELS = [
   "input",
   "rotate_output",
@@ -48,7 +52,7 @@ function evidenceIdentity(filename, {
   mode = 0o644,
 } = {}) {
   return {
-    path: filename,
+    path: nativeTestPath(filename),
     bytes,
     sha256: hash,
     mode,
@@ -64,7 +68,7 @@ function rowIdentity(filename, {
   inode = "1",
 } = {}) {
   return {
-    path: filename,
+    path: nativeTestPath(filename),
     bytes,
     sha256: hash,
     mode,
@@ -293,7 +297,7 @@ function request(tool = "rotate_pdf_pages") {
       row_result_bytes: 1024 * 1024,
     },
     qpdf: {
-      path: "/opt/homebrew/bin/qpdf",
+      path: nativeTestPath("/opt/homebrew/bin/qpdf"),
       bytes: 100,
       sha256: SHA_A,
       mode: 0o755,
@@ -414,9 +418,9 @@ function plan() {
   return {
     protocol: "pdf-tools.deep-malformed-macos-campaign-plan.v2",
     logical_run_label: "run-a",
-    attempt_root: "/private/tmp/pdf-tools-v2-test/run-a",
+    attempt_root: nativeTestPath("/private/tmp/pdf-tools-v2-test/run-a"),
     candidate: {
-      path: "/private/tmp/pdf-tools-v2-test/candidate",
+      path: nativeTestPath("/private/tmp/pdf-tools-v2-test/candidate"),
       head: HEAD,
       tree: TREE,
       controller: evidenceIdentity(
@@ -493,7 +497,7 @@ function plan() {
       logical_fixture_digest: SHA_A,
     },
     qpdf: {
-      path: "/opt/homebrew/bin/qpdf",
+      path: nativeTestPath("/opt/homebrew/bin/qpdf"),
       bytes: 100,
       sha256: SHA_A,
       mode: 0o555,
@@ -964,7 +968,9 @@ test("two-run logical comparison ignores only declared nondeterminism", () => {
   const planA = plan();
   const planB = structuredClone(planA);
   planB.logical_run_label = "run-b";
-  planB.attempt_root = "/private/tmp/pdf-tools-v2-test/run-b";
+  planB.attempt_root = nativeTestPath(
+    "/private/tmp/pdf-tools-v2-test/run-b",
+  );
   assert.deepEqual(
     campaignComparisonV2Internals.normalizedPlan(planA),
     campaignComparisonV2Internals.normalizedPlan(planB),
