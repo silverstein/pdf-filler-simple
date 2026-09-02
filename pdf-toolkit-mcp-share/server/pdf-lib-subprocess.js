@@ -91,7 +91,9 @@ const OPTION_KEYS = new Map([
     "allow_resign", "audit_line", "audit_text", "draw_audit_line",
     "modification_at", "placement", "signature",
   ]],
-  ["prepare_signing_packet", ["allow_resign", "field_values", "signature_locations"]],
+  ["prepare_signing_packet", [
+    "allow_resign", "field_values", "require_provider_ready", "signature_locations",
+  ]],
   ["apply_text", [
     "allow_resign", "audit_line", "font_style", "modification_at", "placement", "text",
   ]],
@@ -292,6 +294,15 @@ export function calculatePdfLibRssLimit(sourceBytes) {
       ? BigInt(PDF_LIB_RSS_MAXIMUM_BYTES)
       : projected;
   return Number(bounded);
+}
+
+export function pdfLibStageDeviceMatches(observed, expected, platform = process.platform) {
+  const observedDevice = String(observed);
+  const expectedDevice = String(expected);
+  if (observedDevice === expectedDevice) return true;
+  const observedMissing = observedDevice === "0";
+  const expectedMissing = expectedDevice === "0";
+  return platform === "win32" && observedMissing !== expectedMissing;
 }
 
 export class PdfLibRssFrameParser {
@@ -769,7 +780,7 @@ async function validateStage(stageDirectory, response, operation, sources) {
     const stats = await fs.lstat(outputPath, { bigint: true });
     const mode = Number(stats.mode & 0o777n);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n
-        || String(stats.dev) !== entry.file_identity.device
+        || !pdfLibStageDeviceMatches(stats.dev, entry.file_identity.device)
         || String(stats.ino) !== entry.file_identity.inode
         || Number(stats.size) !== entry.size_bytes
         || (process.platform !== "win32" && (mode & 0o077) !== 0)
@@ -797,7 +808,7 @@ async function readStageOutput(output) {
     const before = await handle.stat({ bigint: true });
     const mode = Number(before.mode & 0o777n);
     if (!before.isFile() || before.nlink !== 1n
-        || String(before.dev) !== output.file_identity.device
+        || !pdfLibStageDeviceMatches(before.dev, output.file_identity.device)
         || String(before.ino) !== output.file_identity.inode
         || Number(before.size) !== output.size_bytes
         || (process.platform !== "win32" && (mode & 0o077) !== 0)

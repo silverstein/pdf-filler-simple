@@ -1,0 +1,868 @@
+import { createHash } from "node:crypto";
+
+import {
+  admitStructuredModelResponse,
+  buildVerifiedExtractionProposalSchema,
+  classifySourceBoundBatch,
+  compareAdmittedCitationEvidence,
+  ModelOutputAdmissionError,
+} from "./verified-extraction-response-admission.mjs";
+import {
+  buildSourceBoundExtractionRequest,
+  buildModelContextCapacityBinding,
+  ModelContextCapacityError,
+  observeSourceBoundExtractionRequestCapacity,
+} from "./verified-extraction-response-request.mjs";
+import { validateSchemaDirectedEvidencePlan } from "./verified-extraction-evidence-router.mjs";
+import { parseStrictJson } from "./eval-strict-json.mjs";
+
+const SHA256 = /^[a-f0-9]{64}$/u;
+const CHUNK_ID = /^chunk\.[a-f0-9]{64}$/u;
+const PLAN_KEYS = [
+  "attempt_id", "batch_chunk_ids", "batches", "benchmark_claim_ready", "contract", "denominator",
+  "document_validation", "expected_model", "max_output_tokens", "plan_sha256", "trial_id",
+];
+const CURRENT_CONTROLLER_VERSION = "1.7.0-experimental";
+const REPLAYABLE_CONTROLLER_VERSIONS = new Set([
+  "1.3.0-experimental",
+  "1.4.0-experimental",
+  "1.5.0-experimental",
+  "1.6.0-experimental",
+  CURRENT_CONTROLLER_VERSION,
+]);
+const MODEL_CONTEXT_CONTROLLER_VERSIONS = new Set([
+  "1.5.0-experimental",
+  "1.6.0-experimental",
+  CURRENT_CONTROLLER_VERSION,
+]);
+const ROUTED_CONTROLLER_VERSIONS = new Set([CURRENT_CONTROLLER_VERSION]);
+const CAMPAIGN_EXECUTION_INDEX_KEYS = [
+  "version", "comparison_authority_sha256", "candidate_authority_sha256",
+  "candidate_execution_plan_sha256", "candidate_slot_claim_sha256",
+  "prerequisite_manifest_sha256", "model_runtime_preflight_sha256", "runtime_identity_sha256",
+  "campaign_preflight_failure", "results",
+];
+const CAMPAIGN_EXPECTED_BINDING_KEYS = [
+  "comparison_authority_sha256", "candidate_authority_sha256",
+  "candidate_execution_plan_sha256", "candidate_slot_claim_sha256",
+  "prerequisite_manifest_sha256", "model_runtime_preflight_sha256", "runtime_identity_sha256",
+  "campaign_preflight_failure", "ordered_document_ids",
+];
+const CAMPAIGN_REQUIRED_SHA256_BINDINGS = [
+  "comparison_authority_sha256", "candidate_authority_sha256",
+  "candidate_execution_plan_sha256", "candidate_slot_claim_sha256",
+  "prerequisite_manifest_sha256",
+];
+const CAMPAIGN_NULLABLE_SHA256_BINDINGS = [
+  "model_runtime_preflight_sha256", "runtime_identity_sha256",
+];
+
+export class ModelCallBudgetExhaustedError extends Error {
+  constructor({ completedRequestCount, message = "The exact campaign-wide local model-call ceiling is exhausted" }) {
+    assertion(Number.isSafeInteger(completedRequestCount) && completedRequestCount >= 0,
+      "completedRequestCount must be a non-negative safe integer");
+    boundedString(message, "model-call budget exhaustion message", 1024);
+    super(message);
+    this.name = "ModelCallBudgetExhaustedError";
+    this.code = "model_call_budget_exhausted";
+    this.tokens_complete = true;
+    this.completed_request_count = completedRequestCount;
+  }
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function assertion(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function exactKeys(value, expected, label) {
+  assertion(value && typeof value === "object" && !Array.isArray(value), `${label} must be an object`);
+  assertion(canonicalJson(Object.keys(value).sort()) === canonicalJson([...expected].sort()),
+    `${label} keys are invalid`);
+}
+
+function boundedString(value, label, maximum = 1024) {
+  assertion(typeof value === "string" && value.length > 0, `${label} must be a non-empty string`);
+  assertion(Buffer.byteLength(value, "utf8") <= maximum, `${label} exceeds its UTF-8 byte limit`);
+}
+
+function validateCanonicalJsonValue(value, label, ancestors = new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    assertion(Number.isFinite(value), `${label} must contain only finite JSON numbers`);
+    return;
+  }
+  assertion(value && typeof value === "object", `${label} must contain only JSON values`);
+  assertion(!ancestors.has(value), `${label} must not contain cycles`);
+  const nextAncestors = new Set(ancestors).add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      assertion(Object.hasOwn(value, index), `${label} must not be a sparse array`);
+      validateCanonicalJsonValue(value[index], `${label}[${index}]`, nextAncestors);
+    }
+    return;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  assertion(prototype === Object.prototype || prototype === null,
+    `${label} must contain only plain JSON objects`);
+  for (const [key, item] of Object.entries(value)) {
+    assertion(item !== undefined, `${label}.${key} must not be undefined`);
+    validateCanonicalJsonValue(item, `${label}.${key}`, nextAncestors);
+  }
+}
+
+function validateNonzeroSha256(value, label) {
+  assertion(SHA256.test(value ?? "") && value !== "0".repeat(64), `${label} is invalid`);
+}
+
+function parseExactJsonBytes(bytes, label) {
+  assertion(Buffer.isBuffer(bytes) && bytes.length > 0, `${label} must be non-empty exact bytes`);
+  const text = bytes.toString("utf8");
+  assertion(Buffer.from(text, "utf8").equals(bytes), `${label} is not valid UTF-8`);
+  const value = parseStrictJson(text, label);
+  validateCanonicalJsonValue(value, label);
+  return value;
+}
+
+function validateCampaignBindingFields(value, label) {
+  for (const field of CAMPAIGN_REQUIRED_SHA256_BINDINGS) {
+    validateNonzeroSha256(value[field], `${label}.${field}`);
+  }
+  for (const field of CAMPAIGN_NULLABLE_SHA256_BINDINGS) {
+    if (value[field] !== null) validateNonzeroSha256(value[field], `${label}.${field}`);
+  }
+  const preflightFailure = value.campaign_preflight_failure;
+  assertion(preflightFailure === null || (typeof preflightFailure === "object"
+    && !Array.isArray(preflightFailure)
+    && (Object.getPrototypeOf(preflightFailure) === Object.prototype
+      || Object.getPrototypeOf(preflightFailure) === null)),
+  `${label}.campaign_preflight_failure must be null or a plain canonical JSON object`);
+}
+
+function validateCampaignResultOutcome(outcome, label) {
+  exactKeys(outcome, ["classification", "reason_code"], `${label}.outcome`);
+  const { classification, reason_code: reasonCode } = outcome;
+  assertion(["completed", "harness_failure", "product_failure"].includes(classification),
+    `${label}.outcome.classification is invalid`);
+  boundedString(reasonCode, `${label}.outcome.reason_code`, 512);
+  if (classification === "completed") {
+    assertion(reasonCode === "none", `${label}.outcome completed reason_code must be none`);
+    return;
+  }
+  assertion(reasonCode !== "none", `${label}.outcome failed reason_code must not be none`);
+  if (reasonCode === "model_call_budget_exhausted") {
+    assertion(classification === "harness_failure",
+      `${label}.outcome model-call budget exhaustion must be a harness failure`);
+  }
+}
+
+export function buildVerifiedExtractionCampaignCompletionSummary({
+  executionIndexBytes, executionIndexPhysicalSha256,
+  expectedBindingBytes, expectedBindingPhysicalSha256, retainedReceiptBytes,
+}) {
+  validateNonzeroSha256(executionIndexPhysicalSha256, "executionIndexPhysicalSha256");
+  assertion(Buffer.isBuffer(executionIndexBytes)
+    && sha256(executionIndexBytes) === executionIndexPhysicalSha256,
+  "executionIndexPhysicalSha256 does not bind the exact execution-index bytes");
+  validateNonzeroSha256(expectedBindingPhysicalSha256, "expectedBindingPhysicalSha256");
+  assertion(Buffer.isBuffer(expectedBindingBytes)
+    && sha256(expectedBindingBytes) === expectedBindingPhysicalSha256,
+  "expectedBindingPhysicalSha256 does not bind the exact expected-binding bytes");
+  const executionIndex = parseExactJsonBytes(executionIndexBytes, "executionIndexBytes");
+  const expectedBindings = parseExactJsonBytes(expectedBindingBytes, "expectedBindingBytes");
+  exactKeys(executionIndex, CAMPAIGN_EXECUTION_INDEX_KEYS, "executionIndex");
+  exactKeys(expectedBindings, CAMPAIGN_EXPECTED_BINDING_KEYS, "expectedBindings");
+  assertion(executionIndex.version === 1, "executionIndex.version is unsupported");
+  validateCampaignBindingFields(executionIndex, "executionIndex");
+  validateCampaignBindingFields(expectedBindings, "expectedBindings");
+  for (const field of [...CAMPAIGN_REQUIRED_SHA256_BINDINGS, ...CAMPAIGN_NULLABLE_SHA256_BINDINGS,
+    "campaign_preflight_failure"]) {
+    assertion(canonicalJson(executionIndex[field]) === canonicalJson(expectedBindings[field]),
+      `executionIndex.${field} drifted from the independently expected binding`);
+  }
+  const orderedResults = executionIndex.results;
+  assertion(Array.isArray(orderedResults) && orderedResults.length > 0,
+    "executionIndex.results must be a non-empty array");
+  assertion(Array.isArray(expectedBindings.ordered_document_ids)
+    && expectedBindings.ordered_document_ids.length > 0,
+  "expectedBindings.ordered_document_ids must be a non-empty array");
+  const expectedDocumentIds = new Set();
+  expectedBindings.ordered_document_ids.forEach((documentId, index) => {
+    boundedString(documentId, `expectedBindings.ordered_document_ids[${index}]`, 512);
+    assertion(!expectedDocumentIds.has(documentId),
+      "expectedBindings.ordered_document_ids must be unique");
+    expectedDocumentIds.add(documentId);
+  });
+  assertion(canonicalJson(orderedResults.map(row => row?.document_id))
+    === canonicalJson(expectedBindings.ordered_document_ids),
+  "executionIndex.results document IDs/order drifted from the independently frozen denominator");
+  assertion(Array.isArray(retainedReceiptBytes)
+    && retainedReceiptBytes.length === orderedResults.length,
+  "retainedReceiptBytes must contain exactly one receipt for every indexed result");
+
+  const receiptsByPhysicalSha256 = new Map();
+  retainedReceiptBytes.forEach((bytes, index) => {
+    const label = `retainedReceiptBytes[${index}]`;
+    const receipt = parseExactJsonBytes(bytes, label);
+    assertion(receipt && typeof receipt === "object" && !Array.isArray(receipt),
+      `${label} must contain a receipt object`);
+    const digest = sha256(bytes);
+    assertion(!receiptsByPhysicalSha256.has(digest),
+      "retainedReceiptBytes contains a duplicated physical receipt");
+    receiptsByPhysicalSha256.set(digest, { receipt, label });
+  });
+
+  const seenDocumentIds = new Set();
+  const seenReceiptSha256s = new Set();
+  const classifications = { completed: 0, harness_failure: 0, product_failure: 0 };
+  orderedResults.forEach((row, index) => {
+    const label = `executionIndex.results[${index}]`;
+    exactKeys(row, ["document_id", "outcome", "receipt_sha256"], label);
+    boundedString(row.document_id, `${label}.document_id`, 512);
+    assertion(!seenDocumentIds.has(row.document_id),
+      `${label}.document_id duplicates an earlier result`);
+    seenDocumentIds.add(row.document_id);
+    validateNonzeroSha256(row.receipt_sha256, `${label}.receipt_sha256`);
+    assertion(!seenReceiptSha256s.has(row.receipt_sha256),
+      `${label}.receipt_sha256 duplicates an earlier indexed receipt`);
+    seenReceiptSha256s.add(row.receipt_sha256);
+    validateCampaignResultOutcome(row.outcome, label);
+    const retained = receiptsByPhysicalSha256.get(row.receipt_sha256);
+    assertion(retained, `${label}.receipt_sha256 does not bind an exact retained receipt`);
+    const receipt = retained.receipt;
+    assertion(receipt.document_id === row.document_id,
+      `${label}.document_id does not match its exact retained receipt`);
+    assertion(receipt.outcome && typeof receipt.outcome === "object" && !Array.isArray(receipt.outcome),
+      `${retained.label}.outcome must be an object`);
+    const receiptOutcome = {
+      classification: receipt.outcome.classification,
+      reason_code: receipt.outcome.reason_code,
+    };
+    validateCampaignResultOutcome(receiptOutcome, retained.label);
+    assertion(canonicalJson(receiptOutcome) === canonicalJson(row.outcome),
+      `${label}.outcome does not match its exact retained receipt`);
+    if (Object.hasOwn(receipt, "receipt_sha256")) {
+      assertion(receipt.contract?.name === "pdf-tools.verified-extraction-response-controller-receipt"
+        && receipt.contract?.version === 3,
+      `${retained.label} has an unsupported internal receipt digest contract`);
+      responseAdmissionControllerFailure(receipt);
+    } else {
+      exactKeys(receipt.outcome, ["classification", "reason_code"], `${retained.label}.outcome`);
+    }
+    classifications[row.outcome.classification] += 1;
+  });
+
+  const failed = classifications.harness_failure + classifications.product_failure;
+  const body = {
+    contract: { name: "pdf-tools.verified-extraction-campaign-completion-summary", version: 1 },
+    execution_index_digest: {
+      physical_sha256: sha256(executionIndexBytes),
+      canonical_sha256: sha256(Buffer.from(canonicalJson(executionIndex), "utf8")),
+    },
+    expected_binding_digest: {
+      physical_sha256: sha256(expectedBindingBytes),
+      canonical_sha256: sha256(Buffer.from(canonicalJson(expectedBindings), "utf8")),
+    },
+    controller_index_completion_status: "complete",
+    product_acceptance_status: "not_evaluated",
+    product_acceptance_basis: "requires_later_offline_scoring",
+    document_counts: {
+      total: orderedResults.length,
+      completed: classifications.completed,
+      failed,
+      harness_failure: classifications.harness_failure,
+      product_failure: classifications.product_failure,
+    },
+    ordered_results: structuredClone(orderedResults),
+  };
+  return {
+    ...body,
+    completion_summary_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
+  };
+}
+
+function validateDocumentValidation(value) {
+  exactKeys(value, [
+    "document_id", "document_map_sha256", "ordered_chunk_ids", "renderer_sha256", "schema_sha256",
+    "source_page_text_bundle_sha256", "source_sha256", "table_regions",
+  ], "documentValidation");
+  boundedString(value.document_id, "documentValidation.document_id", 512);
+  for (const field of ["document_map_sha256", "renderer_sha256", "schema_sha256", "source_sha256",
+    "source_page_text_bundle_sha256"]) {
+    assertion(SHA256.test(value[field] ?? "") && value[field] !== "0".repeat(64),
+      `documentValidation.${field} is invalid`);
+  }
+  assertion(Array.isArray(value.ordered_chunk_ids) && value.ordered_chunk_ids.length > 0
+    && value.ordered_chunk_ids.every(chunkId => CHUNK_ID.test(chunkId))
+    && new Set(value.ordered_chunk_ids).size === value.ordered_chunk_ids.length,
+  "documentValidation.ordered_chunk_ids is invalid");
+}
+
+function validateRawResponseArtifact(value, responseBytes) {
+  exactKeys(value, ["bytes", "path", "sha256"], "rawResponseArtifact");
+  boundedString(value.path, "rawResponseArtifact.path", 2048);
+  assertion(!value.path.startsWith("/") && !value.path.split("/").includes(".."),
+    "rawResponseArtifact.path must be a safe relative path");
+  assertion(Number.isSafeInteger(value.bytes) && value.bytes === responseBytes.length,
+    "rawResponseArtifact.bytes does not match the exact response");
+  assertion(SHA256.test(value.sha256 ?? "") && value.sha256 === sha256(responseBytes),
+    "rawResponseArtifact.sha256 does not match the exact response");
+}
+
+function validateDocumentRouting(value, documentValidation, documentChunks, documentSourcePages,
+  selectedChunkIds) {
+  validateSchemaDirectedEvidencePlan({
+    plan: value,
+    documentChunks,
+    documentTableRegions: documentValidation.table_regions,
+    documentSourcePages,
+  });
+  assertion(value.document_id === documentValidation.document_id
+    && value.document_map_sha256 === documentValidation.document_map_sha256
+    && value.source_sha256 === documentValidation.source_sha256
+    && value.source_page_text_bundle_sha256 === documentValidation.source_page_text_bundle_sha256,
+  "documentRouting identity drifted from the frozen document validation");
+  assertion(value.total_chunk_count === documentChunks.length,
+    "documentRouting total chunk denominator drifted");
+  assertion(Array.isArray(value.selected_chunk_ids) && value.selected_chunk_ids.length > 0
+    && canonicalJson(value.selected_chunk_ids) === canonicalJson(selectedChunkIds),
+  "documentRouting selected chunk scope drifted");
+  const position = new Map(documentValidation.ordered_chunk_ids.map((chunkId, index) => [chunkId, index]));
+  let previous = -1;
+  for (const chunkId of value.selected_chunk_ids) {
+    const current = position.get(chunkId);
+    assertion(Number.isSafeInteger(current) && current > previous,
+      "documentRouting must be a unique ordered subset of the frozen chunk denominator");
+    previous = current;
+  }
+}
+
+function planWithoutDigest(plan) {
+  const copy = structuredClone(plan);
+  delete copy.plan_sha256;
+  return copy;
+}
+
+function receiptWithDigest(receipt) {
+  return { ...receipt, receipt_sha256: sha256(Buffer.from(canonicalJson(receipt), "utf8")) };
+}
+
+function modelCallBudgetExhaustion(error) {
+  if (!(error instanceof Error)
+    || error?.code !== "model_call_budget_exhausted"
+    || error?.tokens_complete !== true
+    || !Number.isSafeInteger(error?.completed_request_count)
+    || error.completed_request_count < 0) return null;
+  const message = String(error.message ?? "");
+  if (message.length === 0 || Buffer.byteLength(message, "utf8") > 1024) return null;
+  return {
+    classification: "harness_failure",
+    reason_code: "model_call_budget_exhausted",
+    message,
+    completed_request_count: error.completed_request_count,
+  };
+}
+
+export function responseAdmissionControllerFailure(receipt) {
+  assertion(receipt && typeof receipt === "object" && !Array.isArray(receipt),
+    "response controller receipt is required");
+  assertion(SHA256.test(receipt.receipt_sha256 ?? ""),
+    "response controller receipt digest is invalid");
+  const receiptBody = structuredClone(receipt);
+  delete receiptBody.receipt_sha256;
+  assertion(receipt.receipt_sha256 === sha256(Buffer.from(canonicalJson(receiptBody), "utf8")),
+    "response controller receipt digest drifted");
+  const outcome = receipt.outcome;
+  exactKeys(outcome, ["classification", "completed_request_count", "message", "reason_code"],
+    "response controller outcome");
+  if (outcome.classification === "completed") {
+    assertion(outcome.completed_request_count === null
+      && ["none", "typed_batch_rejections"].includes(outcome.reason_code),
+    "completed response controller outcome is invalid");
+    return null;
+  }
+  if (outcome.reason_code === "model_call_budget_exhausted") {
+    assertion(outcome.classification === "harness_failure",
+      "model-call budget exhaustion classification is invalid");
+    return new ModelCallBudgetExhaustedError({
+      completedRequestCount: outcome.completed_request_count,
+      message: outcome.message,
+    });
+  }
+  assertion(outcome.completed_request_count === null,
+    "non-budget controller failure cannot claim a completed request count");
+  assertion(["harness_failure", "product_failure"].includes(outcome.classification),
+    "response controller failure classification is invalid");
+  const error = new Error(outcome.message);
+  error.code = outcome.reason_code;
+  error.tokens_complete = true;
+  return error;
+}
+
+function prepareResponseAdmissionControllerForVersion({
+  attemptId, trialId, predecessorRoleIds = [], documentValidation, documentChunks, documentSourcePages,
+  batchChunkIds, expectedModel, maxOutputTokens, contextWindowTokens, documentRouting,
+}, controllerVersion) {
+  assertion(REPLAYABLE_CONTROLLER_VERSIONS.has(controllerVersion),
+    "controller plan version is unsupported");
+  boundedString(attemptId, "attemptId", 512);
+  boundedString(trialId, "trialId", 512);
+  assertion(attemptId !== trialId, "attemptId and trialId must be distinct");
+  assertion(Array.isArray(predecessorRoleIds)
+    && predecessorRoleIds.every(value => typeof value === "string")
+    && new Set(predecessorRoleIds).size === predecessorRoleIds.length,
+  "predecessorRoleIds is invalid");
+  const predecessorSet = new Set(predecessorRoleIds);
+  assertion(!predecessorSet.has(attemptId) && !predecessorSet.has(trialId),
+    "successor role identity overlaps a predecessor campaign");
+  validateDocumentValidation(documentValidation);
+  boundedString(expectedModel, "expectedModel", 512);
+  assertion(Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0,
+    "maxOutputTokens must be a positive integer");
+  const bindsModelContext = MODEL_CONTEXT_CONTROLLER_VERSIONS.has(controllerVersion);
+  if (bindsModelContext) {
+    assertion(Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > maxOutputTokens,
+      "contextWindowTokens must exceed maxOutputTokens");
+  } else {
+    assertion(contextWindowTokens === undefined,
+      "legacy controller plans cannot add a model-context binding");
+  }
+  assertion(Array.isArray(documentChunks)
+    && documentChunks.length === documentValidation.ordered_chunk_ids.length,
+  "documentChunks does not match the frozen chunk denominator");
+  assertion(canonicalJson(documentChunks.map(chunk => chunk.chunk_id))
+    === canonicalJson(documentValidation.ordered_chunk_ids),
+  "documentChunks does not match the frozen ordered chunk scope");
+  assertion(Array.isArray(batchChunkIds) && batchChunkIds.length > 0
+    && batchChunkIds.every(batch => Array.isArray(batch) && batch.length > 0),
+  "batchChunkIds must contain non-empty batches");
+  const selectedChunkIds = batchChunkIds.flat();
+  const bindsDocumentRouting = ROUTED_CONTROLLER_VERSIONS.has(controllerVersion);
+  if (bindsDocumentRouting && documentRouting !== undefined && documentRouting !== null) {
+    validateDocumentRouting(documentRouting, documentValidation, documentChunks, documentSourcePages,
+      selectedChunkIds);
+  } else {
+    assertion(documentRouting === undefined || (bindsDocumentRouting && documentRouting === null),
+      "legacy controller plans cannot add a document-routing binding");
+    assertion(canonicalJson(selectedChunkIds) === canonicalJson(documentValidation.ordered_chunk_ids),
+      "batchChunkIds must cover the exact ordered full chunk scope once");
+  }
+
+  const modelContext = bindsModelContext ? buildModelContextCapacityBinding({
+    model: expectedModel,
+    contextWindowTokens,
+  }) : null;
+  const batches = batchChunkIds.map((chunkIds, index) => {
+    const policy = classifySourceBoundBatch({
+      documentId: documentValidation.document_id,
+      documentMapSha256: documentValidation.document_map_sha256,
+      sourceSha256: documentValidation.source_sha256,
+      documentChunks,
+      documentTableRegions: documentValidation.table_regions,
+      documentSourcePages,
+      batchChunkIds: chunkIds,
+    });
+    assertion(policy.source_page_text_bundle_sha256 === documentValidation.source_page_text_bundle_sha256,
+      "documentSourcePages does not match the frozen source-page bundle identity");
+    const schema = buildVerifiedExtractionProposalSchema({ allowedFields: policy.allowed_fields });
+    const policyKinds = new Set(policy.chunk_policies.map(item => item.evidence_admission));
+    assertion(policyKinds.size === 1,
+      "a batch cannot cross the source-evidence/reference-section boundary");
+    const action = policy.model_call_recommended ? "model_call" : "skip_reference_section";
+    const contextCapacityObservation = bindsModelContext && action === "model_call"
+      ? observeSourceBoundExtractionRequestCapacity({
+          request: buildSourceBoundExtractionRequest({
+            model: expectedModel,
+            maxOutputTokens,
+            schema,
+            documentChunks,
+            documentTableRegions: documentValidation.table_regions,
+            documentSourcePages,
+            batchPolicy: policy,
+            batchChunkIds: chunkIds,
+          }),
+          contextBinding: modelContext,
+        })
+      : null;
+    return {
+      batch_ordinal: index + 1,
+      chunk_ids: [...chunkIds],
+      policy,
+      policy_sha256: sha256(Buffer.from(canonicalJson(policy), "utf8")),
+      schema,
+      schema_sha256: sha256(Buffer.from(canonicalJson(schema), "utf8")),
+      action,
+      ...(bindsModelContext ? { context_capacity_observation: contextCapacityObservation } : {}),
+    };
+  });
+  if (controllerVersion !== CURRENT_CONTROLLER_VERSION) {
+    let referenceSeen = false;
+    for (const batch of batches) {
+      if (batch.action === "skip_reference_section") referenceSeen = true;
+      else assertion(!referenceSeen, "a model-call batch cannot follow the reference-section boundary");
+    }
+  }
+  const modelBatches = batches.filter(batch => batch.action === "model_call");
+  const referenceBatches = batches.filter(batch => batch.action === "skip_reference_section");
+  const plan = {
+    contract: { name: "pdf-tools.verified-extraction-response-controller", version: controllerVersion },
+    attempt_id: attemptId,
+    trial_id: trialId,
+    document_validation: structuredClone(documentValidation),
+    batch_chunk_ids: structuredClone(batchChunkIds),
+    batches,
+    expected_model: expectedModel,
+    max_output_tokens: maxOutputTokens,
+    ...(bindsModelContext ? { model_context: modelContext } : {}),
+    ...(bindsDocumentRouting ? { document_routing: documentRouting === undefined
+      ? null : structuredClone(documentRouting) } : {}),
+    denominator: {
+      document_chunks: documentChunks.length,
+      ...(bindsDocumentRouting ? {
+        routed_chunks: selectedChunkIds.length,
+        unrouted_chunks: documentChunks.length - selectedChunkIds.length,
+      } : {}),
+      batches: batches.length,
+      model_batches: modelBatches.length,
+      reference_skipped_batches: referenceBatches.length,
+      model_chunks: modelBatches.flatMap(batch => batch.chunk_ids).length,
+      reference_skipped_chunks: referenceBatches.flatMap(batch => batch.chunk_ids).length,
+    },
+    benchmark_claim_ready: false,
+  };
+  plan.plan_sha256 = sha256(Buffer.from(canonicalJson(plan), "utf8"));
+  return plan;
+}
+
+export function prepareResponseAdmissionController(options) {
+  return prepareResponseAdmissionControllerForVersion(options, CURRENT_CONTROLLER_VERSION);
+}
+
+export function validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages }) {
+  const bindsModelContext = MODEL_CONTEXT_CONTROLLER_VERSIONS.has(plan?.contract?.version);
+  const bindsDocumentRouting = ROUTED_CONTROLLER_VERSIONS.has(plan?.contract?.version);
+  exactKeys(plan, [
+    ...PLAN_KEYS,
+    ...(bindsModelContext ? ["model_context"] : []),
+    ...(bindsDocumentRouting ? ["document_routing"] : []),
+  ], "plan");
+  exactKeys(plan.contract, ["name", "version"], "plan.contract");
+  assertion(plan.contract.name === "pdf-tools.verified-extraction-response-controller"
+    && REPLAYABLE_CONTROLLER_VERSIONS.has(plan.contract.version),
+  "plan.contract is unsupported");
+  assertion(SHA256.test(plan.plan_sha256 ?? "")
+    && plan.plan_sha256 === sha256(Buffer.from(canonicalJson(planWithoutDigest(plan)), "utf8")),
+  "plan.plan_sha256 does not bind the exact plan");
+  const rebuilt = prepareResponseAdmissionControllerForVersion({
+    attemptId: plan.attempt_id,
+    trialId: plan.trial_id,
+    documentValidation: plan.document_validation,
+    documentChunks,
+    documentSourcePages,
+    batchChunkIds: plan.batch_chunk_ids,
+    expectedModel: plan.expected_model,
+    maxOutputTokens: plan.max_output_tokens,
+    contextWindowTokens: bindsModelContext ? plan.model_context?.context_window_tokens : undefined,
+    documentRouting: bindsDocumentRouting ? plan.document_routing : undefined,
+  }, plan.contract.version);
+  assertion(canonicalJson(rebuilt) === canonicalJson(plan), "plan drifted from the exact document chunks");
+  return plan;
+}
+
+function completedAggregate(admissions) {
+  const contributors = [];
+  const seen = new Set();
+  for (const admission of admissions) {
+    for (const contributor of admission.proposal.contributors) {
+      if (!seen.has(contributor.name)) {
+        seen.add(contributor.name);
+        contributors.push(contributor.name);
+      }
+    }
+  }
+  return {
+    contributor_names: contributors,
+    contributor_count: contributors.length,
+    contributor_count_derivation: "derived_from_unique_exact_admitted_contributor_names",
+    input_admission_sha256s: admissions.map(admission => sha256(Buffer.from(canonicalJson(admission), "utf8"))),
+  };
+}
+
+function retainedCitation(citation) {
+  return {
+    ...structuredClone(citation),
+    page: citation.page_one_based,
+    public_citation: {
+      page: citation.page_one_based,
+      quote: citation.quote,
+    },
+    workspace_citation: {
+      chunk_id: citation.chunk_id,
+      start_utf8_byte: citation.chunk_start_utf8_byte,
+      end_utf8_byte: citation.chunk_end_utf8_byte,
+      quote_sha256: citation.chunk_source_excerpt_sha256,
+    },
+  };
+}
+
+export function materializeAdmittedSourceExtraction({
+  plan, admissions, documentChunks, documentSourcePages,
+}) {
+  validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages });
+  assertion(Array.isArray(admissions), "admissions must be an array");
+  const admittedBatches = plan.batches.filter(batch => batch.action === "model_call");
+  const batchesByPolicySha256 = new Map(admittedBatches.map(batch => [batch.policy_sha256, batch]));
+  const seenPolicies = new Set();
+  const selected = {
+    publication: { agency: null, publication_citation_excerpt: null },
+    contributors: [],
+    summary: { contributor_count: 0, first_table: null },
+  };
+  const citations = {};
+  const contributorNames = new Set();
+  const inputAdmissionSha256s = [];
+  let precedingBatchOrdinal = 0;
+
+  for (const [admissionIndex, admission] of admissions.entries()) {
+    const batch = batchesByPolicySha256.get(admission?.batch_policy_sha256);
+    assertion(batch && !seenPolicies.has(batch.policy_sha256),
+      `admissions[${admissionIndex}] has an unplanned or duplicate batch policy`);
+    assertion(batch.batch_ordinal > precedingBatchOrdinal,
+      "admissions are not in frozen batch order");
+    seenPolicies.add(batch.policy_sha256);
+    precedingBatchOrdinal = batch.batch_ordinal;
+    compareAdmittedCitationEvidence({
+      admission,
+      batchPolicy: batch.policy,
+      documentChunks,
+      documentSourcePages,
+    });
+    const admissionSha256 = sha256(Buffer.from(canonicalJson(admission), "utf8"));
+    inputAdmissionSha256s.push(admissionSha256);
+    const evidenceByField = new Map(admission.source_replay.citations.map(citation => {
+      assertion(!citation.field.startsWith("contributors[") || /^contributors\[[0-9]+\]$/u.test(citation.field),
+        "admission contributor citation field is invalid");
+      return [citation.field, citation];
+    }));
+
+    for (const field of ["agency", "publication_citation_excerpt"]) {
+      const item = admission.proposal[field];
+      if (selected.publication[field] !== null || item === null) continue;
+      const evidence = evidenceByField.get(field);
+      assertion(evidence, `admission omitted canonical ${field} evidence`);
+      selected.publication[field] = item.value;
+      citations[`publication.${field}`] = retainedCitation(evidence);
+    }
+
+    admission.proposal.contributors.forEach((contributor, contributorIndex) => {
+      if (contributorNames.has(contributor.name)) return;
+      const evidence = evidenceByField.get(`contributors[${contributorIndex}]`);
+      assertion(evidence, `admission omitted canonical contributors[${contributorIndex}] evidence`);
+      contributorNames.add(contributor.name);
+      selected.contributors.push({ name: contributor.name });
+      citations[`contributors[name=${contributor.name}]`] = retainedCitation(evidence);
+    });
+
+    const table = admission.proposal.first_table;
+    if (table !== null && (selected.summary.first_table === null
+      || table.page_one_based < selected.summary.first_table.page_one_based)) {
+      const evidence = evidenceByField.get("first_table");
+      assertion(evidence && evidence.page_one_based === table.page_one_based,
+        "admission omitted canonical first_table evidence");
+      selected.summary.first_table = {
+        page_one_based: table.page_one_based,
+        anchor_excerpt: table.anchor_excerpt,
+      };
+      citations["summary.first_table"] = retainedCitation(evidence);
+    }
+  }
+
+  const missingRequiredPaths = [];
+  selected.summary.contributor_count = selected.contributors.length;
+  if (selected.publication.agency === null) missingRequiredPaths.push("publication.agency");
+  if (selected.publication.publication_citation_excerpt === null) {
+    missingRequiredPaths.push("publication.publication_citation_excerpt");
+  }
+  if (selected.contributors.length === 0) missingRequiredPaths.push("contributors");
+  if (selected.summary.first_table === null) missingRequiredPaths.push("summary.first_table");
+  missingRequiredPaths.sort();
+  const complete = missingRequiredPaths.length === 0;
+  const body = {
+    contract: { name: "pdf-tools.verified-extraction-source-materialization", version: 1 },
+    document_id: plan.document_validation.document_id,
+    document_map_sha256: plan.document_validation.document_map_sha256,
+    source_sha256: plan.document_validation.source_sha256,
+    source_page_text_bundle_sha256: plan.document_validation.source_page_text_bundle_sha256,
+    input_admission_sha256s: inputAdmissionSha256s,
+    status: complete ? "complete" : "incomplete",
+    result: complete ? structuredClone(selected) : null,
+    selected,
+    citation_evidence: citations,
+    public_citations: Object.fromEntries(Object.entries(citations).map(([field, citation]) => (
+      [field, structuredClone(citation.public_citation)]
+    ))),
+    workspace_citations: Object.fromEntries(Object.entries(citations).map(([field, citation]) => (
+      [field, structuredClone(citation.workspace_citation)]
+    ))),
+    missing_required_paths: missingRequiredPaths,
+    benchmark_claim_ready: false,
+  };
+  return {
+    ...body,
+    extraction_sha256: sha256(Buffer.from(canonicalJson(body), "utf8")),
+  };
+}
+
+export async function runResponseAdmissionControllerAttempt({ plan, documentChunks, documentSourcePages, invokeBatch }) {
+  validateResponseAdmissionControllerPlan({ plan, documentChunks, documentSourcePages });
+  assertion(typeof invokeBatch === "function", "invokeBatch must be a function");
+  const batchOutcomes = [];
+  const admissions = [];
+  let modelCalls = 0;
+  let fatalFailure = null;
+  const typedFailures = [];
+
+  for (const batch of plan.batches) {
+    if (batch.action === "skip_reference_section") {
+      batchOutcomes.push({
+        batch_ordinal: batch.batch_ordinal,
+        action: batch.action,
+        chunk_ids: batch.chunk_ids,
+        status: "skipped_reference_section",
+        model_call_count: 0,
+        raw_response_artifact: null,
+        response_observation: null,
+        admission: null,
+        admission_sha256: null,
+        completed_request_count: null,
+      });
+      continue;
+    }
+    let invoked;
+    let retainedRawArtifact = null;
+    try {
+      invoked = await invokeBatch({
+        batch: structuredClone(batch),
+        document_validation: structuredClone(plan.document_validation),
+        expected_model: plan.expected_model,
+        max_output_tokens: plan.max_output_tokens,
+      });
+      exactKeys(invoked, ["raw_response_artifact", "response_bytes"], "invokeBatch result");
+      const responseBytes = Buffer.isBuffer(invoked.response_bytes)
+        ? invoked.response_bytes
+        : Buffer.from(invoked.response_bytes);
+      validateRawResponseArtifact(invoked.raw_response_artifact, responseBytes);
+      retainedRawArtifact = structuredClone(invoked.raw_response_artifact);
+      const admission = admitStructuredModelResponse({
+        responseBytes,
+        expectedModel: plan.expected_model,
+        maxOutputTokens: plan.max_output_tokens,
+        documentId: plan.document_validation.document_id,
+        documentMapSha256: plan.document_validation.document_map_sha256,
+        sourceSha256: plan.document_validation.source_sha256,
+        documentChunks,
+        documentTableRegions: plan.document_validation.table_regions,
+        documentSourcePages,
+        batchChunkIds: batch.chunk_ids,
+        batchPolicy: batch.policy,
+      });
+      modelCalls += 1;
+      const admissionSha256 = sha256(Buffer.from(canonicalJson(admission), "utf8"));
+      admissions.push(admission);
+      batchOutcomes.push({
+        batch_ordinal: batch.batch_ordinal,
+        action: batch.action,
+        chunk_ids: batch.chunk_ids,
+        status: "admitted",
+        model_call_count: 1,
+        raw_response_artifact: retainedRawArtifact,
+        response_observation: admission.observation,
+        admission,
+        admission_sha256: admissionSha256,
+        completed_request_count: null,
+      });
+    } catch (error) {
+      const budgetExhaustion = modelCallBudgetExhaustion(error);
+      const typed = error instanceof ModelOutputAdmissionError
+        || error instanceof ModelContextCapacityError;
+      const failure = budgetExhaustion ?? {
+        classification: typed ? "product_failure" : "harness_failure",
+        reason_code: typed ? error.code : "controller_failure",
+        message: String(error?.message ?? error),
+        completed_request_count: null,
+      };
+      batchOutcomes.push({
+        batch_ordinal: batch.batch_ordinal,
+        action: batch.action,
+        chunk_ids: batch.chunk_ids,
+        status: failure.reason_code,
+        model_call_count: invoked ? 1 : 0,
+        raw_response_artifact: retainedRawArtifact,
+        response_observation: typed ? error.observation : null,
+        admission: null,
+        admission_sha256: null,
+        completed_request_count: failure.completed_request_count,
+      });
+      if (invoked) modelCalls += 1;
+      if (typed) typedFailures.push(failure);
+      else {
+        fatalFailure = failure;
+        break;
+      }
+    }
+  }
+
+  const completed = fatalFailure === null;
+  const completedOutcome = typedFailures.length === 0
+    ? { classification: "completed", reason_code: "none", message: null,
+        completed_request_count: null }
+    : {
+        classification: "completed",
+        reason_code: "typed_batch_rejections",
+        message: `${typedFailures.length} model batch response(s) failed strict admission`,
+        completed_request_count: null,
+      };
+  const sourceExtraction = completed ? materializeAdmittedSourceExtraction({
+    plan, admissions, documentChunks, documentSourcePages,
+  }) : null;
+  const receipt = receiptWithDigest({
+    contract: { name: "pdf-tools.verified-extraction-response-controller-receipt", version: 3 },
+    attempt_id: plan.attempt_id,
+    trial_id: plan.trial_id,
+    controller_plan_sha256: plan.plan_sha256,
+    document_id: plan.document_validation.document_id,
+    document_map_sha256: plan.document_validation.document_map_sha256,
+    denominator: structuredClone(plan.denominator),
+    observed: {
+      batch_outcomes: batchOutcomes.length,
+      admitted_batches: admissions.length,
+      typed_rejected_batches: typedFailures.length,
+      model_calls: modelCalls,
+      skipped_reference_batches: batchOutcomes.filter(item => item.status === "skipped_reference_section").length,
+      unattempted_batches: plan.batches.length - batchOutcomes.length,
+    },
+    batch_outcomes: batchOutcomes,
+    outcome: fatalFailure ?? completedOutcome,
+    calculation_evidence: completed ? completedAggregate(admissions) : null,
+    source_extraction: sourceExtraction,
+    benchmark_claim_ready: false,
+  });
+  return { receipt, admissions, source_extraction: sourceExtraction };
+}
+
+export const VERIFIED_EXTRACTION_RESPONSE_CONTROLLER_POLICY = Object.freeze({
+  name: "pdf-tools.verified-extraction-response-controller",
+  version: CURRENT_CONTROLLER_VERSION,
+  boundary: "The controller exact-binds one validated document map, the canonical PDF.js source-page bundle, the model context capacity, and the complete ordered chunk denominator. Current plans may additionally bind a schema-directed routing plan whose selected chunks must be a unique ordered subset of that denominator; both routed and unrouted chunk counts remain explicit. Without that binding, callers must still cover the full chunk scope exactly once. It permits first-table proposals only in the batch containing the first classified actual data table, skips each reference-section span before invocation while allowing a later explicit appendix to reopen source eligibility, isolates typed response or pre-invocation context-capacity rejection while continuing later frozen batches, and materializes final selected fields and citations only from the already-validated canonical source-replay spans retained by each admission. Each selected citation retains full evidence plus separate canonical-page scoring and exact-chunk workspace-verification projections. It never reinterprets those spans through a second byte-exact chunk check, and every incomplete materialization retains exact missing paths. Harness or invocation failure remains fatal and denominator preserving. It performs no model or provider call by itself.",
+});

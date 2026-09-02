@@ -48,18 +48,44 @@ function comparableTime(stats, nanosecondsKey, millisecondsKey) {
   return null;
 }
 
-function sameFileIdentity(left, right) {
+function zeroDevice(value) {
+  return value === 0 || value === 0n;
+}
+
+function sameDeviceIdentity(left, right, platform) {
+  if (left.dev === right.dev) return true;
+  // Node 22 on Windows reports `dev = 0` for pathname lstat while the
+  // descriptor stat returns the volume identity for the same file. Treat only
+  // that documented missing-device shape as unavailable; the file index and
+  // all remaining metadata still have to match exactly below.
+  return platform === "win32" && (zeroDevice(left.dev) !== zeroDevice(right.dev));
+}
+
+export function sameBoundedPdfFileIdentityForPlatform(left, right, platform = process.platform) {
   const leftMtime = comparableTime(left, "mtimeNs", "mtimeMs");
   const rightMtime = comparableTime(right, "mtimeNs", "mtimeMs");
   const leftCtime = comparableTime(left, "ctimeNs", "ctimeMs");
   const rightCtime = comparableTime(right, "ctimeNs", "ctimeMs");
-  return left.dev === right.dev
+  const deviceMatchesExactly = left.dev === right.dev;
+  const leftBirthtime = comparableTime(left, "birthtimeNs", "birthtimeMs");
+  const rightBirthtime = comparableTime(right, "birthtimeNs", "birthtimeMs");
+  return sameDeviceIdentity(left, right, platform)
     && left.ino === right.ino
     && left.size === right.size
+    && left.mode === right.mode
+    && left.nlink === right.nlink
     && leftMtime !== null
     && leftMtime === rightMtime
     && leftCtime !== null
-    && leftCtime === rightCtime;
+    && leftCtime === rightCtime
+    && (deviceMatchesExactly || (
+      leftBirthtime !== null
+      && leftBirthtime === rightBirthtime
+    ));
+}
+
+function sameFileIdentity(left, right) {
+  return sameBoundedPdfFileIdentityForPlatform(left, right);
 }
 
 function stableFileIdentity(stats) {

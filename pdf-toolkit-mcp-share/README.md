@@ -109,7 +109,7 @@ Once installed, ask Claude in Cursor:
 - *"Rotate page 3 by 90 degrees"*
 
 ## Tools Available
-This page names a selection, not the whole surface: the server registers 43
+This page names a selection, not the whole surface: the server registers 50
 tools. The root `README.md` lists every one, and `docs/OUTPUT_SCHEMAS.md`
 carries their structured output contracts.
 
@@ -135,6 +135,9 @@ carries their structured output contracts.
 - **get_pdf_info** - Observe bounded source-bound page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage
 - **compare_pdfs** - Compare two immutable PDFs (up to 20 pages each) across seven typed channels with page alignment, source-bound evidence, and reversible material/noise decisions; it never claims document equivalence
 - **get_page_analysis** - Inspect blank detection, orientation, and page-content routing
+- **create_extraction_workspace** / **read_extraction_workspace** - Create and page through a private PDF-and-schema-bound extraction workspace
+- **read_extraction_chunk** - Rebuild one returned chunk from fresh source bytes
+- **submit_extraction_proposal** / **verify_extraction_proposal** - Retain an untrusted leaf proposal, then deterministically replay its exact citations without a model inside PDF Tools
 
 ### Current Extraction Boundary
 

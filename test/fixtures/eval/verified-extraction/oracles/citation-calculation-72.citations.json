@@ -1,0 +1,40 @@
+{
+  "document_id": "citation-calculation-72",
+  "citations": {
+    "report_id": {
+      "page": 1,
+      "quote": "Report ID: RPT-SUM-903"
+    },
+    "regions[code=NORTH]": {
+      "page": 13,
+      "quote": "REGION NORTH | units=128 | adjustment=2.5"
+    },
+    "regions[code=CENTRAL]": {
+      "page": 37,
+      "quote": "REGION CENTRAL | units=244 | adjustment=-1.5"
+    },
+    "regions[code=SOUTH]": {
+      "page": 64,
+      "quote": "REGION SOUTH | units=319 | adjustment=4"
+    },
+    "grand_total": {
+      "page": 71,
+      "quote": "VERIFIED GRAND TOTAL: 696"
+    }
+  },
+  "calculations": [
+    {
+      "output_path": "grand_total",
+      "operation": "sum",
+      "operands": [
+        "regions[code=NORTH].units",
+        "regions[code=NORTH].adjustment",
+        "regions[code=CENTRAL].units",
+        "regions[code=CENTRAL].adjustment",
+        "regions[code=SOUTH].units",
+        "regions[code=SOUTH].adjustment"
+      ],
+      "expected": 696
+    }
+  ]
+}

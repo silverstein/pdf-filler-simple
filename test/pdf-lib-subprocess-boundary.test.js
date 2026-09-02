@@ -12,6 +12,7 @@ import {
   PDF_CONCURRENT_MODIFICATION_CODE,
   PDF_RESOURCE_LIMIT_CODE,
   createPdfLibMutationRequest,
+  pdfLibStageDeviceMatches,
   runPdfLibMutation,
   selectPdfLibIsolationMode,
   terminateAllPdfLibMutations,
@@ -20,6 +21,16 @@ import { makeDeepMalformedFixtures } from "./helpers/deep-malformed-fixtures.js"
 
 const roots = [];
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("PDF-lib staged file identity", () => {
+  it("accepts only the Windows one-missing-device descriptor shape", () => {
+    expect(pdfLibStageDeviceMatches(0, 2660852064, "win32")).toBe(true);
+    expect(pdfLibStageDeviceMatches(2660852064, 0, "win32")).toBe(true);
+    expect(pdfLibStageDeviceMatches(4, 4, "win32")).toBe(true);
+    expect(pdfLibStageDeviceMatches(4, 5, "win32")).toBe(false);
+    expect(pdfLibStageDeviceMatches(0, 2660852064, "linux")).toBe(false);
+  });
+});
 
 async function fixtureRoot() {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdflib-boundary-")));
@@ -95,7 +106,20 @@ const OPTIONS = {
   prepare_signing_packet: {
     allow_resign: false,
     field_values: {},
-    signature_locations: [{ page: 1, x: 0, y: 0, width: 10, height: 10, label: "Sign" }],
+    require_provider_ready: false,
+    signature_locations: [{
+      page: 1,
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      label: "Sign",
+      zone_id: "zone-test",
+      field_type: "unspecified",
+      participant_id: null,
+      participant_role: null,
+      evidence_source: "caller_supplied",
+    }],
   },
   apply_text: {
     allow_resign: false,
@@ -231,9 +255,10 @@ describe.sequential("pdf-lib subprocess boundary", () => {
 parentPort.postMessage({ unexpected: true });
 parentPort.close();`,
       "malformed_control_output",
+      1_000,
     ],
-    ["wall timeout", `setInterval(() => {}, 1000);`, "timeout"],
-  ])("fails closed on worker-thread %s", async (_label, body, reason) => {
+    ["wall timeout", `setInterval(() => {}, 1000);`, "timeout", 150],
+  ])("fails closed on worker-thread %s", async (_label, body, reason, timeoutMs) => {
     const fixture = await threadWorker(body);
     await expect(runPdfLibMutation({
       operation: "rotate_pdf_pages",
@@ -244,7 +269,7 @@ parentPort.close();`,
       throw new Error("must not consume");
     }, {
       isolationMode: "worker_thread",
-      timeoutMs: 150,
+      timeoutMs,
       workerPath: fixture.workerPath,
     })).rejects.toMatchObject({
       code: PDF_RESOURCE_LIMIT_CODE,

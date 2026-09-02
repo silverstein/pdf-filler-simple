@@ -113,6 +113,10 @@ import {
   assertBoundedPdfStreamDecodes,
   assertBoundedPdfStructure,
 } from "./pdf-lib-worker.js";
+import {
+  VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
+  createVerifiedExtractionToolHandler,
+} from "./verified-extraction-tools.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
   "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
@@ -1168,28 +1172,163 @@ function normalizeApplySignatureArguments(value) {
   };
 }
 
+const SIGNING_PACKET_ZONE_TYPES = new Set([
+  "signature",
+  "initials",
+  "date",
+  "printed_name",
+  "witness_signature",
+]);
+const SIGNING_PACKET_EVIDENCE_SOURCES = new Set([
+  "caller_supplied",
+  "detect_signature_zones",
+  "acroform",
+]);
+const SIGNING_PACKET_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function normalizeSigningPacketToken(value, name) {
+  if (value === undefined) return null;
+  if (typeof value !== "string" || !SIGNING_PACKET_TOKEN.test(value)) {
+    throw new Error(`'${name}' must be a stable 1-128 character identifier.`);
+  }
+  return value;
+}
+
 function normalizePrepareSigningPacketArguments(value) {
   const args = requireArgumentObject(value, "prepare_signing_packet");
+  const allowedKeys = new Set([
+    "allow_resign",
+    "expected_output_identity",
+    "field_values",
+    "force_xfa",
+    "output_path",
+    "password",
+    "pdf_path",
+    "require_provider_ready",
+    "signature_locations",
+  ]);
+  const unexpectedKeys = Object.keys(args).filter(key => !allowedKeys.has(key));
+  if (unexpectedKeys.length > 0) {
+    throw new Error(`prepare_signing_packet has unexpected properties: ${unexpectedKeys.sort().join(", ")}.`);
+  }
   if (
     args.field_values !== undefined &&
     (!args.field_values || typeof args.field_values !== "object" || Array.isArray(args.field_values))
   ) {
     throw new Error("'field_values' must be an object.");
   }
+  for (const fieldName of Object.keys(args.field_values ?? {})) {
+    if (!fieldName || fieldName.length > 500) {
+      throw new Error("'field_values' contains an invalid field name.");
+    }
+  }
   if (args.signature_locations !== undefined && !Array.isArray(args.signature_locations)) {
     throw new Error("'signature_locations' must be an array.");
   }
+  const requireProviderReady = optionalBooleanArgument(
+    args.require_provider_ready,
+    "require_provider_ready",
+  );
+  const observedZoneIds = new Set();
+  const observedZoneBindings = new Set();
   const signatureLocations = (args.signature_locations || []).map((location, index) => {
+    const locationObject = requireArgumentObject(location, `signature_locations[${index}]`);
+    const locationKeys = new Set([
+      "evidence_source",
+      "field_type",
+      "height",
+      "label",
+      "page",
+      "participant_id",
+      "participant_role",
+      "width",
+      "x",
+      "y",
+      "zone_id",
+    ]);
+    const unexpected = Object.keys(locationObject).filter(key => !locationKeys.has(key));
+    if (unexpected.length > 0) {
+      throw new Error(
+        `'signature_locations[${index}]' has unexpected properties: ${unexpected.sort().join(", ")}.`,
+      );
+    }
     const normalized = normalizePlacementArguments(location, `signature_locations[${index}]`);
     let label = "Sign here";
     if (location.label !== undefined) {
-      if (typeof location.label !== "string") {
-        throw new Error(`'signature_locations[${index}].label' must be a string.`);
+      if (
+        typeof location.label !== "string"
+        || location.label.length < 1
+        || location.label.length > 500
+        || location.label.trim().length < 1
+      ) {
+        throw new Error(`'signature_locations[${index}].label' must be a non-blank string of at most 500 characters.`);
       }
-      label = location.label || "Sign here";
+      label = location.label;
     }
-    return { ...normalized, label };
+    const fieldType = location.field_type === undefined ? "unspecified" : location.field_type;
+    if (fieldType !== "unspecified" && !SIGNING_PACKET_ZONE_TYPES.has(fieldType)) {
+      throw new Error(`'signature_locations[${index}].field_type' is unsupported.`);
+    }
+    const evidenceSource = location.evidence_source === undefined
+      ? "caller_supplied"
+      : location.evidence_source;
+    if (!SIGNING_PACKET_EVIDENCE_SOURCES.has(evidenceSource)) {
+      throw new Error(`'signature_locations[${index}].evidence_source' is unsupported.`);
+    }
+    const participantId = normalizeSigningPacketToken(
+      location.participant_id,
+      `signature_locations[${index}].participant_id`,
+    );
+    const participantRole = normalizeSigningPacketToken(
+      location.participant_role,
+      `signature_locations[${index}].participant_role`,
+    );
+    const zoneBinding = {
+      ...normalized,
+      label,
+      field_type: fieldType,
+      participant_id: participantId,
+      participant_role: participantRole,
+      evidence_source: evidenceSource,
+    };
+    const zoneId = location.zone_id === undefined
+      ? `zone-${sha256Bytes(Buffer.from(
+          `pdf-tools.signing-zone.v1\0${canonicalJson(zoneBinding)}`,
+          "utf8",
+        ))}`
+      : normalizeSigningPacketToken(location.zone_id, `signature_locations[${index}].zone_id`);
+    if (observedZoneIds.has(zoneId)) {
+      throw new Error(`Duplicate signing zone ID: ${zoneId}.`);
+    }
+    const bindingDigest = sha256Bytes(Buffer.from(canonicalJson({
+      page: normalized.page,
+      x: normalized.x,
+      y: normalized.y,
+      width: normalized.width,
+      height: normalized.height,
+    }), "utf8"));
+    if (observedZoneBindings.has(bindingDigest)) {
+      throw new Error(`Conflicting duplicate signing zone geometry at signature_locations[${index}].`);
+    }
+    observedZoneIds.add(zoneId);
+    observedZoneBindings.add(bindingDigest);
+    if (
+      requireProviderReady
+      && (
+        fieldType === "unspecified"
+        || participantId === null
+        || participantRole === null
+      )
+    ) {
+      throw new Error(
+        `'signature_locations[${index}]' must bind field_type, participant_id, and participant_role when require_provider_ready=true.`,
+      );
+    }
+    return { ...zoneBinding, zone_id: zoneId };
   });
+  if (requireProviderReady && signatureLocations.length === 0) {
+    throw new Error("require_provider_ready=true requires at least one fully bound signature location.");
+  }
   return {
     pdf_path: requireStringArgument(args.pdf_path, "pdf_path"),
     output_path: requireStringArgument(args.output_path, "output_path"),
@@ -1198,6 +1337,7 @@ function normalizePrepareSigningPacketArguments(value) {
     allow_resign: optionalBooleanArgument(args.allow_resign, "allow_resign"),
     force_xfa: optionalBooleanArgument(args.force_xfa, "force_xfa"),
     password: optionalStringArgument(args.password, "password"),
+    require_provider_ready: requireProviderReady,
     expected_output_identity: normalizeExpectedOutputIdentity(
       args.expected_output_identity,
     ),
@@ -1469,7 +1609,7 @@ function rejectUnissuedCursor(request, method) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.12.1",
+    version: "0.13.0",
   },
   {
     capabilities: {
@@ -1499,6 +1639,10 @@ const DEFAULT_DOWNLOAD_DIR = envPathOrDefault("DEFAULT_DOWNLOAD_DIR", path.join(
 const PROFILES_DIR = envPathOrDefault("DEFAULT_PROFILES_DIR", path.join(homedir(), ".pdf-toolkit-files"));
 const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
+const VERIFIED_EXTRACTION_WORKSPACES_DIR = path.join(
+  PROFILES_DIR,
+  "verified-extraction-workspaces",
+);
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
 
 function parsePathListValue(rawValue) {
@@ -1783,6 +1927,9 @@ const PDFJS_TOOL_NAMES = new Set([
   "render_pdf_page",
   "render_pdf_region",
   "search_pdf_text",
+  "create_extraction_workspace",
+  "read_extraction_chunk",
+  "verify_extraction_proposal",
 ]);
 
 async function bindPdfjsSubprocessSource(resolvedPath) {
@@ -1823,6 +1970,58 @@ async function runPdfjsOperation(resolvedPath, {
   }), { timeoutMs });
   return { result, source };
 }
+
+async function extractCompleteVerifiedExtractionLayouts({
+  resolvedPath,
+  password,
+  sourceBytes,
+  maxPages,
+}) {
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error("max_pages must be an integer from 1 to 200.");
+  }
+  const layouts = [];
+  let totalPages = null;
+  for (let page = 1; totalPages === null || page <= totalPages; page += 1) {
+    const { result } = await runPdfjsOperation(resolvedPath, {
+      operation: "extract_layout",
+      password,
+      options: {
+        source_path: resolvedPath,
+        source_file_name: path.basename(resolvedPath),
+        start_page: page,
+        end_page: page,
+        max_items: 5000,
+        max_characters: 100000,
+        max_output_characters: 200000,
+      },
+    });
+    const layout = validatePdfLayoutSemantics(result.layout, { sourceBytes });
+    if (totalPages === null) {
+      totalPages = layout.page_range.total_pages;
+      if (totalPages > maxPages) {
+        throw new Error(
+          `The PDF has ${totalPages} pages; this workspace is limited to ${maxPages}. `
+          + "Raise max_pages up to 200 or use a smaller PDF.",
+        );
+      }
+    } else if (layout.page_range.total_pages !== totalPages) {
+      throw new Error("The PDF page count changed while the workspace was being created.");
+    }
+    layouts.push(layout);
+  }
+  return layouts;
+}
+
+const handleVerifiedExtractionTool = createVerifiedExtractionToolHandler({
+  workspaceRoot: VERIFIED_EXTRACTION_WORKSPACES_DIR,
+  resolvePdfPath: resolvePath,
+  readPdfBytes: readCurrentPdfMutationBytes,
+  extractLayouts: extractCompleteVerifiedExtractionLayouts,
+});
+const VERIFIED_EXTRACTION_TOOL_NAMES = new Set(
+  VERIFIED_EXTRACTION_TOOL_DEFINITIONS.map(tool => tool.name),
+);
 
 function comparisonSourceChangedError() {
   const error = new Error("A comparison source changed while it was being inspected.");
@@ -2105,6 +2304,268 @@ function backupBaseNameFor(pdfPath) {
 
 function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Canonical JSON cannot encode a non-finite number.");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => {
+      if (value[key] === undefined) throw new TypeError("Canonical JSON cannot encode undefined.");
+      return `${JSON.stringify(key)}:${canonicalJson(value[key])}`;
+    }).join(",")}}`;
+  }
+  throw new TypeError("Canonical JSON supports only JSON values.");
+}
+
+function signingDisplayRegion(nativeRegion, pageGeometry) {
+  const { width, height } = nativeRegion;
+  const x = pageGeometry.media_box.origin_x + nativeRegion.x - pageGeometry.crop_box.origin_x;
+  const y = pageGeometry.crop_box.origin_y + pageGeometry.crop_box.height
+    - (pageGeometry.media_box.origin_y + pageGeometry.media_box.height - nativeRegion.y);
+  const pageWidth = pageGeometry.crop_box.width;
+  const pageHeight = pageGeometry.crop_box.height;
+  if (pageGeometry.rotation_degrees === 90) {
+    return { x: pageHeight - y - height, y: x, width: height, height: width };
+  }
+  if (pageGeometry.rotation_degrees === 180) {
+    return {
+      x: pageWidth - x - width,
+      y: pageHeight - y - height,
+      width,
+      height,
+    };
+  }
+  if (pageGeometry.rotation_degrees === 270) {
+    return { x: y, y: pageWidth - x - width, width: height, height: width };
+  }
+  return { x, y, width, height };
+}
+
+function signingZoneVisibility(nativeRegion, pageGeometry) {
+  const cropRegion = {
+    x: pageGeometry.media_box.origin_x + nativeRegion.x - pageGeometry.crop_box.origin_x,
+    y: pageGeometry.crop_box.origin_y + pageGeometry.crop_box.height
+      - (pageGeometry.media_box.origin_y + pageGeometry.media_box.height - nativeRegion.y),
+    width: nativeRegion.width,
+    height: nativeRegion.height,
+  };
+  const overlapWidth = Math.min(cropRegion.x + cropRegion.width, pageGeometry.crop_box.width)
+    - Math.max(cropRegion.x, 0);
+  const overlapHeight = Math.min(cropRegion.y + cropRegion.height, pageGeometry.crop_box.height)
+    - Math.max(cropRegion.y, 0);
+  if (overlapWidth <= 0 || overlapHeight <= 0) return "outside_crop_box";
+  if (
+    cropRegion.x < 0
+    || cropRegion.y < 0
+    || cropRegion.x + cropRegion.width > pageGeometry.crop_box.width
+    || cropRegion.y + cropRegion.height > pageGeometry.crop_box.height
+  ) return "partially_clipped";
+  return "visible";
+}
+
+function signingParticipantBinding(zone) {
+  const hasId = zone.participant_id !== null;
+  const hasRole = zone.participant_role !== null;
+  return {
+    status: hasId && hasRole ? "bound" : hasId || hasRole ? "partial" : "unbound",
+    participant_id: zone.participant_id,
+    participant_role: zone.participant_role,
+  };
+}
+
+function compareSigningText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function signingPreparationMissingInputs(zones, fieldOutcomes) {
+  const missing = [];
+  if (zones.length === 0) {
+    missing.push({ code: "NO_SIGNATURE_ZONES", zone_id: null, field_name: null });
+  }
+  for (const zone of zones) {
+    if (zone.field_type === "unspecified") {
+      missing.push({ code: "ZONE_TYPE_UNSPECIFIED", zone_id: zone.zone_id, field_name: null });
+    }
+    const binding = zone.participant_binding ?? signingParticipantBinding(zone);
+    if (binding.status === "unbound") {
+      missing.push({ code: "ZONE_PARTICIPANT_BINDING_MISSING", zone_id: zone.zone_id, field_name: null });
+    } else if (binding.status === "partial") {
+      missing.push({ code: "ZONE_PARTICIPANT_BINDING_PARTIAL", zone_id: zone.zone_id, field_name: null });
+    }
+    if (zone.visibility_status === "outside_crop_box") {
+      missing.push({ code: "ZONE_OUTSIDE_CROP_BOX", zone_id: zone.zone_id, field_name: null });
+    } else if (zone.visibility_status === "partially_clipped") {
+      missing.push({ code: "ZONE_PARTIALLY_CLIPPED", zone_id: zone.zone_id, field_name: null });
+    }
+  }
+  for (const outcome of fieldOutcomes) {
+    if (outcome.status === "failed") {
+      missing.push({ code: "FIELD_WRITE_FAILED", zone_id: null, field_name: outcome.field_name });
+    }
+  }
+  return missing.sort((left, right) => compareSigningText(
+    `${left.code}\0${left.zone_id ?? ""}\0${left.field_name ?? ""}`,
+    `${right.code}\0${right.zone_id ?? ""}\0${right.field_name ?? ""}`,
+  ));
+}
+
+async function buildSigningPreparationReceipt({
+  recoveredInput,
+  resolvedOutput,
+  backupPath,
+  result,
+  zones,
+  allowResign,
+  forceXfa,
+  xfaPresent,
+  expectedOutputIdentity,
+}) {
+  const preparedIdentity = await bindPdfjsSubprocessSource(resolvedOutput);
+  const sameDocument = preparedIdentity.canonical_path === recoveredInput.canonicalPath;
+  let sourcePreservation;
+  if (sameDocument) {
+    if (!backupPath) {
+      throw new Error("Signing preparation replaced its source without recording the immutable original backup.");
+    }
+    const backupRecord = await readBackupRecord(recoveredInput.canonicalPath);
+    if (
+      !backupRecord
+      || backupRecord.original_sha256 !== sha256Bytes(recoveredInput.pdfBytes)
+    ) {
+      throw new Error("The immutable-original backup record does not bind the signing-packet source identity.");
+    }
+    const validatedBackupPath = await validateBackupRecord(backupRecord);
+    if (path.resolve(validatedBackupPath) !== path.resolve(backupPath)) {
+      throw new Error("The immutable-original backup path changed after the prepared output committed.");
+    }
+    sourcePreservation = {
+      mode: "same_document_immutable_original_backup",
+      source_path_reverified_after_commit: false,
+      backup_identity_verified_after_commit: true,
+      backup_path: validatedBackupPath,
+      backup_document: {
+        canonical_path: validatedBackupPath,
+        size_bytes: recoveredInput.sizeBytes,
+        sha256: sha256Bytes(recoveredInput.pdfBytes),
+        identity_method: "immutable_original_backup_record_sha256",
+      },
+    };
+  } else {
+    const sourceAfterCommit = await bindPdfjsSubprocessSource(recoveredInput.canonicalPath);
+    if (
+      sourceAfterCommit.sha256 !== sha256Bytes(recoveredInput.pdfBytes)
+      || sourceAfterCommit.size_bytes !== recoveredInput.sizeBytes
+      || sourceAfterCommit.file_identity.device !== recoveredInput.fileIdentity.device
+      || sourceAfterCommit.file_identity.inode !== recoveredInput.fileIdentity.inode
+    ) {
+      throw new Error("The signing-packet source identity changed after the prepared output committed.");
+    }
+    sourcePreservation = {
+      mode: "source_path_unchanged",
+      source_path_reverified_after_commit: true,
+      backup_identity_verified_after_commit: false,
+      backup_path: null,
+      backup_document: null,
+    };
+  }
+
+  const pagesByNumber = new Map(result.page_geometry.map(page => [page.page, page]));
+  const receiptZones = zones.map(zone => {
+    const pageGeometry = pagesByNumber.get(zone.page);
+    if (!pageGeometry) throw new Error(`Signing zone ${zone.zone_id} has no retained page geometry.`);
+    const nativeRegion = {
+      x: zone.x,
+      y: zone.y,
+      width: zone.width,
+      height: zone.height,
+    };
+    return {
+      zone_id: zone.zone_id,
+      label: zone.label,
+      field_type: zone.field_type,
+      page: zone.page,
+      native_region: nativeRegion,
+      display_region: signingDisplayRegion(nativeRegion, pageGeometry),
+      visibility_status: signingZoneVisibility(nativeRegion, pageGeometry),
+      coordinate_space_version: "pdf-tools.media-box-top-left-points.v1",
+      evidence_source: zone.evidence_source,
+      evidence_binding_status: "caller_declared",
+      participant_binding: signingParticipantBinding(zone),
+    };
+  });
+  const fieldOutcomes = [...result.field_outcomes].sort((left, right) =>
+    compareSigningText(left.field_name, right.field_name));
+  const missingInputs = signingPreparationMissingInputs(receiptZones, fieldOutcomes);
+  const receipt = {
+    schema_version: "1.0",
+    preparation_engine: "pdf-tools.prepare-signing-packet.v1",
+    source_document: {
+      canonical_path: recoveredInput.canonicalPath,
+      size_bytes: recoveredInput.sizeBytes,
+      sha256: sha256Bytes(recoveredInput.pdfBytes),
+      identity_method: "race_aware_descriptor_sha256",
+    },
+    prepared_document: {
+      canonical_path: preparedIdentity.canonical_path,
+      size_bytes: preparedIdentity.size_bytes,
+      sha256: preparedIdentity.sha256,
+      identity_method: "race_aware_descriptor_sha256",
+    },
+    source_preservation: sourcePreservation,
+    output_commit: {
+      status: "committed",
+      protocol: "pdf-tools.atomic-output-transaction.v1",
+      target_mode: sameDocument ? "same_document" : "new_path",
+      source_binding_verified_at_commit: true,
+      prepared_identity_verified_after_commit: true,
+      replacement_identity_supplied: expectedOutputIdentity !== null,
+    },
+    page_count: result.page_geometry.length,
+    geometry_policy: {
+      native_coordinate_space: "pdf-tools.media-box-top-left-points.v1",
+      display_coordinate_space: "pdf-tools.crop-box-rotated-top-left-points.v1",
+      page_box_basis: "MediaBox",
+      crop_box_observed: true,
+      rotation_policy: "clockwise_quarter_turns",
+    },
+    pages: result.page_geometry,
+    field_outcomes: fieldOutcomes,
+    zones: receiptZones,
+    existing_signature_observation: {
+      present: result.source_signatures.present,
+      field_count: result.source_signatures.fieldNames.length,
+      field_names: [...result.source_signatures.fieldNames].sort(compareSigningText),
+      allow_resign: allowResign,
+    },
+    xfa_observation: {
+      present: xfaPresent,
+      force_xfa: forceXfa,
+      stripping_authorized: xfaPresent && forceXfa,
+    },
+    handoff_status: missingInputs.length === 0 ? "ready_for_provider_mapping" : "incomplete",
+    missing_inputs: missingInputs,
+    limitations: [
+      "This receipt proves local preparation identity and intent only; it does not prove signer identity, consent, delivery, completion, enforceability, or legal validity.",
+      "No provider request, signing agreement, signing link, callback, or completed signed artifact was requested or observed.",
+      "Provider-specific coordinate, participant, authentication, retention, and custody rules remain outside this receipt.",
+      "Zone evidence_source values are caller-declared labels, not independently replayed detection or AcroForm evidence.",
+    ],
+    provider_execution_status: "not_requested",
+  };
+  return {
+    ...receipt,
+    receipt_sha256: sha256Bytes(Buffer.from(
+      `pdf-tools.signing-preparation-receipt.v1\0${canonicalJson(receipt)}`,
+      "utf8",
+    )),
+  };
 }
 
 function backupIdentityError(code, message, cause) {
@@ -3393,7 +3854,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "convert_pdf_to_markdown",
-        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table requires a complete recurring text grid, a clean ruled-rectangle grid, or a complete closed painted grid, with every item in one cell and real header evidence. A link requires a source-validated external http or https annotation target covering one contiguous text run. Unsupported tables and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text with typed gaps. No OCR or external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves transactional UTF-8 Markdown. Use absolute or ~/ local paths, not Claude container paths (/mnt/...).",
+        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table requires a complete recurring text grid, a clean ruled-rectangle grid, or a complete closed painted grid, with every item in one cell and real header evidence. A link requires a source-validated external http or https annotation target covering one contiguous text run. Unsupported tables and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text with typed gaps. Compact extreme-margin page numbers and provenance furniture, plus same-band text repeated across selected pages, are removed with typed counts by default; detected headings and all source-evidenced table-region lines are preserved, and removal can be disabled. No OCR or external model. Optionally enable compact mode for counted dot-leader and spaced-hyphen normalizations. Optionally saves transactional UTF-8 Markdown. Use absolute or ~/ local paths, not Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -3407,6 +3868,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
             include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
             compact: { type: "boolean", description: "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false." },
+            remove_page_furniture: { type: "boolean", description: "Remove only source-evidenced extreme-margin page furniture and report every removed line by typed gap and counts. Set false to preserve all source lines. Default: true." },
             emit_table_proposals: { type: "boolean", description: "Opt into emitting one bounded, deterministic table_proposals packet per abandoned table region (TABLE_TOPOLOGY_UNKNOWN or TABLE_RULING_UNSUPPORTED), carrying the region's text items, ruled and painted evidence, header hints, page, bbox, coordinate_space, and a source-and-IR-bound proposal_token so a host model can propose a structure for later read-only verification. Additive: the abstention gap is unchanged and default output stays byte-identical. Default: false." },
             output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
             overwrite: { type: "boolean", description: "Replace an existing output_path only when its exact expected_output_identity is also supplied. Default: false." },
@@ -4280,7 +4742,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "prepare_signing_packet",
-        description: "One-shot workflow: fill form fields AND add 'Sign here' placeholder boxes to a PDF in a single pass, saving as a new file. Returns a manifest of all pending signature locations (named by label). Does NOT apply any signatures — that still requires apply_signature with human intent. Use this when an agent has filled out everything it can and is preparing the PDF for the user (or another party) to sign.",
+        description: "One-shot local workflow: fill form fields AND add 'Sign here' placeholder boxes to a PDF in a single pass, saving as a new file. Returns the legacy pending-location manifest plus a provider-neutral, source-bound preparation receipt. Does NOT apply a signature, contact a provider, create an agreement, or prove legal readiness. Set require_provider_ready=true only when every zone has an explicit type and participant binding.",
         inputSchema: {
           type: "object",
           properties: {
@@ -4302,10 +4764,20 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
                   x: { type: "number" },
                   y: { type: "number" },
                   width: { type: "number" },
-                  height: { type: "number" }
+                  height: { type: "number" },
+                  zone_id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", description: "Optional stable provider-neutral zone identifier. A deterministic ID is generated when omitted." },
+                  field_type: { type: "string", enum: ["signature", "initials", "date", "printed_name", "witness_signature"], description: "Provider-neutral intended field type. Required when require_provider_ready=true." },
+                  participant_id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", description: "Opaque stable participant identifier, not an email address or secret. Required when require_provider_ready=true." },
+                  participant_role: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", description: "Provider-neutral participant role. Required when require_provider_ready=true." },
+                  evidence_source: { type: "string", enum: ["caller_supplied", "detect_signature_zones", "acroform"], description: "Caller-declared label for how the placement was established (default: caller_supplied). This receipt does not independently replay that evidence." }
                 },
-                required: ["page", "x", "y", "width", "height"]
+                required: ["page", "x", "y", "width", "height"],
+                additionalProperties: false
               }
+            },
+            require_provider_ready: {
+              type: "boolean",
+              description: "Fail closed before committing unless every zone is typed and participant-bound and every requested field write succeeds. Default: false. This means ready for later provider mapping only, never ready or authorized to sign."
             },
             allow_resign: {
               type: "boolean",
@@ -4315,7 +4787,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
-          required: ["pdf_path", "output_path"]
+          required: ["pdf_path", "output_path"],
+          additionalProperties: false
         },
         annotations: {
           title: "Prepare Signing Packet",
@@ -4442,7 +4915,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           idempotentHint: false,
           openWorldHint: false
         }
-      }
+      },
+      ...VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
     ].map(withToolOutputSchema),
   };
 });
@@ -4452,6 +4926,18 @@ async function handleToolCall(request) {
   const { name, arguments: args } = request.params;
 
   try {
+    if (VERIFIED_EXTRACTION_TOOL_NAMES.has(name)) {
+      const structuredContent = await handleVerifiedExtractionTool(name, args ?? {});
+      const summary = name === "create_extraction_workspace"
+        ? `Created verified extraction workspace ${structuredContent.workspace_identity_sha256} at generation ${structuredContent.generation_sha256}.`
+        : name === "verify_extraction_proposal"
+          ? `Retained ${structuredContent.result.status} verification for ${structuredContent.result.leaf_pointer} at generation ${structuredContent.generation_sha256}.`
+          : `${name} completed.`;
+      return {
+        content: [{ type: "text", text: summary }],
+        structuredContent,
+      };
+    }
     switch (name) {
       case "list_pdfs": {
         const directory = resolvePath(args.directory || DEFAULT_PDF_DIRECTORY);
@@ -5479,6 +5965,7 @@ async function handleToolCall(request) {
           "max_markdown_bytes",
           "include_page_boundaries",
           "compact",
+          "remove_page_furniture",
           "emit_table_proposals",
           "output_path",
           "overwrite",
@@ -5491,6 +5978,11 @@ async function handleToolCall(request) {
         const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
         const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
         const compact = optionalBooleanArgument(markdownArgs.compact, "compact", false);
+        const removePageFurniture = optionalBooleanArgument(
+          markdownArgs.remove_page_furniture,
+          "remove_page_furniture",
+          true,
+        );
         const emitTableProposals = optionalBooleanArgument(markdownArgs.emit_table_proposals, "emit_table_proposals", false);
         const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
         const expectedOutputIdentity = normalizeExpectedOutputIdentity(
@@ -5550,6 +6042,7 @@ async function handleToolCall(request) {
             includePageBoundaries,
             maxMarkdownBytes,
             compact,
+            removePageFurniture,
             emitTableProposals,
           });
           const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
@@ -7165,20 +7658,29 @@ async function handleToolCall(request) {
       case "prepare_signing_packet": {
         const {
           pdf_path, output_path, field_values, signature_locations,
-          allow_resign, password, force_xfa, expected_output_identity,
+          allow_resign, password, force_xfa, require_provider_ready, expected_output_identity,
         } = normalizePrepareSigningPacketArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
 
         const recoveredInput = await readPdfInputWithRecovery(pdf_path);
         const { pdfBytes, inputRecoveryBinding } = recoveredInput;
+        const xfaPresent = detectXfaForm(pdfBytes);
         assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
-        const manifest = signature_locations.map(loc => ({ ...loc }));
+        const zones = signature_locations.map(loc => ({ ...loc }));
+        const manifest = zones.map(({ page, x, y, width, height, label }) => ({
+          page, x, y, width, height, label,
+        }));
         const prepared = await runPdfLibMutation({
           operation: "prepare_signing_packet",
           sources: [bindRecoveredMutationSource(recoveredInput)],
           password,
-          options: { field_values: field_values ?? {}, signature_locations: manifest, allow_resign },
+          options: {
+            field_values: field_values ?? {},
+            signature_locations: zones,
+            allow_resign,
+            require_provider_ready,
+          },
         }, async ({ result, outputs, atomicTransition }) => {
           const committed = await persistPdfMutation({
             mutationOutput: { ...outputs[0], atomicTransition },
@@ -7196,10 +7698,27 @@ async function handleToolCall(request) {
               fill_errors: result.fill_errors,
             },
           });
-          return { ...committed, filledCount: result.filled_count, fillErrors: result.fill_errors };
+          const preparationReceipt = await buildSigningPreparationReceipt({
+            recoveredInput,
+            resolvedOutput,
+            backupPath: committed.backupPath,
+            result,
+            zones,
+            allowResign: allow_resign,
+            forceXfa: force_xfa,
+            xfaPresent,
+            expectedOutputIdentity: expected_output_identity,
+          });
+          return {
+            ...committed,
+            payload: { ...committed.payload, preparation_receipt: preparationReceipt },
+            filledCount: result.filled_count,
+            fillErrors: result.fill_errors,
+            preparationReceipt,
+          };
         });
         const {
-          payload, backupPath, filledCount, fillErrors,
+          payload, backupPath, filledCount, fillErrors, preparationReceipt,
         } = prepared;
 
         const summary =
@@ -7208,6 +7727,8 @@ async function handleToolCall(request) {
           (fillErrors.length ? `  Errors: ${fillErrors.length} (${fillErrors.slice(0,3).map(e => e.field).join(", ")})\n` : "") +
           (backupPath ? `  Backup: ${backupPath}\n` : "") +
           `  Signature fields added: ${manifest.length}\n` +
+          `  Provider handoff: ${preparationReceipt.handoff_status}\n` +
+          `  Provider execution: not requested\n` +
           `  Output: ${resolvedOutput}`;
 
         return {
@@ -7218,6 +7739,7 @@ async function handleToolCall(request) {
             filled_count: filledCount,
             fill_errors: fillErrors,
             pending_signatures: manifest,
+            preparation_receipt: preparationReceipt,
           },
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
@@ -7647,9 +8169,10 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 // Initialize and start the server
 async function main() {
   // Ensure profiles and signatures directories exist
-  await fs.mkdir(PROFILES_DIR, { recursive: true }).catch(() => {});
-  await fs.mkdir(SIGNATURES_DIR, { recursive: true }).catch(() => {});
-  await fs.mkdir(BACKUPS_DIR, { recursive: true }).catch(() => {});
+  for (const directory of [PROFILES_DIR, SIGNATURES_DIR, BACKUPS_DIR]) {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 }).catch(() => {});
+    await fs.chmod(directory, 0o700).catch(() => {});
+  }
 
   // Migrate profiles from old directory (~/.pdf-filler-profiles) if it exists
   try {

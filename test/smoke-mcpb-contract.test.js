@@ -3,12 +3,33 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  packedArchiveExtractionCommand,
   packedToolContractSize,
   validateAccessibilitySmokeResult,
   validatePackedDiscovery,
 } from "../scripts/smoke-mcpb.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("packed MCPB archive extraction", () => {
+  it("uses the operating system's bounded archive tool without shell interpolation", () => {
+    expect(packedArchiveExtractionCommand(
+      "D:\\artifact.mcpb",
+      "D:\\staging",
+      "win32",
+      { SystemRoot: "C:\\Windows" },
+    ))
+      .toEqual({
+        command: "C:\\Windows\\System32\\tar.exe",
+        args: ["-xf", "D:\\artifact.mcpb", "-C", "D:\\staging"],
+      });
+    expect(packedArchiveExtractionCommand("/tmp/artifact.mcpb", "/tmp/staging", "darwin"))
+      .toEqual({
+        command: "unzip",
+        args: ["-q", "/tmp/artifact.mcpb", "-d", "/tmp/staging"],
+      });
+  });
+});
 
 describe("packed MCPB discovery binding", () => {
   // Both the fixture size and the expected message are derived from the same

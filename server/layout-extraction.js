@@ -60,6 +60,7 @@ const PDFJS_DOCUMENT_ASSETS = Object.freeze({
   cMapUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url))),
   cMapPacked: true,
   standardFontDataUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/standard_fonts/", import.meta.url))),
+  wasmUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/wasm/", import.meta.url))),
 });
 const ITEM_SPACE = Object.freeze({
   origin: "top_left",
@@ -3180,15 +3181,32 @@ function transformedRulingSegment(segment, transform, operatorIndex) {
   if (dy <= RULED_RECT_AXIS_TOLERANCE && dx >= RULING_SEGMENT_MIN_LENGTH) orientation = "horizontal";
   else if (dx <= RULED_RECT_AXIS_TOLERANCE && dy >= RULING_SEGMENT_MIN_LENGTH) orientation = "vertical";
   else return null;
-  const ordered = orientation === "horizontal"
-    ? [...[first, second]].sort((left, right) => left[0] - right[0] || left[1] - right[1])
-    : [...[first, second]].sort((left, right) => left[1] - right[1] || left[0] - right[0]);
+  if (orientation === "horizontal") {
+    const ordered = [...[first, second]].sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+    const x1 = round(ordered[0][0]);
+    const x2 = round(ordered[1][0]);
+    if (x2 - x1 < RULING_SEGMENT_MIN_LENGTH) return null;
+    const y = round((ordered[0][1] + ordered[1][1]) / 2);
+    return {
+      orientation,
+      x1,
+      y1: y,
+      x2,
+      y2: y,
+      source_operator_index: operatorIndex,
+    };
+  }
+  const ordered = [...[first, second]].sort((left, right) => left[1] - right[1] || left[0] - right[0]);
+  const y1 = round(ordered[0][1]);
+  const y2 = round(ordered[1][1]);
+  if (y2 - y1 < RULING_SEGMENT_MIN_LENGTH) return null;
+  const x = round((ordered[0][0] + ordered[1][0]) / 2);
   return {
     orientation,
-    x1: round(ordered[0][0]),
-    y1: round(ordered[0][1]),
-    x2: round(ordered[1][0]),
-    y2: round(ordered[1][1]),
+    x1: x,
+    y1,
+    x2: x,
+    y2,
     source_operator_index: operatorIndex,
   };
 }
@@ -3917,7 +3935,7 @@ export function validatePdfLayoutSemantics(payload, {
     for (const rect of ruledRects.items) {
       semanticAssertion(Number.isFinite(rect.x) && Number.isFinite(rect.y)
         && Number.isFinite(rect.width) && Number.isFinite(rect.height)
-        && rect.x >= 0 && rect.y >= 0 && rect.width >= 0 && rect.height >= 0
+        && rect.width >= 0 && rect.height >= 0
         && ["fill", "stroke", "clip", "none"].includes(rect.verb),
       `page ${page.page} ruled rectangle geometry or verb is invalid`);
     }

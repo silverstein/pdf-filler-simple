@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:oda:verified-extraction:keyed-register-96:schema:v1",
+  "type": "object",
+  "required": [
+    "register_id",
+    "items"
+  ],
+  "properties": {
+    "register_id": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 24,
+      "maxItems": 24,
+      "x-key": "item_id",
+      "items": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "category",
+          "quantity"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "alpha",
+              "beta",
+              "gamma"
+            ]
+          },
+          "quantity": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

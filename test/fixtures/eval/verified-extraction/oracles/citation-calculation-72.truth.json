@@ -1,0 +1,21 @@
+{
+  "report_id": "RPT-SUM-903",
+  "regions": [
+    {
+      "code": "NORTH",
+      "units": 128,
+      "adjustment": 2.5
+    },
+    {
+      "code": "CENTRAL",
+      "units": 244,
+      "adjustment": -1.5
+    },
+    {
+      "code": "SOUTH",
+      "units": 319,
+      "adjustment": 4
+    }
+  ],
+  "grand_total": 696
+}

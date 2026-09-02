@@ -394,6 +394,10 @@ describe("extraction-intelligence current baseline", () => {
     expect(defaultResult.structuredContent.normalizations).toEqual({
       dot_leaders_collapsed: 0,
       page_number_lines_removed: 0,
+      running_header_lines_removed: 0,
+      running_footer_lines_removed: 0,
+      page_furniture_characters_removed: 0,
+      page_furniture_pages: [],
       spaced_hyphens_joined: 0,
       normalized_pages: [],
     });
@@ -405,6 +409,10 @@ describe("extraction-intelligence current baseline", () => {
     expect(result.structuredContent.normalizations).toEqual({
       dot_leaders_collapsed: 10,
       page_number_lines_removed: 2,
+      running_header_lines_removed: 0,
+      running_footer_lines_removed: 0,
+      page_furniture_characters_removed: 0,
+      page_furniture_pages: [],
       spaced_hyphens_joined: 0,
       normalized_pages: [1],
     });

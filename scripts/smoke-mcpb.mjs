@@ -5,6 +5,7 @@ import {
   copyFileSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -39,13 +40,31 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+export function packedArchiveExtractionCommand(bundlePath, destination,
+  platform = process.platform, environment = process.env) {
+  return platform === "win32"
+    ? {
+        // GitHub's Windows runner executes this smoke from Git Bash. A bare
+        // `tar` resolves to Git's GNU tar there, which treats `D:\\...` as a
+        // remote archive name. Select Windows' bundled bsdtar explicitly so
+        // native drive paths remain local and arguments still bypass a shell.
+        command: path.win32.join(environment.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"),
+        args: ["-xf", bundlePath, "-C", destination],
+      }
+    : { command: "unzip", args: ["-q", bundlePath, "-d", destination] };
+}
+
 function extract(bundlePath, destination) {
-  const result = spawnSync("unzip", ["-q", bundlePath, "-d", destination], {
+  const planned = packedArchiveExtractionCommand(bundlePath, destination);
+  mkdirSync(destination, { recursive: false });
+  const result = spawnSync(planned.command, planned.args, {
     encoding: "utf8",
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`unzip exited with status ${result.status}: ${result.stderr || result.stdout}`);
+    throw new Error(
+      `${planned.command} exited with status ${result.status}: ${result.stderr || result.stdout}`,
+    );
   }
 }
 
@@ -239,7 +258,7 @@ export function validateAccessibilitySmokeResult(result, expectedSource) {
 
 async function main() {
   const bundlePath = path.resolve(process.argv[2] || path.join(REPO_ROOT, "pdf-toolkit-mcp.mcpb"));
-  const tempRoot = mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-smoke-"));
+  const tempRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-smoke-")));
   const extensionDir = path.join(tempRoot, "extension");
   const specialFilename = process.platform === "win32"
     ? "smoke # quarterly draft.pdf"
@@ -262,6 +281,7 @@ async function main() {
       cwd: extensionDir,
       env: {
         ALLOWED_DIRECTORIES: tempRoot,
+        DEFAULT_PROFILES_DIR: path.join(tempRoot, "profiles"),
         PDF_TOOLS_DISABLE_SYSTEM_RENDERER: "1",
       },
       stderr: "pipe",
@@ -339,12 +359,114 @@ async function main() {
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Packed read_pdf_layout contract smoke failed");
     }
+    const workspaceId = "packed-smoke-extraction";
+    const createdWorkspace = await client.callTool({
+      name: "create_extraction_workspace",
+      arguments: {
+        pdf_path: fixturePath,
+        workspace_id: workspaceId,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title"],
+          properties: { title: { type: "string" } },
+        },
+      },
+    });
+    const workspaceIdentity = createdWorkspace.structuredContent?.workspace_identity_sha256;
+    if (createdWorkspace.isError
+      || createdWorkspace.structuredContent?.state !== "complete"
+      || createdWorkspace.structuredContent?.generation_sequence !== 0
+      || !/^[a-f0-9]{64}$/u.test(workspaceIdentity ?? "")) {
+      throw new Error(`Packed verified-extraction workspace creation failed: ${JSON.stringify({
+        is_error: createdWorkspace.isError === true,
+        structured: createdWorkspace.structuredContent ?? null,
+        text: createdWorkspace.content?.find(item => item.type === "text")?.text ?? null,
+      })}`);
+    }
+    const chunkPage = await client.callTool({
+      name: "read_extraction_workspace",
+      arguments: {
+        workspace_id: workspaceId,
+        workspace_identity_sha256: workspaceIdentity,
+        collection: "document_map_chunks",
+        limit: 10,
+      },
+    });
+    const chunkId = chunkPage.structuredContent?.items?.[0]?.chunk_id;
+    if (chunkPage.isError || !/^[a-z0-9.-]+$/u.test(chunkId ?? "")) {
+      throw new Error("Packed verified-extraction workspace pagination failed");
+    }
+    const extractionChunk = await client.callTool({
+      name: "read_extraction_chunk",
+      arguments: {
+        pdf_path: fixturePath,
+        workspace_id: workspaceId,
+        workspace_identity_sha256: workspaceIdentity,
+        chunk_id: chunkId,
+      },
+    });
+    const quote = Buffer.from("Packaged PDF Tools smoke test", "utf8");
+    const chunkBytes = Buffer.from(extractionChunk.structuredContent?.content ?? "", "utf8");
+    const quoteStart = chunkBytes.indexOf(quote);
+    if (extractionChunk.isError || quoteStart < 0) {
+      throw new Error("Packed verified-extraction chunk replay failed");
+    }
+    const submitted = await client.callTool({
+      name: "submit_extraction_proposal",
+      arguments: {
+        workspace_id: workspaceId,
+        workspace_identity_sha256: workspaceIdentity,
+        parent_generation_sha256: createdWorkspace.structuredContent.generation_sha256,
+        leaf_pointer: "/title",
+        proposed_value: quote.toString("utf8"),
+        chunk_ids: [chunkId],
+      },
+    });
+    const verified = await client.callTool({
+      name: "verify_extraction_proposal",
+      arguments: {
+        pdf_path: fixturePath,
+        workspace_id: workspaceId,
+        workspace_identity_sha256: workspaceIdentity,
+        proposal_generation_sha256: submitted.structuredContent?.generation_sha256,
+        proposal_event_id: submitted.structuredContent?.event?.event_id,
+        citations: [{
+          chunk_id: chunkId,
+          start_utf8_byte: quoteStart,
+          end_utf8_byte: quoteStart + quote.length,
+          quote_sha256: sha256(quote),
+        }],
+        method: { kind: "exact_projection", citation_index: 0, normalization: "identity" },
+      },
+    });
+    if (submitted.isError
+      || verified.isError
+      || verified.structuredContent?.generation_sequence !== 2
+      || verified.structuredContent?.result?.status !== "verified_exact"
+      || verified.structuredContent?.result?.derived_value !== quote.toString("utf8")) {
+      throw new Error("Packed verified-extraction proposal replay failed");
+    }
+    const deletedWorkspace = await client.callTool({
+      name: "delete_extraction_workspace",
+      arguments: {
+        workspace_id: workspaceId,
+        workspace_identity_sha256: workspaceIdentity,
+        current_generation_sha256: verified.structuredContent.generation_sha256,
+        confirm: "DELETE",
+      },
+    });
+    if (deletedWorkspace.isError
+      || deletedWorkspace.structuredContent?.state !== "deleted"
+      || deletedWorkspace.structuredContent?.recoverable !== false) {
+      throw new Error("Packed verified-extraction workspace deletion failed");
+    }
     const markdown = await client.callTool({
       name: "convert_pdf_to_markdown",
       arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
     });
     if (markdown.isError
-      || markdown.structuredContent?.renderer?.version !== "1.17.0"
+      || markdown.structuredContent?.renderer?.version !== "1.19.0"
       || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
       || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
       throw new Error("Packed convert_pdf_to_markdown contract smoke failed");
@@ -407,10 +529,12 @@ async function main() {
         degrees: 90,
       },
     });
+    if (rotated.isError) {
+      throw new Error(`Packed rotate_pdf_pages mutation call failed: ${JSON.stringify(rotated)}`);
+    }
     const rotatedDocument = await PDFDocument.load(readFileSync(rotatedPath));
     if (
-      rotated.isError
-      || rotated.structuredContent?.last_mutation_tool !== "rotate_pdf_pages"
+      rotated.structuredContent?.last_mutation_tool !== "rotate_pdf_pages"
       // realpathSync.native expands Windows 8.3 short names the way the
       // server's canonicalization does; the JS implementation does not, and
       // runner temp paths arrive short-named, so only the native form states
@@ -470,7 +594,15 @@ async function main() {
         `manifests (${licenceEvidence.excluded} locked-but-not-shipped components marked excluded, ` +
         `${licenceEvidence.noAssertion} truthfully asserting no licence).`,
     );
-    console.log(JSON.stringify({ accessibility_receipt: accessibilityReceipt }));
+    console.log(JSON.stringify({
+      accessibility_receipt: accessibilityReceipt,
+      verified_extraction_receipt: {
+        workspace_identity_sha256: workspaceIdentity,
+        terminal_generation_sequence: verified.structuredContent.generation_sequence,
+        result_status: verified.structuredContent.result.status,
+        deleted: deletedWorkspace.structuredContent.state === "deleted",
+      },
+    }));
   } finally {
     await transport?.close();
     rmSync(tempRoot, { recursive: true, force: true });

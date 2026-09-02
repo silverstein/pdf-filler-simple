@@ -1,6 +1,6 @@
 {
   "name": "pdf-tools",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "PDF Tools MCP server for Claude Desktop",
   "type": "module",
   "main": "server/index.js",
@@ -39,7 +39,8 @@
     "test:concurrent": "node scripts/test-concurrent-suites.mjs",
     "build:plugin": "node scripts/build-agent-plugin.mjs",
     "publish:plugin": "node scripts/publish-agent-plugin.mjs",
-    "check:plugin-freshness": "node scripts/check-plugin-freshness.mjs"
+    "check:plugin-freshness": "node scripts/check-plugin-freshness.mjs",
+    "eval:olmocr": "node scripts/eval-olmocr-bench.mjs"
   },
   "repository": {
     "type": "git",

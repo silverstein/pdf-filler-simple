@@ -288,6 +288,116 @@ const placement = object({
   height: number,
 });
 const fillError = object({ field: string, error: string });
+const signingDocumentIdentity = object({
+  canonical_path: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+  identity_method: { const: "race_aware_descriptor_sha256" },
+});
+const signingBackupIdentity = object({
+  canonical_path: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+  identity_method: { const: "immutable_original_backup_record_sha256" },
+});
+const signingPageBox = object({
+  origin_x: number,
+  origin_y: number,
+  width: number,
+  height: number,
+});
+const signingPageGeometry = object({
+  page: integer,
+  rotation_degrees: { type: "integer", enum: [0, 90, 180, 270] },
+  media_box: signingPageBox,
+  crop_box: signingPageBox,
+});
+const signingFieldOutcome = object({
+  field_name: string,
+  status: enumString(["written", "skipped", "failed"]),
+  reason_code: nullable(enumString(["field_write_failed"])),
+});
+const signingParticipantBinding = object({
+  status: enumString(["bound", "partial", "unbound"]),
+  participant_id: nullable(string),
+  participant_role: nullable(string),
+});
+const signingPreparationZone = object({
+  zone_id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+  label: string,
+  field_type: enumString([
+    "signature", "initials", "date", "printed_name", "witness_signature", "unspecified",
+  ]),
+  page: integer,
+  native_region: regionPoints,
+  display_region: regionPoints,
+  visibility_status: enumString(["visible", "partially_clipped", "outside_crop_box"]),
+  coordinate_space_version: { const: "pdf-tools.media-box-top-left-points.v1" },
+  evidence_source: enumString(["caller_supplied", "detect_signature_zones", "acroform"]),
+  evidence_binding_status: { const: "caller_declared" },
+  participant_binding: signingParticipantBinding,
+});
+const signingPreparationMissingInput = object({
+  code: enumString([
+    "NO_SIGNATURE_ZONES",
+    "ZONE_TYPE_UNSPECIFIED",
+    "ZONE_PARTICIPANT_BINDING_MISSING",
+    "ZONE_PARTICIPANT_BINDING_PARTIAL",
+    "ZONE_OUTSIDE_CROP_BOX",
+    "ZONE_PARTIALLY_CLIPPED",
+    "FIELD_WRITE_FAILED",
+  ]),
+  zone_id: nullable(string),
+  field_name: nullable(string),
+});
+const signingPreparationReceipt = object({
+  schema_version: { const: "1.0" },
+  preparation_engine: { const: "pdf-tools.prepare-signing-packet.v1" },
+  source_document: signingDocumentIdentity,
+  prepared_document: signingDocumentIdentity,
+  source_preservation: object({
+    mode: enumString(["source_path_unchanged", "same_document_immutable_original_backup"]),
+    source_path_reverified_after_commit: boolean,
+    backup_identity_verified_after_commit: boolean,
+    backup_path: nullable(string),
+    backup_document: nullable(signingBackupIdentity),
+  }),
+  output_commit: object({
+    status: { const: "committed" },
+    protocol: { const: "pdf-tools.atomic-output-transaction.v1" },
+    target_mode: enumString(["new_path", "same_document"]),
+    source_binding_verified_at_commit: { const: true },
+    prepared_identity_verified_after_commit: { const: true },
+    replacement_identity_supplied: boolean,
+  }),
+  page_count: integer,
+  geometry_policy: object({
+    native_coordinate_space: { const: "pdf-tools.media-box-top-left-points.v1" },
+    display_coordinate_space: { const: "pdf-tools.crop-box-rotated-top-left-points.v1" },
+    page_box_basis: { const: "MediaBox" },
+    crop_box_observed: { const: true },
+    rotation_policy: { const: "clockwise_quarter_turns" },
+  }),
+  pages: arrayOf(signingPageGeometry),
+  field_outcomes: arrayOf(signingFieldOutcome),
+  zones: arrayOf(signingPreparationZone),
+  existing_signature_observation: object({
+    present: boolean,
+    field_count: integer,
+    field_names: stringArray,
+    allow_resign: boolean,
+  }),
+  xfa_observation: object({
+    present: boolean,
+    force_xfa: boolean,
+    stripping_authorized: boolean,
+  }),
+  handoff_status: enumString(["ready_for_provider_mapping", "incomplete", "blocked"]),
+  missing_inputs: arrayOf(signingPreparationMissingInput),
+  limitations: stringArray,
+  provider_execution_status: { const: "not_requested" },
+  receipt_sha256: sha256Digest,
+});
 const signatureZone = object({
   type: enumString(["signature", "initials", "name", "date"]),
   label: string,
@@ -736,8 +846,8 @@ const layoutBlock = object({
   line_ids: stringArray,
 });
 const layoutRuledRect = object({
-  x: { type: "number", minimum: 0 },
-  y: { type: "number", minimum: 0 },
+  x: number,
+  y: number,
   width: { type: "number", minimum: 0 },
   height: { type: "number", minimum: 0 },
   verb: enumString(["fill", "stroke", "clip", "none"]),
@@ -775,6 +885,7 @@ const markdownGapCode = enumString([
   "TEXT_LAYER_FAILED",
   "TEXT_LAYER_EMPTY",
   "OCR_NOT_PERFORMED",
+  "PAGE_FURNITURE_REMOVED",
   "IMAGE_CONTENT_NOT_RENDERED",
   "VECTOR_CONTENT_NOT_INTERPRETED",
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
@@ -785,6 +896,7 @@ const markdownGapCode = enumString([
   "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
   "TEXT_INTEGRITY_SUSPECT",
+  "MATH_NOT_RECONSTRUCTED",
   "CONTROL_CHARACTERS_SANITIZED",
 ]);
 const markdownGap = object({
@@ -998,7 +1110,154 @@ const tableProposalVerification = object({
   claim_boundary: { const: TABLE_PROPOSAL_CLAIM_BOUNDARY },
 });
 
+const workspaceDigest = sha256Digest;
+const workspaceGenerationSequence = { type: "integer", minimum: 0 };
+const workspaceJsonValue = {};
+const workspaceContract = (name, version) => object({
+  name: { const: name },
+  version: { const: version },
+});
+const workspaceProposalEvent = object({
+  contract: workspaceContract("pdf-tools.verified-extraction-workspace-event", "1.1.0-experimental"),
+  event_sequence: { type: "integer", minimum: 1 },
+  kind: { const: "proposal_submitted" },
+  workspace_identity_sha256: workspaceDigest,
+  leaf_pointer: string,
+  proposed_value: workspaceJsonValue,
+  chunk_ids: arrayOf({ type: "string", pattern: "^chunk\\.[a-f0-9]{64}$" }),
+  verification: object({ status: { const: "unverified" }, reason: { const: "not_replayed" } }),
+  event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+});
+const workspaceVerificationResult = object({
+  contract: { type: "object" },
+  workspace_identity_sha256: workspaceDigest,
+  generation_sha256: workspaceDigest,
+  proposal_event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+  proposal_event: workspaceProposalEvent,
+  leaf_pointer: string,
+  proposed_value: workspaceJsonValue,
+  proposed_value_sha256: workspaceDigest,
+  source: object({ sha256: workspaceDigest, size_bytes: { type: "integer", minimum: 1 } }),
+  schema: object({ sha256: workspaceDigest, size_bytes: { type: "integer", minimum: 1 } }),
+  document_map_sha256: workspaceDigest,
+  chunk_policy_sha256: workspaceDigest,
+  status: enumString([
+    "verified_exact", "computed_with_inputs", "source_supported", "not_found", "ambiguous",
+    "unverified_reasoning", "citation_mismatch", "chunk_missing",
+  ]),
+  reason_codes: stringArray,
+  citations: arrayOf(workspaceJsonValue),
+  method: { type: "object" },
+  derived_value: workspaceJsonValue,
+  calculation: workspaceJsonValue,
+  search_scope: workspaceJsonValue,
+  source_replayed: { const: true },
+  schema_replayed: { const: true },
+  caller_text_accepted_as_proof: { const: false },
+  caller_geometry_accepted_as_proof: { const: false },
+  caller_confidence_accepted_as_proof: { const: false },
+  table_topology_proven: { const: false },
+  claim_boundary: string,
+  package_inclusion: { const: "enabled_experimental" },
+  verification_sha256: workspaceDigest,
+});
+const workspaceVerifiedEvent = object({
+  contract: workspaceContract("pdf-tools.verified-extraction-workspace-event", "1.1.0-experimental"),
+  event_sequence: { type: "integer", minimum: 1 },
+  kind: { const: "proposal_verified" },
+  workspace_identity_sha256: workspaceDigest,
+  leaf_pointer: string,
+  proposal_event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+  verification_result: workspaceVerificationResult,
+  event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+});
+const workspacePageRange = object({
+  start_page: { type: "integer", minimum: 1 },
+  end_page: { type: "integer", minimum: 1 },
+});
+
 export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
+  create_extraction_workspace: object({
+    workspace_id: string,
+    workspace_path: string,
+    workspace_identity_sha256: workspaceDigest,
+    workspace_pointer_sha256: workspaceDigest,
+    creator_claim_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    generation_sequence: { const: 0 },
+    state: { const: "complete" },
+    leaf_obligations: stringArray,
+    document_map_sha256: workspaceDigest,
+  }),
+  inspect_extraction_state: object({
+    workspace_id: string,
+    workspace_identity_sha256: workspaceDigest,
+    state: enumString(["complete", "durability_uncertain", "initialization_recovery_required"]),
+    current_generation_sha256: nullable(workspaceDigest),
+    current_generation_sequence: nullable(workspaceGenerationSequence),
+    complete_generations: { type: "integer", minimum: 0 },
+    incomplete_generations: arrayOf(object({
+      name: string,
+      state: string,
+      reason: nullable(string),
+    })),
+    abandoned_generations: stringArray,
+    active_transaction_id: nullable(string),
+    retention: object({
+      maximum_generations: { type: "integer", minimum: 1 },
+      remaining_generations: { type: "integer", minimum: 0 },
+      automatic_pruning: { const: false },
+      deletion_requires_exact_current_generation: { const: true },
+    }),
+  }),
+  read_extraction_workspace: object({
+    contract: workspaceContract("pdf-tools.verified-extraction-workspace-page", "1.0.0-experimental"),
+    workspace_identity_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    collection: enumString(["document_map_chunks", "pending_leaves", "events", "proposals", "results"]),
+    collection_sha256: workspaceDigest,
+    counts: object({
+      total: { type: "integer", minimum: 0 },
+      offset: { type: "integer", minimum: 0 },
+      returned: { type: "integer", minimum: 0 },
+      omitted_before: { type: "integer", minimum: 0 },
+      omitted_after: { type: "integer", minimum: 0 },
+    }),
+    items: arrayOf(workspaceJsonValue),
+    next_cursor: nullable(string),
+  }),
+  read_extraction_chunk: object({
+    document_map_sha256: workspaceDigest,
+    chunk_id: { type: "string", pattern: "^chunk\\.[a-f0-9]{64}$" },
+    page_range: workspacePageRange,
+    content: string,
+    content_utf8_bytes: { type: "integer", minimum: 0 },
+    content_sha256: workspaceDigest,
+    admitted_item_count: { type: "integer", minimum: 0 },
+    omitted_item_count: { const: 0 },
+  }),
+  submit_extraction_proposal: object({
+    workspace_identity_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    generation_sequence: workspaceGenerationSequence,
+    event: workspaceProposalEvent,
+    state: { const: "complete" },
+  }),
+  verify_extraction_proposal: object({
+    workspace_identity_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    generation_sequence: workspaceGenerationSequence,
+    event: workspaceVerifiedEvent,
+    result: workspaceVerificationResult,
+    state: { const: "complete" },
+  }),
+  delete_extraction_workspace: object({
+    state: { const: "deleted" },
+    workspace_id: string,
+    workspace_identity_sha256: workspaceDigest,
+    final_generation_sha256: workspaceDigest,
+    recoverable: { const: false },
+  }),
   read_pdf_fields: activeDocument(),
   fill_pdf: activeDocument({ filled_fields: stringArray, fill_errors: stringArray }),
   bulk_fill_from_csv: object({
@@ -1080,13 +1339,17 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     {
       renderer: object({
         name: { const: "pdf-tools.layout-markdown-renderer" },
-        version: { const: "1.17.0" },
+        version: { const: "1.19.0" },
       }),
       conversion_status: enumString(["complete", "partial", "failed"]),
       markdown: string,
       markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       markdown_bytes: { type: "integer", minimum: 0 },
-      options: object({ include_page_boundaries: boolean, compact: boolean }),
+      options: object({
+        include_page_boundaries: boolean,
+        compact: boolean,
+        remove_page_furniture: boolean,
+      }),
       limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
       pages: arrayOf(markdownPage),
       pages_needing_vision: arrayOf(visionRoutingPage),
@@ -1095,6 +1358,10 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       normalizations: object({
         dot_leaders_collapsed: { type: "integer", minimum: 0 },
         page_number_lines_removed: { type: "integer", minimum: 0 },
+        running_header_lines_removed: { type: "integer", minimum: 0 },
+        running_footer_lines_removed: { type: "integer", minimum: 0 },
+        page_furniture_characters_removed: { type: "integer", minimum: 0 },
+        page_furniture_pages: integerArray,
         spaced_hyphens_joined: { type: "integer", minimum: 0 },
         normalized_pages: integerArray,
       }),
@@ -1515,6 +1782,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     pending_signatures: arrayOf(placement),
     filled_count: integer,
     fill_errors: arrayOf(fillError),
+    preparation_receipt: signingPreparationReceipt,
   }),
   apply_text: activeDocument({
     pdf_path: string,

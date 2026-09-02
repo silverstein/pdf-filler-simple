@@ -25,8 +25,10 @@ const STRUCTURED_TOOLS = [
   "apply_text",
   "bulk_fill_from_csv",
   "compare_pdfs",
+  "create_extraction_workspace",
   "create_signature",
   "convert_pdf_to_markdown",
+  "delete_extraction_workspace",
   "detect_signature_zones",
   "display_pdf",
   "extract_to_csv",
@@ -39,11 +41,14 @@ const STRUCTURED_TOOLS = [
   "get_pdf_identity",
   "get_pdf_info",
   "get_pdf_resource_uri",
+  "inspect_extraction_state",
   "inspect_pdf_accessibility",
   "list_signatures",
   "load_signature",
   "merge_pdfs",
   "prepare_signing_packet",
+  "read_extraction_chunk",
+  "read_extraction_workspace",
   "read_pdf_bytes",
   "read_pdf_content",
   "read_pdf_layout",
@@ -57,7 +62,9 @@ const STRUCTURED_TOOLS = [
   "search_pdf_text",
   "set_active_document",
   "split_pdf",
+  "submit_extraction_proposal",
   "validate_pdf",
+  "verify_extraction_proposal",
   "verify_table_proposal",
 ].sort();
 const TEXT_ONLY_TOOLS = [
@@ -147,11 +154,11 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 40 structured tools and no text-only tool", () => {
+  it("covers the exact 47 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(40);
+    expect(STRUCTURED_TOOLS).toHaveLength(47);
     expect(TEXT_ONLY_TOOLS).toHaveLength(4);
   });
 

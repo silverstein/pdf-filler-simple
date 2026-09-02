@@ -1,0 +1,106 @@
+{
+  "document_id": "keyed-register-96",
+  "citations": {
+    "register_id": {
+      "page": 3,
+      "quote": "Register ID: REG-2026-024"
+    },
+    "items[item_id=ITEM-001]": {
+      "page": 61,
+      "quote": "FINAL ITEM-001 | category=alpha | quantity=7"
+    },
+    "items[item_id=ITEM-002]": {
+      "page": 62,
+      "quote": "FINAL ITEM-002 | category=beta | quantity=14"
+    },
+    "items[item_id=ITEM-003]": {
+      "page": 63,
+      "quote": "FINAL ITEM-003 | category=gamma | quantity=21"
+    },
+    "items[item_id=ITEM-004]": {
+      "page": 64,
+      "quote": "FINAL ITEM-004 | category=alpha | quantity=28"
+    },
+    "items[item_id=ITEM-005]": {
+      "page": 65,
+      "quote": "FINAL ITEM-005 | category=beta | quantity=35"
+    },
+    "items[item_id=ITEM-006]": {
+      "page": 66,
+      "quote": "FINAL ITEM-006 | category=gamma | quantity=42"
+    },
+    "items[item_id=ITEM-007]": {
+      "page": 67,
+      "quote": "FINAL ITEM-007 | category=alpha | quantity=49"
+    },
+    "items[item_id=ITEM-008]": {
+      "page": 68,
+      "quote": "FINAL ITEM-008 | category=beta | quantity=56"
+    },
+    "items[item_id=ITEM-009]": {
+      "page": 69,
+      "quote": "FINAL ITEM-009 | category=gamma | quantity=63"
+    },
+    "items[item_id=ITEM-010]": {
+      "page": 70,
+      "quote": "FINAL ITEM-010 | category=alpha | quantity=70"
+    },
+    "items[item_id=ITEM-011]": {
+      "page": 71,
+      "quote": "FINAL ITEM-011 | category=beta | quantity=77"
+    },
+    "items[item_id=ITEM-012]": {
+      "page": 72,
+      "quote": "FINAL ITEM-012 | category=gamma | quantity=84"
+    },
+    "items[item_id=ITEM-013]": {
+      "page": 73,
+      "quote": "FINAL ITEM-013 | category=alpha | quantity=91"
+    },
+    "items[item_id=ITEM-014]": {
+      "page": 74,
+      "quote": "FINAL ITEM-014 | category=beta | quantity=98"
+    },
+    "items[item_id=ITEM-015]": {
+      "page": 75,
+      "quote": "FINAL ITEM-015 | category=gamma | quantity=105"
+    },
+    "items[item_id=ITEM-016]": {
+      "page": 76,
+      "quote": "FINAL ITEM-016 | category=alpha | quantity=112"
+    },
+    "items[item_id=ITEM-017]": {
+      "page": 77,
+      "quote": "FINAL ITEM-017 | category=beta | quantity=119"
+    },
+    "items[item_id=ITEM-018]": {
+      "page": 78,
+      "quote": "FINAL ITEM-018 | category=gamma | quantity=126"
+    },
+    "items[item_id=ITEM-019]": {
+      "page": 79,
+      "quote": "FINAL ITEM-019 | category=alpha | quantity=133"
+    },
+    "items[item_id=ITEM-020]": {
+      "page": 80,
+      "quote": "FINAL ITEM-020 | category=beta | quantity=140"
+    },
+    "items[item_id=ITEM-021]": {
+      "page": 81,
+      "quote": "FINAL ITEM-021 | category=gamma | quantity=147"
+    },
+    "items[item_id=ITEM-022]": {
+      "page": 82,
+      "quote": "FINAL ITEM-022 | category=alpha | quantity=154"
+    },
+    "items[item_id=ITEM-023]": {
+      "page": 83,
+      "quote": "FINAL ITEM-023 | category=beta | quantity=161"
+    },
+    "items[item_id=ITEM-024]": {
+      "page": 84,
+      "quote": "FINAL ITEM-024 | category=gamma | quantity=168"
+    }
+  },
+  "calculations": []
+}
