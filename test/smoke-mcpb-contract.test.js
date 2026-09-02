@@ -13,10 +13,15 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 
 describe("packed MCPB archive extraction", () => {
   it("uses the operating system's bounded archive tool without shell interpolation", () => {
-    expect(packedArchiveExtractionCommand("C:\\artifact.mcpb", "C:\\staging", "win32"))
+    expect(packedArchiveExtractionCommand(
+      "D:\\artifact.mcpb",
+      "D:\\staging",
+      "win32",
+      { SystemRoot: "C:\\Windows" },
+    ))
       .toEqual({
-        command: "tar",
-        args: ["-xf", "C:\\artifact.mcpb", "-C", "C:\\staging"],
+        command: "C:\\Windows\\System32\\tar.exe",
+        args: ["-xf", "D:\\artifact.mcpb", "-C", "D:\\staging"],
       });
     expect(packedArchiveExtractionCommand("/tmp/artifact.mcpb", "/tmp/staging", "darwin"))
       .toEqual({

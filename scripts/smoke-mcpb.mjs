@@ -41,9 +41,16 @@ function sha256(bytes) {
 }
 
 export function packedArchiveExtractionCommand(bundlePath, destination,
-  platform = process.platform) {
+  platform = process.platform, environment = process.env) {
   return platform === "win32"
-    ? { command: "tar", args: ["-xf", bundlePath, "-C", destination] }
+    ? {
+        // GitHub's Windows runner executes this smoke from Git Bash. A bare
+        // `tar` resolves to Git's GNU tar there, which treats `D:\\...` as a
+        // remote archive name. Select Windows' bundled bsdtar explicitly so
+        // native drive paths remain local and arguments still bypass a shell.
+        command: path.win32.join(environment.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"),
+        args: ["-xf", bundlePath, "-C", destination],
+      }
     : { command: "unzip", args: ["-q", bundlePath, "-d", destination] };
 }
 
