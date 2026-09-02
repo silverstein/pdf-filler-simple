@@ -30,7 +30,7 @@
     }
   },
   "layout_contract_bindings": {
-    "layout_output_schema_sha256": "e5bcc09708f14c7d89238c6eda2619792049d18f745c8db290eb1ce98cda8b67",
+    "layout_output_schema_sha256": "7159239930ee1e8d888525762e95cb40006c35cc026090bc874c48e75f893bc0",
     "layout_evidence_contract_sha256": "39cb7e89cd65558bb661ebc0edab517dabc9398908750de6c3b56d511b887bef"
   },
   "validator_sources": [
@@ -55,8 +55,8 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 275528,
-      "sha256": "6719ed95fa420ebdc0de45a4ff9d9f3fafd72f6a62d071db5fa40f4c4344402e"
+      "bytes": 276050,
+      "sha256": "9efd13d42aa5dbfb9d106207cddf288daf2efc21bbf1628373be26f9c4a1d7a9"
     },
     {
       "role": "type3_cm_reference_module",
@@ -79,26 +79,26 @@
     {
       "role": "markdown_conversion_module",
       "path": "server/markdown-conversion.js",
-      "bytes": 149933,
-      "sha256": "b5b851146f18e8f7097089216430f00763a0c940e6f0d24acedc70de6382ada7"
+      "bytes": 167797,
+      "sha256": "41367341f4f138510d316faa793de280f496e362d2feb34b7fc5f816ca09b341"
     },
     {
       "role": "output_schemas_module",
       "path": "server/output-schemas.js",
-      "bytes": 62758,
-      "sha256": "dc74ed238f655cbad614ea89f989b0ffc57b72794f396cd4c455f8cddf0eb415"
+      "bytes": 69238,
+      "sha256": "8e0489fabf51b899b3c7b128c357cb8f5d6e462989a8e64cbb71a5b24ff94586"
     },
     {
       "role": "package_json",
       "path": "package.json",
-      "bytes": 2977,
-      "sha256": "c3752b16513ad97d4c0458fe2377f11670d6a825aceebdfd04785ad934dc1a73"
+      "bytes": 3034,
+      "sha256": "9587168464f8f3fe6e6c4c601f19f0c906e55217d4fef069427b5b0e768e752b"
     },
     {
       "role": "package_lock",
       "path": "package-lock.json",
       "bytes": 119053,
-      "sha256": "2ff501dedb90b7d9c8fc621f7f3576df4fc2f8220f27b16c8cf40f55880f7e99"
+      "sha256": "15b5c36cf51c167e65543dc863804263d7d3165252c2bba0c6cd9550f12e33f6"
     },
     {
       "role": "pdf_comparison_module",
@@ -131,7 +131,7 @@
       "sha256": "ef40501b2afbe4cd2adfa80480344783bbec1a00e8e9850086a5d044231d1f53"
     }
   ],
-  "validator_source_set_sha256": "27722983fa921326686cf71362a0ebccbd3fbcc53ba36f6e3036ac06c0c6fb04",
+  "validator_source_set_sha256": "7bc6b07b8f453b0a5f2ce735482142e4b4734bab92c3de3224d2c76963dedf9c",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

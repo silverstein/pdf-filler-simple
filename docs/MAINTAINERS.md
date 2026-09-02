@@ -63,6 +63,9 @@ host and operating system being claimed.
 - The current package is a local-first stdio MCP server for Claude Desktop and other local MCP hosts. Remote HTTP/Cowork support would be a separate server/product boundary, not a packaging toggle.
 - Tool definitions and helpers live in `server/index.js`.
 - Profile storage lives under `~/.pdf-toolkit-files` (migrated from `~/.pdf-filler-profiles`).
+- Verified extraction state lives under the `verified-extraction-workspaces`
+  child of that same private root. Its public lifecycle and trust boundary are
+  documented in `docs/VERIFIED_EXTRACTION.md`.
 - PDF utilities use `pdf-lib` and `pdfjs-dist`.
 - PDF.js text extraction and canvas-backed page/region rendering are lazy loaded to avoid startup overhead.
 - Interactive viewer UI lives in `ui/`, built to `dist-ui/` via Vite.
@@ -278,7 +281,7 @@ mcp__<display_name, spaces underscored, non [A-Za-z0-9_-] stripped>__<tool_name>
 Identifiers over **64 characters** fail in the host. This shipped as a real
 defect (issue #44): the original benefit-led directory title
 `PDF Tools - Fill, Sign, Merge, Split, Extract` normalizes to 41 characters and
-pushes 16 of the current 43 packed tool identifiers past the ceiling.
+pushes 23 of the current 50 packed tool identifiers past the ceiling.
 
 The naming strategy is therefore **dual**:
 
@@ -290,16 +293,16 @@ The naming strategy is therefore **dual**:
 
 Budgets are computed by `scripts/tool-identifier-budget.mjs` and gated in
 `test/mcp-contract.test.js`. Current margins against the longest tool name
-(`inspect_pdf_accessibility`, 25 characters):
+(`create_extraction_workspace`, 27 characters):
 
-- `PDF Tools`: longest identifier 41, headroom 23
-- `PDF Tools: Fill, Sign & Edit`: longest identifier 57, headroom 7
-- Original long title: longest identifier 73, 16 identifiers over the limit
+- `PDF Tools`: longest identifier 43, headroom 21
+- `PDF Tools: Fill, Sign & Edit`: longest identifier 59, headroom 5
+- Original long title: longest identifier 75, 23 identifiers over the limit
 
 **The trap when adding a tool.** The shipped short brand has generous headroom,
 so a new long tool name will not break it and every host-facing check stays
 green — while quietly eating the fallback title's much smaller margin. A
-30-character tool name drops the fallback from 9 characters of headroom to 2.
+28-character tool name would drop the fallback below its required five-character reserve.
 The `MIN_FALLBACK_HEADROOM` gate exists to fail that case loudly. If it fires,
 either shorten the new tool name or make an explicit, recorded decision to
 retire the single-field fallback.

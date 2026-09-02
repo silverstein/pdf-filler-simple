@@ -1,0 +1,28 @@
+{
+  "contract": {
+    "name": "pdf-tools.verified-extraction-v13-malformed-response-shapes",
+    "version": 1
+  },
+  "privacy": "public-safe metadata only; no document text or oracle content",
+  "expected_failure_code": "model_output_truncated",
+  "max_output_tokens": 4096,
+  "shapes": [
+    { "id": "v13-shape-01", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-02", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-03", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-04", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-05", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-06", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-07", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-08", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-09", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-10", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-11", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-12", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-13", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-14", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-15", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-16", "finish_reason": "length", "completion_tokens": 4096 },
+    { "id": "v13-shape-17", "finish_reason": "length", "completion_tokens": 4096 }
+  ]
+}

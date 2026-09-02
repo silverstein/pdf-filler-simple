@@ -113,6 +113,10 @@ import {
   assertBoundedPdfStreamDecodes,
   assertBoundedPdfStructure,
 } from "./pdf-lib-worker.js";
+import {
+  VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
+  createVerifiedExtractionToolHandler,
+} from "./verified-extraction-tools.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
   "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
@@ -1605,7 +1609,7 @@ function rejectUnissuedCursor(request, method) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.12.1",
+    version: "0.13.0",
   },
   {
     capabilities: {
@@ -1635,6 +1639,10 @@ const DEFAULT_DOWNLOAD_DIR = envPathOrDefault("DEFAULT_DOWNLOAD_DIR", path.join(
 const PROFILES_DIR = envPathOrDefault("DEFAULT_PROFILES_DIR", path.join(homedir(), ".pdf-toolkit-files"));
 const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
+const VERIFIED_EXTRACTION_WORKSPACES_DIR = path.join(
+  PROFILES_DIR,
+  "verified-extraction-workspaces",
+);
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
 
 function parsePathListValue(rawValue) {
@@ -1919,6 +1927,9 @@ const PDFJS_TOOL_NAMES = new Set([
   "render_pdf_page",
   "render_pdf_region",
   "search_pdf_text",
+  "create_extraction_workspace",
+  "read_extraction_chunk",
+  "verify_extraction_proposal",
 ]);
 
 async function bindPdfjsSubprocessSource(resolvedPath) {
@@ -1959,6 +1970,58 @@ async function runPdfjsOperation(resolvedPath, {
   }), { timeoutMs });
   return { result, source };
 }
+
+async function extractCompleteVerifiedExtractionLayouts({
+  resolvedPath,
+  password,
+  sourceBytes,
+  maxPages,
+}) {
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error("max_pages must be an integer from 1 to 200.");
+  }
+  const layouts = [];
+  let totalPages = null;
+  for (let page = 1; totalPages === null || page <= totalPages; page += 1) {
+    const { result } = await runPdfjsOperation(resolvedPath, {
+      operation: "extract_layout",
+      password,
+      options: {
+        source_path: resolvedPath,
+        source_file_name: path.basename(resolvedPath),
+        start_page: page,
+        end_page: page,
+        max_items: 5000,
+        max_characters: 100000,
+        max_output_characters: 200000,
+      },
+    });
+    const layout = validatePdfLayoutSemantics(result.layout, { sourceBytes });
+    if (totalPages === null) {
+      totalPages = layout.page_range.total_pages;
+      if (totalPages > maxPages) {
+        throw new Error(
+          `The PDF has ${totalPages} pages; this workspace is limited to ${maxPages}. `
+          + "Raise max_pages up to 200 or use a smaller PDF.",
+        );
+      }
+    } else if (layout.page_range.total_pages !== totalPages) {
+      throw new Error("The PDF page count changed while the workspace was being created.");
+    }
+    layouts.push(layout);
+  }
+  return layouts;
+}
+
+const handleVerifiedExtractionTool = createVerifiedExtractionToolHandler({
+  workspaceRoot: VERIFIED_EXTRACTION_WORKSPACES_DIR,
+  resolvePdfPath: resolvePath,
+  readPdfBytes: readCurrentPdfMutationBytes,
+  extractLayouts: extractCompleteVerifiedExtractionLayouts,
+});
+const VERIFIED_EXTRACTION_TOOL_NAMES = new Set(
+  VERIFIED_EXTRACTION_TOOL_DEFINITIONS.map(tool => tool.name),
+);
 
 function comparisonSourceChangedError() {
   const error = new Error("A comparison source changed while it was being inspected.");
@@ -3791,7 +3854,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "convert_pdf_to_markdown",
-        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table requires a complete recurring text grid, a clean ruled-rectangle grid, or a complete closed painted grid, with every item in one cell and real header evidence. A link requires a source-validated external http or https annotation target covering one contiguous text run. Unsupported tables and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text with typed gaps. No OCR or external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves transactional UTF-8 Markdown. Use absolute or ~/ local paths, not Claude container paths (/mnt/...).",
+        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table requires a complete recurring text grid, a clean ruled-rectangle grid, or a complete closed painted grid, with every item in one cell and real header evidence. A link requires a source-validated external http or https annotation target covering one contiguous text run. Unsupported tables and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text with typed gaps. Compact extreme-margin page numbers and provenance furniture, plus same-band text repeated across selected pages, are removed with typed counts by default; detected headings and all source-evidenced table-region lines are preserved, and removal can be disabled. No OCR or external model. Optionally enable compact mode for counted dot-leader and spaced-hyphen normalizations. Optionally saves transactional UTF-8 Markdown. Use absolute or ~/ local paths, not Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -3805,6 +3868,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
             include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
             compact: { type: "boolean", description: "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false." },
+            remove_page_furniture: { type: "boolean", description: "Remove only source-evidenced extreme-margin page furniture and report every removed line by typed gap and counts. Set false to preserve all source lines. Default: true." },
             emit_table_proposals: { type: "boolean", description: "Opt into emitting one bounded, deterministic table_proposals packet per abandoned table region (TABLE_TOPOLOGY_UNKNOWN or TABLE_RULING_UNSUPPORTED), carrying the region's text items, ruled and painted evidence, header hints, page, bbox, coordinate_space, and a source-and-IR-bound proposal_token so a host model can propose a structure for later read-only verification. Additive: the abstention gap is unchanged and default output stays byte-identical. Default: false." },
             output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
             overwrite: { type: "boolean", description: "Replace an existing output_path only when its exact expected_output_identity is also supplied. Default: false." },
@@ -4851,7 +4915,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           idempotentHint: false,
           openWorldHint: false
         }
-      }
+      },
+      ...VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
     ].map(withToolOutputSchema),
   };
 });
@@ -4861,6 +4926,18 @@ async function handleToolCall(request) {
   const { name, arguments: args } = request.params;
 
   try {
+    if (VERIFIED_EXTRACTION_TOOL_NAMES.has(name)) {
+      const structuredContent = await handleVerifiedExtractionTool(name, args ?? {});
+      const summary = name === "create_extraction_workspace"
+        ? `Created verified extraction workspace ${structuredContent.workspace_identity_sha256} at generation ${structuredContent.generation_sha256}.`
+        : name === "verify_extraction_proposal"
+          ? `Retained ${structuredContent.result.status} verification for ${structuredContent.result.leaf_pointer} at generation ${structuredContent.generation_sha256}.`
+          : `${name} completed.`;
+      return {
+        content: [{ type: "text", text: summary }],
+        structuredContent,
+      };
+    }
     switch (name) {
       case "list_pdfs": {
         const directory = resolvePath(args.directory || DEFAULT_PDF_DIRECTORY);
@@ -5888,6 +5965,7 @@ async function handleToolCall(request) {
           "max_markdown_bytes",
           "include_page_boundaries",
           "compact",
+          "remove_page_furniture",
           "emit_table_proposals",
           "output_path",
           "overwrite",
@@ -5900,6 +5978,11 @@ async function handleToolCall(request) {
         const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
         const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
         const compact = optionalBooleanArgument(markdownArgs.compact, "compact", false);
+        const removePageFurniture = optionalBooleanArgument(
+          markdownArgs.remove_page_furniture,
+          "remove_page_furniture",
+          true,
+        );
         const emitTableProposals = optionalBooleanArgument(markdownArgs.emit_table_proposals, "emit_table_proposals", false);
         const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
         const expectedOutputIdentity = normalizeExpectedOutputIdentity(
@@ -5959,6 +6042,7 @@ async function handleToolCall(request) {
             includePageBoundaries,
             maxMarkdownBytes,
             compact,
+            removePageFurniture,
             emitTableProposals,
           });
           const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
@@ -8085,9 +8169,10 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 // Initialize and start the server
 async function main() {
   // Ensure profiles and signatures directories exist
-  await fs.mkdir(PROFILES_DIR, { recursive: true }).catch(() => {});
-  await fs.mkdir(SIGNATURES_DIR, { recursive: true }).catch(() => {});
-  await fs.mkdir(BACKUPS_DIR, { recursive: true }).catch(() => {});
+  for (const directory of [PROFILES_DIR, SIGNATURES_DIR, BACKUPS_DIR]) {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 }).catch(() => {});
+    await fs.chmod(directory, 0o700).catch(() => {});
+  }
 
   // Migrate profiles from old directory (~/.pdf-filler-profiles) if it exists
   try {

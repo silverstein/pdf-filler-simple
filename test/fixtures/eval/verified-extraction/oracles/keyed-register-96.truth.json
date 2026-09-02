@@ -1,0 +1,125 @@
+{
+  "register_id": "REG-2026-024",
+  "items": [
+    {
+      "item_id": "ITEM-001",
+      "category": "alpha",
+      "quantity": 7
+    },
+    {
+      "item_id": "ITEM-002",
+      "category": "beta",
+      "quantity": 14
+    },
+    {
+      "item_id": "ITEM-003",
+      "category": "gamma",
+      "quantity": 21
+    },
+    {
+      "item_id": "ITEM-004",
+      "category": "alpha",
+      "quantity": 28
+    },
+    {
+      "item_id": "ITEM-005",
+      "category": "beta",
+      "quantity": 35
+    },
+    {
+      "item_id": "ITEM-006",
+      "category": "gamma",
+      "quantity": 42
+    },
+    {
+      "item_id": "ITEM-007",
+      "category": "alpha",
+      "quantity": 49
+    },
+    {
+      "item_id": "ITEM-008",
+      "category": "beta",
+      "quantity": 56
+    },
+    {
+      "item_id": "ITEM-009",
+      "category": "gamma",
+      "quantity": 63
+    },
+    {
+      "item_id": "ITEM-010",
+      "category": "alpha",
+      "quantity": 70
+    },
+    {
+      "item_id": "ITEM-011",
+      "category": "beta",
+      "quantity": 77
+    },
+    {
+      "item_id": "ITEM-012",
+      "category": "gamma",
+      "quantity": 84
+    },
+    {
+      "item_id": "ITEM-013",
+      "category": "alpha",
+      "quantity": 91
+    },
+    {
+      "item_id": "ITEM-014",
+      "category": "beta",
+      "quantity": 98
+    },
+    {
+      "item_id": "ITEM-015",
+      "category": "gamma",
+      "quantity": 105
+    },
+    {
+      "item_id": "ITEM-016",
+      "category": "alpha",
+      "quantity": 112
+    },
+    {
+      "item_id": "ITEM-017",
+      "category": "beta",
+      "quantity": 119
+    },
+    {
+      "item_id": "ITEM-018",
+      "category": "gamma",
+      "quantity": 126
+    },
+    {
+      "item_id": "ITEM-019",
+      "category": "alpha",
+      "quantity": 133
+    },
+    {
+      "item_id": "ITEM-020",
+      "category": "beta",
+      "quantity": 140
+    },
+    {
+      "item_id": "ITEM-021",
+      "category": "gamma",
+      "quantity": 147
+    },
+    {
+      "item_id": "ITEM-022",
+      "category": "alpha",
+      "quantity": 154
+    },
+    {
+      "item_id": "ITEM-023",
+      "category": "beta",
+      "quantity": 161
+    },
+    {
+      "item_id": "ITEM-024",
+      "category": "gamma",
+      "quantity": 168
+    }
+  ]
+}

@@ -846,8 +846,8 @@ const layoutBlock = object({
   line_ids: stringArray,
 });
 const layoutRuledRect = object({
-  x: { type: "number", minimum: 0 },
-  y: { type: "number", minimum: 0 },
+  x: number,
+  y: number,
   width: { type: "number", minimum: 0 },
   height: { type: "number", minimum: 0 },
   verb: enumString(["fill", "stroke", "clip", "none"]),
@@ -885,6 +885,7 @@ const markdownGapCode = enumString([
   "TEXT_LAYER_FAILED",
   "TEXT_LAYER_EMPTY",
   "OCR_NOT_PERFORMED",
+  "PAGE_FURNITURE_REMOVED",
   "IMAGE_CONTENT_NOT_RENDERED",
   "VECTOR_CONTENT_NOT_INTERPRETED",
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
@@ -895,6 +896,7 @@ const markdownGapCode = enumString([
   "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
   "TEXT_INTEGRITY_SUSPECT",
+  "MATH_NOT_RECONSTRUCTED",
   "CONTROL_CHARACTERS_SANITIZED",
 ]);
 const markdownGap = object({
@@ -1108,7 +1110,154 @@ const tableProposalVerification = object({
   claim_boundary: { const: TABLE_PROPOSAL_CLAIM_BOUNDARY },
 });
 
+const workspaceDigest = sha256Digest;
+const workspaceGenerationSequence = { type: "integer", minimum: 0 };
+const workspaceJsonValue = {};
+const workspaceContract = (name, version) => object({
+  name: { const: name },
+  version: { const: version },
+});
+const workspaceProposalEvent = object({
+  contract: workspaceContract("pdf-tools.verified-extraction-workspace-event", "1.1.0-experimental"),
+  event_sequence: { type: "integer", minimum: 1 },
+  kind: { const: "proposal_submitted" },
+  workspace_identity_sha256: workspaceDigest,
+  leaf_pointer: string,
+  proposed_value: workspaceJsonValue,
+  chunk_ids: arrayOf({ type: "string", pattern: "^chunk\\.[a-f0-9]{64}$" }),
+  verification: object({ status: { const: "unverified" }, reason: { const: "not_replayed" } }),
+  event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+});
+const workspaceVerificationResult = object({
+  contract: { type: "object" },
+  workspace_identity_sha256: workspaceDigest,
+  generation_sha256: workspaceDigest,
+  proposal_event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+  proposal_event: workspaceProposalEvent,
+  leaf_pointer: string,
+  proposed_value: workspaceJsonValue,
+  proposed_value_sha256: workspaceDigest,
+  source: object({ sha256: workspaceDigest, size_bytes: { type: "integer", minimum: 1 } }),
+  schema: object({ sha256: workspaceDigest, size_bytes: { type: "integer", minimum: 1 } }),
+  document_map_sha256: workspaceDigest,
+  chunk_policy_sha256: workspaceDigest,
+  status: enumString([
+    "verified_exact", "computed_with_inputs", "source_supported", "not_found", "ambiguous",
+    "unverified_reasoning", "citation_mismatch", "chunk_missing",
+  ]),
+  reason_codes: stringArray,
+  citations: arrayOf(workspaceJsonValue),
+  method: { type: "object" },
+  derived_value: workspaceJsonValue,
+  calculation: workspaceJsonValue,
+  search_scope: workspaceJsonValue,
+  source_replayed: { const: true },
+  schema_replayed: { const: true },
+  caller_text_accepted_as_proof: { const: false },
+  caller_geometry_accepted_as_proof: { const: false },
+  caller_confidence_accepted_as_proof: { const: false },
+  table_topology_proven: { const: false },
+  claim_boundary: string,
+  package_inclusion: { const: "enabled_experimental" },
+  verification_sha256: workspaceDigest,
+});
+const workspaceVerifiedEvent = object({
+  contract: workspaceContract("pdf-tools.verified-extraction-workspace-event", "1.1.0-experimental"),
+  event_sequence: { type: "integer", minimum: 1 },
+  kind: { const: "proposal_verified" },
+  workspace_identity_sha256: workspaceDigest,
+  leaf_pointer: string,
+  proposal_event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+  verification_result: workspaceVerificationResult,
+  event_id: { type: "string", pattern: "^event\\.[a-f0-9]{64}$" },
+});
+const workspacePageRange = object({
+  start_page: { type: "integer", minimum: 1 },
+  end_page: { type: "integer", minimum: 1 },
+});
+
 export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
+  create_extraction_workspace: object({
+    workspace_id: string,
+    workspace_path: string,
+    workspace_identity_sha256: workspaceDigest,
+    workspace_pointer_sha256: workspaceDigest,
+    creator_claim_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    generation_sequence: { const: 0 },
+    state: { const: "complete" },
+    leaf_obligations: stringArray,
+    document_map_sha256: workspaceDigest,
+  }),
+  inspect_extraction_state: object({
+    workspace_id: string,
+    workspace_identity_sha256: workspaceDigest,
+    state: enumString(["complete", "durability_uncertain", "initialization_recovery_required"]),
+    current_generation_sha256: nullable(workspaceDigest),
+    current_generation_sequence: nullable(workspaceGenerationSequence),
+    complete_generations: { type: "integer", minimum: 0 },
+    incomplete_generations: arrayOf(object({
+      name: string,
+      state: string,
+      reason: nullable(string),
+    })),
+    abandoned_generations: stringArray,
+    active_transaction_id: nullable(string),
+    retention: object({
+      maximum_generations: { type: "integer", minimum: 1 },
+      remaining_generations: { type: "integer", minimum: 0 },
+      automatic_pruning: { const: false },
+      deletion_requires_exact_current_generation: { const: true },
+    }),
+  }),
+  read_extraction_workspace: object({
+    contract: workspaceContract("pdf-tools.verified-extraction-workspace-page", "1.0.0-experimental"),
+    workspace_identity_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    collection: enumString(["document_map_chunks", "pending_leaves", "events", "proposals", "results"]),
+    collection_sha256: workspaceDigest,
+    counts: object({
+      total: { type: "integer", minimum: 0 },
+      offset: { type: "integer", minimum: 0 },
+      returned: { type: "integer", minimum: 0 },
+      omitted_before: { type: "integer", minimum: 0 },
+      omitted_after: { type: "integer", minimum: 0 },
+    }),
+    items: arrayOf(workspaceJsonValue),
+    next_cursor: nullable(string),
+  }),
+  read_extraction_chunk: object({
+    document_map_sha256: workspaceDigest,
+    chunk_id: { type: "string", pattern: "^chunk\\.[a-f0-9]{64}$" },
+    page_range: workspacePageRange,
+    content: string,
+    content_utf8_bytes: { type: "integer", minimum: 0 },
+    content_sha256: workspaceDigest,
+    admitted_item_count: { type: "integer", minimum: 0 },
+    omitted_item_count: { const: 0 },
+  }),
+  submit_extraction_proposal: object({
+    workspace_identity_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    generation_sequence: workspaceGenerationSequence,
+    event: workspaceProposalEvent,
+    state: { const: "complete" },
+  }),
+  verify_extraction_proposal: object({
+    workspace_identity_sha256: workspaceDigest,
+    generation_sha256: workspaceDigest,
+    generation_sequence: workspaceGenerationSequence,
+    event: workspaceVerifiedEvent,
+    result: workspaceVerificationResult,
+    state: { const: "complete" },
+  }),
+  delete_extraction_workspace: object({
+    state: { const: "deleted" },
+    workspace_id: string,
+    workspace_identity_sha256: workspaceDigest,
+    final_generation_sha256: workspaceDigest,
+    recoverable: { const: false },
+  }),
   read_pdf_fields: activeDocument(),
   fill_pdf: activeDocument({ filled_fields: stringArray, fill_errors: stringArray }),
   bulk_fill_from_csv: object({
@@ -1190,13 +1339,17 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     {
       renderer: object({
         name: { const: "pdf-tools.layout-markdown-renderer" },
-        version: { const: "1.17.0" },
+        version: { const: "1.19.0" },
       }),
       conversion_status: enumString(["complete", "partial", "failed"]),
       markdown: string,
       markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       markdown_bytes: { type: "integer", minimum: 0 },
-      options: object({ include_page_boundaries: boolean, compact: boolean }),
+      options: object({
+        include_page_boundaries: boolean,
+        compact: boolean,
+        remove_page_furniture: boolean,
+      }),
       limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
       pages: arrayOf(markdownPage),
       pages_needing_vision: arrayOf(visionRoutingPage),
@@ -1205,6 +1358,10 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       normalizations: object({
         dot_leaders_collapsed: { type: "integer", minimum: 0 },
         page_number_lines_removed: { type: "integer", minimum: 0 },
+        running_header_lines_removed: { type: "integer", minimum: 0 },
+        running_footer_lines_removed: { type: "integer", minimum: 0 },
+        page_furniture_characters_removed: { type: "integer", minimum: 0 },
+        page_furniture_pages: integerArray,
         spaced_hyphens_joined: { type: "integer", minimum: 0 },
         normalized_pages: integerArray,
       }),
