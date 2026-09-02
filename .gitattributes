@@ -2,6 +2,11 @@
 *.wasm binary
 .beads/issues.jsonl merge=ours
 
+# Native contract tests bind selected JavaScript fixtures byte-for-byte. Keep
+# their repository LF bytes stable when Git checks the suite out on Windows.
+test/*.js text eol=lf
+test/**/*.js text eol=lf
+
 # The vendored QPDF WebAssembly runtime and its notices are byte-exact build
 # output bound by vendor/qpdf-wasm/runtime.provenance.json. Any end-of-line or
 # whitespace normalisation would break that hash contract, in the checkout and
