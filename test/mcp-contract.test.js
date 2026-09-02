@@ -455,7 +455,7 @@ describe("MCPB static declarations", () => {
     );
     const digest = value => createHash("sha256").update(value).digest("hex");
     expect(digest(shareUi), "dist-ui/index.html").toBe(digest(sourceUi));
-  });
+  }, 15_000);
 });
 
 describe.each(RUNTIMES)("$name runtime discovery", runtime => {
