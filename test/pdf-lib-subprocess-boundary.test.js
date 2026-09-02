@@ -95,7 +95,20 @@ const OPTIONS = {
   prepare_signing_packet: {
     allow_resign: false,
     field_values: {},
-    signature_locations: [{ page: 1, x: 0, y: 0, width: 10, height: 10, label: "Sign" }],
+    require_provider_ready: false,
+    signature_locations: [{
+      page: 1,
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      label: "Sign",
+      zone_id: "zone-test",
+      field_type: "unspecified",
+      participant_id: null,
+      participant_role: null,
+      evidence_source: "caller_supplied",
+    }],
   },
   apply_text: {
     allow_resign: false,

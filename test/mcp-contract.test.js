@@ -151,9 +151,9 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // edbba3a6444b7603c9e8336a496f5c82b55d8d9ed674b7dbdbca28240386fb52.
 // 2026-08-14: the same identity becomes 1.17.0, which extends that rule to a
 // lowered smaller glyph run and writes it as Unicode subscript characters. No
-// tool name, description, input schema, or read-only annotation changes.
-// Previously cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d.
-const TOOL_CONTRACT_SHA256 = "54287c9c708f3a6db5f0f2a6aab6e03d01c3feb1ac4931a79b3f7e42a91b3afa";
+// tool name, description, input schema, output schema, or read-only annotation
+// changes. This pin includes the additive signing-preparation receipt contract.
+const TOOL_CONTRACT_SHA256 = "32c9c45fe1d8b486d3e8c6ef4cd1ee8a11f1765a803548e0b88453f04fa1bbdd";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

@@ -262,6 +262,22 @@ binds to trusted host provenance; a bare `harness_failure` label is invalid, and
 a benchmark stays blocked when the configured maximum harness-failure rate is
 exceeded.
 
+The provider-neutral signing-preparation contract is evaluated separately from
+signature intent and provider execution. Focused tests exercise both source and
+share runtimes, independently rehash the source and committed output, replay the
+canonical receipt digest, verify rotated MediaBox/CropBox regions, and prove
+that confidential field values are absent from the receipt. Hostile cases must
+reject unknown properties, malformed or duplicate zone identities, duplicated
+zone geometry, partial participant bindings under the readiness gate,
+field-write
+failure, off-page geometry, and CropBox clipping without committing an output.
+Same-document coverage rehashes the immutable-original backup and requires its
+path, size, and source-matching SHA-256 in the receipt. Zone evidence-source
+labels remain caller-declared rather than independently replayed. These checks
+establish a local preparation contract only: they do not call a signing provider or prove
+identity, consent, delivery, completion, cryptographic signing, or legal
+validity.
+
 For render evidence, grading decodes the retained PNG again, independently
 renders the SHA-256-pinned corpus source, recomputes the normalized pixel and
 foreground comparison, and applies the perceptual thresholds to that fresh

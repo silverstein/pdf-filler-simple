@@ -372,6 +372,16 @@ Every user-visible PDF output follows an explicit commit policy:
   lifecycle. New-path outputs use a same-directory staged commit. Same-document
   mutations additionally require the immutable-original backup record,
   per-document lock, input identity recheck, and pending/committed journal.
+- `prepare_signing_packet` adds a provider-neutral preparation receipt only
+  after the output transaction commits and its exact bytes are independently
+  rebound. New-path calls also rebind the source after commit; same-document
+  calls revalidate after commit and bind the immutable-original backup path,
+  size, and source-matching SHA-256. Receipt field outcomes contain
+  field names and status/reason codes, never the caller's values. The stricter
+  `require_provider_ready` gate means ready for mapping only and never grants
+  network, provider, signature, or legal authority.
+  Zone evidence-source labels are caller-declared until a later workflow binds
+  replayable detector or AcroForm evidence.
 - `merge_pdfs`, `rotate_pdf_pages`, `reorder_pdf_pages`, and `apply_page_plan`
   completely write and fsync a private same-directory stage before commit. A
   distinct existing output is replaced only when `expected_output_identity`

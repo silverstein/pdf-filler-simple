@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.12.1"
   },
-  "tools_sha256": "988b3b85c04f65bb25a1fc2f60a7c231afd587cfe4ace70847bc01317c3dee68",
+  "tools_sha256": "6e9408ff1da2835c513c36511e12310443efce180a77ceb0b91a5c8631ff1308",
   "tools": [
     {
       "name": "add_signature_field",
@@ -1170,6 +1170,41 @@
                 },
                 "height": {
                   "type": "number"
+                },
+                "zone_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "description": "Optional stable provider-neutral zone identifier. A deterministic ID is generated when omitted."
+                },
+                "field_type": {
+                  "type": "string",
+                  "enum": [
+                    "signature",
+                    "initials",
+                    "date",
+                    "printed_name",
+                    "witness_signature"
+                  ],
+                  "description": "Provider-neutral intended field type. Required when require_provider_ready=true."
+                },
+                "participant_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "description": "Opaque stable participant identifier, not an email address or secret. Required when require_provider_ready=true."
+                },
+                "participant_role": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "description": "Provider-neutral participant role. Required when require_provider_ready=true."
+                },
+                "evidence_source": {
+                  "type": "string",
+                  "enum": [
+                    "caller_supplied",
+                    "detect_signature_zones",
+                    "acroform"
+                  ],
+                  "description": "Caller-declared label for how the placement was established (default: caller_supplied). This receipt does not independently replay that evidence."
                 }
               },
               "required": [
@@ -1178,8 +1213,13 @@
                 "y",
                 "width",
                 "height"
-              ]
+              ],
+              "additionalProperties": false
             }
+          },
+          "require_provider_ready": {
+            "type": "boolean",
+            "description": "Fail closed before committing unless every zone is typed and participant-bound and every requested field write succeeds. Default: false. This means ready for later provider mapping only, never ready or authorized to sign."
           },
           "allow_resign": {
             "type": "boolean",
@@ -1223,7 +1263,8 @@
         "required": [
           "pdf_path",
           "output_path"
-        ]
+        ],
+        "additionalProperties": false
       }
     },
     {

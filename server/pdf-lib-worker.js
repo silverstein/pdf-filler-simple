@@ -32,6 +32,7 @@ import {
   copyPdfPagesPreservingForms,
   detectExistingSignatures,
   drawSignatureFieldOnPage,
+  getPageBoxGeometry,
   parsePageRanges,
   PDF_LIB_ENCRYPTED_MESSAGE,
   stampSignatureOnPage,
@@ -62,6 +63,7 @@ const MAX_CONTROL_BYTES = 1024 * 1024;
 const MAX_STAGE_FILE_BYTES = 500 * 1024 * 1024;
 const MAX_STAGE_TOTAL_BYTES = 1024 * 1024 * 1024;
 const MAX_OUTPUTS = 1000;
+const MAX_SIGNING_PACKET_PAGES = 1000;
 const MAX_REASONABLE_OBJECT_NUMBER = 2_000_000;
 const MAX_STRUCTURE_TOKEN_BYTES = 128;
 // ISO 32000-1:2008, Table 17: every element of a cross-reference stream's /W
@@ -162,7 +164,9 @@ const OPTION_KEYS = new Map([
     "allow_resign", "audit_line", "audit_text", "draw_audit_line",
     "modification_at", "placement", "signature",
   ]],
-  ["prepare_signing_packet", ["allow_resign", "field_values", "signature_locations"]],
+  ["prepare_signing_packet", [
+    "allow_resign", "field_values", "require_provider_ready", "signature_locations",
+  ]],
   ["apply_text", [
     "allow_resign", "audit_line", "font_style", "modification_at", "placement", "text",
   ]],
@@ -343,10 +347,80 @@ function validateRequest(request) {
   }
   if (request.operation === "prepare_signing_packet") {
     objectValue(options.field_values, "field_values");
-    boundedArray(options.signature_locations, "signature_locations");
+    boundedArray(options.signature_locations, "signature_locations", { allowEmpty: true });
+    const zoneIds = new Set();
+    const zoneBindings = new Set();
     options.signature_locations.forEach((item, index) => {
-      placement(item, `signature_locations[${index}]`, { labelField: true });
+      exactKeys(item, [
+        "evidence_source",
+        "field_type",
+        "height",
+        "label",
+        "page",
+        "participant_id",
+        "participant_role",
+        "width",
+        "x",
+        "y",
+        "zone_id",
+      ], `signature_locations[${index}]`);
+      placement(
+        {
+          page: item.page,
+          x: item.x,
+          y: item.y,
+          width: item.width,
+          height: item.height,
+          label: item.label,
+        },
+        `signature_locations[${index}]`,
+        { labelField: true },
+      );
+      if (typeof item.zone_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.zone_id)) {
+        throw new TypeError(`signature_locations[${index}].zone_id is invalid.`);
+      }
+      if (!["signature", "initials", "date", "printed_name", "witness_signature", "unspecified"].includes(item.field_type)) {
+        throw new TypeError(`signature_locations[${index}].field_type is invalid.`);
+      }
+      if (!["caller_supplied", "detect_signature_zones", "acroform"].includes(item.evidence_source)) {
+        throw new TypeError(`signature_locations[${index}].evidence_source is invalid.`);
+      }
+      for (const key of ["participant_id", "participant_role"]) {
+        if (
+          item[key] !== null
+          && (
+            typeof item[key] !== "string"
+            || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item[key])
+          )
+        ) {
+          throw new TypeError(`signature_locations[${index}].${key} is invalid.`);
+        }
+      }
+      if (zoneIds.has(item.zone_id)) throw new TypeError("signature_locations contains a duplicate zone_id.");
+      const binding = [
+        item.page, item.x, item.y, item.width, item.height,
+      ].map(value => JSON.stringify(value)).join("\0");
+      if (zoneBindings.has(binding)) {
+        throw new TypeError("signature_locations contains conflicting duplicate geometry.");
+      }
+      zoneIds.add(item.zone_id);
+      zoneBindings.add(binding);
     });
+    if (typeof options.require_provider_ready !== "boolean") {
+      throw new TypeError("require_provider_ready must be boolean.");
+    }
+    if (
+      options.require_provider_ready
+      && (
+        options.signature_locations.length === 0
+        || options.signature_locations.some(item =>
+          item.field_type === "unspecified"
+          || item.participant_id === null
+          || item.participant_role === null)
+      )
+    ) {
+      throw new TypeError("Provider-ready signing packets require typed, participant-bound zones.");
+    }
   }
   if (Object.hasOwn(options, "allow_resign") && typeof options.allow_resign !== "boolean") {
     throw new TypeError("allow_resign must be boolean.");
@@ -1601,6 +1675,71 @@ function normalizedPageRotations(document) {
   });
 }
 
+function signingPacketPageGeometry(document) {
+  return document.getPages().map((page, index) => {
+    const media = getPageBoxGeometry(page);
+    let crop;
+    try {
+      const observed = page.getCropBox();
+      crop = {
+        origin_x: observed.x,
+        origin_y: observed.y,
+        width: observed.width,
+        height: observed.height,
+      };
+    } catch {
+      crop = {
+        origin_x: media.originX,
+        origin_y: media.originY,
+        width: media.width,
+        height: media.height,
+      };
+    }
+    const geometry = {
+      page: index + 1,
+      rotation_degrees: ((page.getRotation().angle % 360) + 360) % 360,
+      media_box: {
+        origin_x: media.originX,
+        origin_y: media.originY,
+        width: media.width,
+        height: media.height,
+      },
+      crop_box: crop,
+    };
+    const values = [
+      geometry.media_box.origin_x,
+      geometry.media_box.origin_y,
+      geometry.media_box.width,
+      geometry.media_box.height,
+      geometry.crop_box.origin_x,
+      geometry.crop_box.origin_y,
+      geometry.crop_box.width,
+      geometry.crop_box.height,
+    ];
+    if (
+      ![0, 90, 180, 270].includes(geometry.rotation_degrees)
+      || values.some(value => !Number.isFinite(value))
+      || geometry.media_box.width <= 0
+      || geometry.media_box.height <= 0
+      || geometry.crop_box.width <= 0
+      || geometry.crop_box.height <= 0
+    ) {
+      throw new TypeError(`Page ${index + 1} has unsupported signing geometry.`);
+    }
+    return geometry;
+  });
+}
+
+function signingPacketZoneVisibleWithinCrop(zone, pageGeometry) {
+  const x = pageGeometry.media_box.origin_x + zone.x - pageGeometry.crop_box.origin_x;
+  const y = pageGeometry.crop_box.origin_y + pageGeometry.crop_box.height
+    - (pageGeometry.media_box.origin_y + pageGeometry.media_box.height - zone.y);
+  return x >= 0
+    && y >= 0
+    && x + zone.width <= pageGeometry.crop_box.width
+    && y + zone.height <= pageGeometry.crop_box.height;
+}
+
 function specNullReferenceAuthority(graphPolicy) {
   return {
     edges: graphPolicy.spec_null_reference_edges,
@@ -2300,7 +2439,29 @@ async function execute(request, protection) {
   } else {
     const document = await loadMutationSource(protection, sourceBytes[0]);
     const expectedPageCount = document.getPageCount();
+    if (request.operation === "prepare_signing_packet" && expectedPageCount > MAX_SIGNING_PACKET_PAGES) {
+      throw resourceError(
+        "signing_packet_too_many_pages",
+        `Signing packet preparation supports at most ${MAX_SIGNING_PACKET_PAGES} pages.`,
+      );
+    }
     const expectedPageRotations = normalizedPageRotations(document);
+    const signingGeometry = request.operation === "prepare_signing_packet"
+      ? signingPacketPageGeometry(document)
+      : null;
+    if (
+      request.operation === "prepare_signing_packet"
+      && options.require_provider_ready
+      && options.signature_locations.some(zone => {
+        const pageGeometry = signingGeometry[zone.page - 1];
+        return !pageGeometry || !signingPacketZoneVisibleWithinCrop(zone, pageGeometry);
+      })
+    ) {
+      throw new Error("Provider-ready signing zones must be fully visible inside the page CropBox.");
+    }
+    const sourceSignatures = request.operation === "prepare_signing_packet"
+      ? detectExistingSignatures(document)
+      : null;
     assertMayResave(document, options.allow_resign, request.operation === "apply_signature" ? "re-sign" : "modify");
     if (request.operation === "add_signature_field") {
       await drawSignatureFieldOnPage(document, options.placement);
@@ -2317,8 +2478,26 @@ async function execute(request, protection) {
       result = { form_info: formInfo(document) };
     } else if (request.operation === "prepare_signing_packet") {
       const fill = fillFields(document, options.field_values, { objectErrors: true });
+      if (options.require_provider_ready && fill.errors.length > 0) {
+        throw new Error(
+          `Provider-ready signing packet preparation failed for ${fill.errors.length} requested form field(s).`,
+        );
+      }
       for (const placement of options.signature_locations) await drawSignatureFieldOnPage(document, placement);
-      result = { filled_count: fill.filledFields.length, fill_errors: fill.errors, form_info: formInfo(document) };
+      const filled = new Set(fill.filledFields);
+      const fieldOutcomes = Object.keys(options.field_values).sort().map(fieldName => ({
+        field_name: fieldName,
+        status: filled.has(fieldName) ? "written" : "failed",
+        reason_code: filled.has(fieldName) ? null : "field_write_failed",
+      }));
+      result = {
+        filled_count: fill.filledFields.length,
+        fill_errors: fill.errors,
+        field_outcomes: fieldOutcomes,
+        page_geometry: signingGeometry,
+        source_signatures: sourceSignatures,
+        form_info: formInfo(document),
+      };
     } else if (request.operation === "apply_text") {
       await stampTextOnPage(document, { ...options.placement, text: options.text, fontStyle: options.font_style });
       const keywords = document.getKeywords() || "";
@@ -2332,6 +2511,15 @@ async function execute(request, protection) {
     })];
   }
   if (outputs.length > MAX_OUTPUTS) throw resourceError("too_many_outputs", "Mutation produced too many outputs.");
+  if (
+    request.operation === "prepare_signing_packet"
+    && outputs.some(output => output.length > PDF_MUTATION_MAX_FILE_BYTES)
+  ) {
+    throw resourceError(
+      "prepared_signing_packet_too_large",
+      "Prepared signing packet exceeds the 250 MiB provider-neutral receipt limit.",
+    );
+  }
   if (request.operation === "inspect_pdf_accessibility" && outputs.length !== 0) {
     throw new TypeError("Read-only inspection cannot stage output.");
   }

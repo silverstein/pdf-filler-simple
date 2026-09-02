@@ -45,7 +45,7 @@ an `isError` result is never forced through a success schema.
 | `list_signatures` | saved signature summaries, including an empty array |
 | `load_signature` | signature metadata and optional preview |
 | `merge_pdfs` | active output document and page count |
-| `prepare_signing_packet` | active document, fills, and pending placements |
+| `prepare_signing_packet` | active document, fills, legacy pending placements, and a source/output-bound provider-neutral preparation receipt with value-free field outcomes, typed zones, readiness gaps, and `provider_execution_status: not_requested` |
 | `read_pdf_bytes` | bounded base64 byte chunk |
 | `read_pdf_content` | complete/partial text or image-fallback result with page-scoped routing facts (`read_pages_without_text`, integrity signals, typed `page_read_error`) preserved through failure and resource-limit branches |
 | `read_pdf_fields` | active document and form fields |
@@ -66,6 +66,41 @@ advertise `outputSchema`: `list_pdfs`, `list_profiles`, `load_profile`,
 and `save_profile`. Their error results are also
 text-only; attaching an undeclared `structuredContent` error would create a
 wire contract that discovery does not publish.
+
+### Provider-neutral signing preparation receipt
+
+`prepare_signing_packet` remains a local PDF mutation. Its additive
+`preparation_receipt` binds the exact source and committed output identities,
+the atomic-commit and same-document backup path/hash/size boundary,
+MediaBox/CropBox geometry,
+page rotation, value-free field-write outcomes, typed signing zones, and an
+explicit participant-binding status. The digest is SHA-256 over canonical
+non-secret receipt values with the digest field omitted and the domain prefix
+`pdf-tools.signing-preparation-receipt.v1\0`.
+Native regions retain the tool's MediaBox-relative top-left coordinates;
+display regions are translated into CropBox-relative top-left coordinates and
+then transformed by the page rotation. Each zone reports whether it is fully
+visible, partially clipped, or outside the visible crop.
+
+Legacy placements remain accepted and receive deterministic zone IDs, but the
+receipt is `incomplete` until each zone has an intended type plus an opaque
+participant ID and role. `require_provider_ready: true` fails before commit for
+missing bindings and fails inside the isolated mutation worker before staging
+when any requested field write fails. Unknown properties, duplicate IDs or
+duplicate zone geometry, malformed identifiers, unsupported types, unresolved
+pages, out-of-bounds geometry, and clipped provider-ready zones fail closed.
+Legacy calls may still prepare a local artifact with a clipped zone, but its
+receipt remains `incomplete` with a typed crop-visibility gap.
+`ready_for_provider_mapping`
+means only that a later provider adapter can consume the local intent; it does
+not establish signer identity, consent, enforceability, provider acceptance,
+or authorization to transmit or sign. Receipt preparation is capped at 1,000
+pages and refuses a prepared output above the existing 250 MiB per-file bound
+before staging or commit. Every successful receipt says
+`provider_execution_status: not_requested`.
+Zone `evidence_source` values are explicitly marked `caller_declared`; this
+preparation receipt does not independently replay a detector or AcroForm
+evidence artifact.
 
 ### Verified table proposal workflow
 

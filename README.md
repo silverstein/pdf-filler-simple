@@ -96,6 +96,7 @@ content, so the complete workflow is not necessarily zero egress.
 - Switch to the viewer's Sign tab to place signatures, dates, or text on detected zones
 - Draw or reuse saved local signatures
 - Inspect a region, preview it, and turn it into a typed signing zone when automatic detection is not enough
+- Prepare a provider-neutral handoff receipt that binds the exact local input/output, typed zones, participant roles, page geometry, and unresolved inputs without contacting a signing provider
 - Keep signing edits local, with active-document tracking and backup behavior for same-file mutations
 
 ### Page Organization Tools

@@ -288,6 +288,116 @@ const placement = object({
   height: number,
 });
 const fillError = object({ field: string, error: string });
+const signingDocumentIdentity = object({
+  canonical_path: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+  identity_method: { const: "race_aware_descriptor_sha256" },
+});
+const signingBackupIdentity = object({
+  canonical_path: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+  identity_method: { const: "immutable_original_backup_record_sha256" },
+});
+const signingPageBox = object({
+  origin_x: number,
+  origin_y: number,
+  width: number,
+  height: number,
+});
+const signingPageGeometry = object({
+  page: integer,
+  rotation_degrees: { type: "integer", enum: [0, 90, 180, 270] },
+  media_box: signingPageBox,
+  crop_box: signingPageBox,
+});
+const signingFieldOutcome = object({
+  field_name: string,
+  status: enumString(["written", "skipped", "failed"]),
+  reason_code: nullable(enumString(["field_write_failed"])),
+});
+const signingParticipantBinding = object({
+  status: enumString(["bound", "partial", "unbound"]),
+  participant_id: nullable(string),
+  participant_role: nullable(string),
+});
+const signingPreparationZone = object({
+  zone_id: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+  label: string,
+  field_type: enumString([
+    "signature", "initials", "date", "printed_name", "witness_signature", "unspecified",
+  ]),
+  page: integer,
+  native_region: regionPoints,
+  display_region: regionPoints,
+  visibility_status: enumString(["visible", "partially_clipped", "outside_crop_box"]),
+  coordinate_space_version: { const: "pdf-tools.media-box-top-left-points.v1" },
+  evidence_source: enumString(["caller_supplied", "detect_signature_zones", "acroform"]),
+  evidence_binding_status: { const: "caller_declared" },
+  participant_binding: signingParticipantBinding,
+});
+const signingPreparationMissingInput = object({
+  code: enumString([
+    "NO_SIGNATURE_ZONES",
+    "ZONE_TYPE_UNSPECIFIED",
+    "ZONE_PARTICIPANT_BINDING_MISSING",
+    "ZONE_PARTICIPANT_BINDING_PARTIAL",
+    "ZONE_OUTSIDE_CROP_BOX",
+    "ZONE_PARTIALLY_CLIPPED",
+    "FIELD_WRITE_FAILED",
+  ]),
+  zone_id: nullable(string),
+  field_name: nullable(string),
+});
+const signingPreparationReceipt = object({
+  schema_version: { const: "1.0" },
+  preparation_engine: { const: "pdf-tools.prepare-signing-packet.v1" },
+  source_document: signingDocumentIdentity,
+  prepared_document: signingDocumentIdentity,
+  source_preservation: object({
+    mode: enumString(["source_path_unchanged", "same_document_immutable_original_backup"]),
+    source_path_reverified_after_commit: boolean,
+    backup_identity_verified_after_commit: boolean,
+    backup_path: nullable(string),
+    backup_document: nullable(signingBackupIdentity),
+  }),
+  output_commit: object({
+    status: { const: "committed" },
+    protocol: { const: "pdf-tools.atomic-output-transaction.v1" },
+    target_mode: enumString(["new_path", "same_document"]),
+    source_binding_verified_at_commit: { const: true },
+    prepared_identity_verified_after_commit: { const: true },
+    replacement_identity_supplied: boolean,
+  }),
+  page_count: integer,
+  geometry_policy: object({
+    native_coordinate_space: { const: "pdf-tools.media-box-top-left-points.v1" },
+    display_coordinate_space: { const: "pdf-tools.crop-box-rotated-top-left-points.v1" },
+    page_box_basis: { const: "MediaBox" },
+    crop_box_observed: { const: true },
+    rotation_policy: { const: "clockwise_quarter_turns" },
+  }),
+  pages: arrayOf(signingPageGeometry),
+  field_outcomes: arrayOf(signingFieldOutcome),
+  zones: arrayOf(signingPreparationZone),
+  existing_signature_observation: object({
+    present: boolean,
+    field_count: integer,
+    field_names: stringArray,
+    allow_resign: boolean,
+  }),
+  xfa_observation: object({
+    present: boolean,
+    force_xfa: boolean,
+    stripping_authorized: boolean,
+  }),
+  handoff_status: enumString(["ready_for_provider_mapping", "incomplete", "blocked"]),
+  missing_inputs: arrayOf(signingPreparationMissingInput),
+  limitations: stringArray,
+  provider_execution_status: { const: "not_requested" },
+  receipt_sha256: sha256Digest,
+});
 const signatureZone = object({
   type: enumString(["signature", "initials", "name", "date"]),
   label: string,
@@ -1515,6 +1625,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     pending_signatures: arrayOf(placement),
     filled_count: integer,
     fill_errors: arrayOf(fillError),
+    preparation_receipt: signingPreparationReceipt,
   }),
   apply_text: activeDocument({
     pdf_path: string,
