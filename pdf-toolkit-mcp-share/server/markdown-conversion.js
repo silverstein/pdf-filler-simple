@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.19.0",
+  version: "1.20.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.6.0";
 
@@ -1275,13 +1275,31 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
  * fabricated one.
  *
  * A page qualifies when at least one line the renderer emitted as flat
- * reading-order text carries all three of:
+ * reading-order text carries either a source-symbol proof or all three compact
+ * run conditions below.
+ *
+ *   M1 — merged source-symbol proof. A source item on a short left-to-right
+ *        line contains both an alphanumeric character and an unambiguous
+ *        mathematical glyph (`∑`, `∫`, `∞`, `∂`, `∇`, `≈`, `≠`, `∈`,
+ *        `∉`, `⊂`, `⊃`, `⊆`, `⊇`, `⊗`, or `⊕`). The proof is taken from the
+ *        exact retained source item, not inferred from a score over the line.
+ *        A lone glyph is not enough on this route; the existing structural-run
+ *        route below still handles a separately painted operator.
+ *   M2 — merged named-operator proof. One short source item consists only of
+ *        math-run characters and contains a literal `log`, `lim`, `max`,
+ *        `min`, `sum`, or `infinity`, an equals sign, and a separate
+ *        single-letter variable. Only `lim` and `infinity` stand alone; the
+ *        other names require function parentheses. Thus `lim x=0` and
+ *        `max(x)=5` are source evidence, while `max=5`, `max x=5`, `int x=5`,
+ *        `maximum(x)=5`, and `PATH=/tmp` remain ambiguous and do not qualify.
  *
  *   S1 — run shape. The line is upright left-to-right, at most
  *        MATH_RUN_MAX_LINE_CHARACTERS long, holds at least two structural
  *        source items, and *every* one of them is a compact math token
  *        (`compactMathItemText`: one letter, one digit, math punctuation, or
- *        the operator `log`) or a named operator word. This is the same "short
+ *        the operator `log`) or a named operator word. Named operators are
+ *        matched case-insensitively because mathematical papers commonly use
+ *        lowercase `lim`, `max`, and `min`. This is the same "short
  *        compact left-to-right math run" shape the bounded `log`-spacing repair
  *        already uses to recognise a nearby equation, reused verbatim rather
  *        than reinvented.
@@ -1302,10 +1320,15 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
  * can corroborate them, but they are not S2 evidence by themselves: `Max 5`
  * may be prose, a header, or a label. A mathematical symbol or the independent
  * relation-plus-font evidence is required rather than fabricating a loss
- * declaration from an ambiguous word.
+ * declaration from an ambiguous word. M1 and M2 close the source-item
+ * segmentation hole without guessing equation topology or changing the
+ * rendered body.
  *
  * Deliberately rejected as triggers:
  *
+ *   - `√` on the merged-symbol route. Real PDF tables also use this character
+ *     as a checkmark, so source text such as `A2 ≥ 80% √` is not sufficient
+ *     evidence of mathematics without another admitted route.
  *   - A raised or lowered run on its own. The renderer's own limitation prose
  *     states that a page sets a mathematical exponent and a footnote reference
  *     identically, so a raised run cannot distinguish the two and would emit
@@ -1321,9 +1344,13 @@ function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
  *     (TEXT_INTEGRITY_SUSPECT) which this one must not duplicate or weaken.
  *   - Character-class scoring over the rendered line text ("this looks mathy").
  *     That is a heuristic guess, not source evidence, and would put a numeric
- *     judgement where this vocabulary allows none.
+ *     judgement where this vocabulary allows none. The merged-item routes use
+ *     exact, enumerated source characters and a finite grammar instead.
  */
-const NAMED_MATH_OPERATOR = /^(?:Lim|Max|Min)$/u;
+const NAMED_MATH_OPERATOR = /^(?:log|lim|max|min|sum|int|infinity)$/iu;
+const MERGED_NAMED_MATH_OPERATOR = /(?:^|[^\p{L}])(log|lim|max|min|sum|infinity)(?=$|[^\p{L}])/iu;
+const SOURCE_MATH_SYMBOL = /[∑∫∞∂∇≈≠∈∉⊂⊃⊆⊇⊗⊕]/u;
+const MERGED_MATH_CHARACTERS = /^[\p{L}\p{M}\p{N}\s()[\]{},.;:+\-*/=^_]+$/u;
 const MATH_RUN_MAX_LINE_CHARACTERS = 80;
 const MATH_RUN_MIN_ITEMS = 2;
 const MATH_RELATION_MIN_ITEMS = 3;
@@ -1353,6 +1380,35 @@ function hasCrossFontRelationEvidence(items) {
   return false;
 }
 
+function hasMergedSourceMathSymbol(items) {
+  return items.some(item => {
+    const text = item.text.trim();
+    return text.length <= MATH_RUN_MAX_LINE_CHARACTERS
+      && SOURCE_MATH_SYMBOL.test(text)
+      && /[\p{L}\p{N}]/u.test(text);
+  });
+}
+
+function isMergedNamedOperatorEquation(value) {
+  const text = String(value).trim();
+  const operatorMatch = MERGED_NAMED_MATH_OPERATOR.exec(text);
+  if (text.length < 3 || text.length > MATH_RUN_MAX_LINE_CHARACTERS
+    || !text.includes("=")
+    || operatorMatch === null
+    || !MERGED_MATH_CHARACTERS.test(text)) return false;
+  const words = text.match(/\p{L}+/gu) ?? [];
+  const operator = operatorMatch[1].toLowerCase();
+  const operatorHasFunctionShape = operator === "lim" || operator === "infinity"
+    || new RegExp(`(?:^|[^\\p{L}])${operator}\\s*\\(`, "iu").test(text);
+  return operatorHasFunctionShape
+    && words.some(word => /^\p{L}$/u.test(word))
+    && words.every(word => /^\p{L}$/u.test(word) || NAMED_MATH_OPERATOR.test(word));
+}
+
+function hasMergedNamedOperatorEquation(items) {
+  return items.some(item => isMergedNamedOperatorEquation(item.text));
+}
+
 function rowHasSymbolicMathOperator(row) {
   return row.cells.some(item => /^[∑∫∞]$/u.test(item.text.trim()));
 }
@@ -1361,9 +1417,11 @@ function isUnreconstructedMathRow(row) {
   const { line } = row;
   if (line.direction !== "ltr" || line.text.length > MATH_RUN_MAX_LINE_CHARACTERS) return false;
   const items = mathRunStructuralItems(row);
+  if (items.length === 0 || items.some(item => containsUnsafeText(item.text))) return false;
+  if (hasMergedSourceMathSymbol(items) || hasMergedNamedOperatorEquation(items)) return true;
   if (items.length < MATH_RUN_MIN_ITEMS
     || !items.every(item => isMathRunItemText(item.text))
-    || items.some(item => containsUnsafeText(item.text))) return false;
+  ) return false;
   return rowHasSymbolicMathOperator(row) || hasCrossFontRelationEvidence(items);
 }
 

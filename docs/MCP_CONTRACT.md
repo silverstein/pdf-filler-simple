@@ -208,9 +208,18 @@ vector, failed, caller-limit-truncated, invalid-geometry, output-omission, and
 source-evidenced unreconstructed-mathematics cases are represented as typed
 gaps and cannot receive a complete conversion status. The
 `MATH_NOT_RECONSTRUCTED` code is emitted per page only when an unambiguous
-mathematical glyph occurs, or when a relation and independent cross-font
-evidence occur in the same compact source-item run; ambiguous operator words
-remain undeclared rather than guessed.
+mathematical glyph occurs, when a relation and independent cross-font evidence
+occur in the same compact source-item run, or when one retained source item
+matches a finite merged-equation grammar: an exact named operator, an equals
+sign, and a separate single-letter variable; ambiguous operator names require
+function parentheses. Named operators are
+case-insensitive so real lowercase `lim`, `max`, and `min` notation is covered.
+A lone operator word, `max=5`, `max x=5`, programming declarations such as
+`int x=5`, prose words containing an operator substring, generic configuration
+syntax, a standalone square-root character that may be a table checkmark, and
+raised or lowered text remain undeclared
+rather than guessed. These rules declare source-evidenced math but never
+reconstruct or alter the Markdown body.
 By default, the renderer also removes only source-evidenced page furniture in
 the extreme top or bottom 12 percent of a page: an explicit page-number or
 provenance line, or text repeated in the same band on at least two selected
