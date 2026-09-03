@@ -261,7 +261,10 @@ npm run eval:olmocr -- verify --bench-root /absolute/path/to/olmOCR-bench
 
 A full release-candidate run and score run on a POSIX Linux or macOS host and
 use exclusive, atomic, mode-`0600` JSON outputs outside the repository.
-Existing outputs are never overwritten:
+Before it reads the corpus or starts the candidate, the command requires the
+output parent to be a canonical existing directory and the output target to be
+absent. The same checks run again at publication, and existing outputs are never
+overwritten:
 
 ```bash
 npm run eval:olmocr -- run \

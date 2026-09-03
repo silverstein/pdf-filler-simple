@@ -1387,8 +1387,10 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
 
   it("rejects independent replay forgeries for every new evidence block and is deterministic", async () => {
     const fixture = fakeOperatorFixture([2, 1], [rectPath(4), null]);
-    const first = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
-    const second = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+    const sourceBytes = await pdfBytes(1);
+    const page = { ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] };
+    const first = await runFake([page], { pdfBytes: sourceBytes });
+    const second = await runFake([page], { pdfBytes: sourceBytes });
     expect(second.result).toEqual(first.result);
     const mutations = [
       layout => { layout.pages[0].ruled_rects.items[0].x += 1; },

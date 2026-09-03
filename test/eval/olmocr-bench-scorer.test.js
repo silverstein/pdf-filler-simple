@@ -15,6 +15,7 @@ import {
 } from "./olmocr-bench-scorer.js";
 import {
   canonicalJson,
+  runOlmocrBench,
   validateRunReport,
 } from "../../scripts/eval-olmocr-bench.mjs";
 
@@ -27,6 +28,36 @@ const FIXTURE_ROOT = path.resolve(
 );
 
 describe("olmOCR-bench directional scorer and retained compatibility profile", () => {
+  it("rejects an unavailable or occupied output before processing any document", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(process.env.TMPDIR ?? "/tmp", "pdf-tools-olmocr-output-"));
+    const root = await fs.realpath(temporaryRoot);
+    try {
+      const existingOutput = path.join(root, "existing.json");
+      await fs.writeFile(existingOutput, "occupied\n");
+      let documentsProcessed = 0;
+      const conversionRunner = async () => {
+        documentsProcessed += 1;
+        throw new Error("conversion runner must not start");
+      };
+
+      await expect(runOlmocrBench([
+        "run",
+        "--bench-root", path.join(root, "bench-does-not-need-to-exist"),
+        "--output", path.join(root, "missing-parent", "result.json"),
+      ], { runConversions: conversionRunner })).rejects.toThrow(/Output directory is unavailable or unsafe/u);
+      expect(documentsProcessed).toBe(0);
+
+      await expect(runOlmocrBench([
+        "run",
+        "--bench-root", path.join(root, "bench-does-not-need-to-exist"),
+        "--output", existingOutput,
+      ], { runConversions: conversionRunner })).rejects.toThrow(`Output already exists: ${existingOutput}`);
+      expect(documentsProcessed).toBe(0);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   const runReport = () => {
     const runtimeSources = [
       { path: "package.json", size_bytes: 1, sha256: "a".repeat(64) },
