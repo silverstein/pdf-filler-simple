@@ -4,10 +4,15 @@ import {
   validatePdfObservationSemantics,
 } from "./pdf-observations.js";
 
-export const PDF_COMPARISON_SCHEMA_VERSION = "1.0";
+// Bumped 0.1.0 -> 0.2.0 (schema 1.0 -> 1.1) when coverage began degrading on
+// unreadable IR page status (Bug 1) and repeated-page alignment ambiguity
+// (Bug 2). Coverage is wire-visible, so a change in what `supported` means is a
+// behavior change and earns a deliberate version bump. The schema const in
+// server/output-schemas.js mirrors both strings.
+export const PDF_COMPARISON_SCHEMA_VERSION = "1.1";
 export const PDF_COMPARISON_ENGINE = Object.freeze({
   name: "pdf-tools.deterministic-comparison",
-  version: "0.1.0",
+  version: "0.2.0",
   parser: Object.freeze({ name: "pdfjs-dist", version: "5.4.624" }),
   renderer: Object.freeze({
     name: "native-canvas",
@@ -37,15 +42,22 @@ export const PDF_COMPARISON_CHANNELS = Object.freeze([
 export const PDF_COMPARISON_SIDES = Object.freeze(["before", "after"]);
 
 // Reasons the comparison raises itself, rather than inheriting from a document
-// observation. `TEXT_EXTRACTION_TRUNCATED` is per side because it describes one
-// document's layout extraction; the visual reasons describe the run.
+// observation. The visual reasons and `REPEATED_PAGE_AMBIGUITY` describe the
+// run as a whole (repeated-page ambiguity is a property of the pair, not of one
+// side), so they are not side-prefixed. The sided reasons below each describe
+// one document's own layout extraction.
 const PDF_COMPARISON_OWN_COVERAGE_REASONS = Object.freeze([
   "VISUAL_NOT_REQUESTED",
   "VISUAL_RENDERER_UNAVAILABLE",
   "VISUAL_ALIGNED_PAGE_COMPARISON_SKIPPED",
+  "REPEATED_PAGE_AMBIGUITY",
 ]);
 const PDF_COMPARISON_OWN_SIDED_COVERAGE_REASONS = Object.freeze([
   "TEXT_EXTRACTION_TRUNCATED",
+  "TEXT_LAYER_FAILED",
+  "TEXT_LAYER_PARTIAL",
+  "EXTRACTION_FAILED",
+  "EXTRACTION_PARTIAL",
 ]);
 
 /*
@@ -271,7 +283,16 @@ function coverage(status = "supported", reasonCodes = []) {
   return { status, reason_codes: [...new Set(reasonCodes)].sort(compareCodePoints) };
 }
 
-export function derivePdfComparisonCoverage(documents, includeVisual) {
+// Never let a channel's status improve: unavailable outranks partial, which
+// outranks supported. Every degradation in this function goes through here so
+// the ordering is applied once.
+const COVERAGE_STATUS_RANK = Object.freeze({ supported: 0, partial: 1, unavailable: 2 });
+function raiseCoverage(entry, status, reasonCode) {
+  if (COVERAGE_STATUS_RANK[status] > COVERAGE_STATUS_RANK[entry.status]) entry.status = status;
+  entry.reason_codes.push(reasonCode);
+}
+
+export function derivePdfComparisonCoverage(documents, includeVisual, alignments = []) {
   const result = Object.fromEntries(PDF_COMPARISON_CHANNELS.map(channel => [channel, coverage()]));
   const mapping = {
     metadata: "metadata",
@@ -295,6 +316,41 @@ export function derivePdfComparisonCoverage(documents, includeVisual) {
         result[channel].status = "partial";
         result[channel].reason_codes.push(`${document.side.toUpperCase()}_TEXT_EXTRACTION_TRUNCATED`);
       }
+    }
+  }
+  // Bug 1: the truncation check above only catches a text layer the extractor
+  // deliberately cut short. It ignores the IR page's own `text_layer_status`
+  // and `extraction_status`, so a page whose text layer or extraction *failed*
+  // (or was only partial) — a scanned/image-only page, a page the parser could
+  // not read — still reported `supported` semantic and text coverage. The
+  // guiding rule is that we must never claim `supported` for a page the text
+  // channel could not read. A `failed` status means the page produced no
+  // observable text at all, so it contributes `unavailable` (matching how an
+  // unavailable observation channel already propagates here); a `partial`
+  // status contributes `partial`. Structure is left to the observation-derived
+  // `pages` channel above; only the two text-bearing channels degrade here.
+  for (const document of documents) {
+    const side = document.side.toUpperCase();
+    const conditions = [
+      ["unavailable", page => page.text_layer_status === "failed", `${side}_TEXT_LAYER_FAILED`],
+      ["unavailable", page => page.extraction_status === "failed", `${side}_EXTRACTION_FAILED`],
+      ["partial", page => page.text_layer_status === "partial", `${side}_TEXT_LAYER_PARTIAL`],
+      ["partial", page => page.extraction_status === "partial", `${side}_EXTRACTION_PARTIAL`],
+    ];
+    for (const [status, predicate, reasonCode] of conditions) {
+      if (!document.layout.pages.some(predicate)) continue;
+      for (const channel of ["semantic", "text"]) raiseCoverage(result[channel], status, reasonCode);
+    }
+  }
+  // Bug 2: a `repeated_ambiguous` alignment is a repeated/template page the
+  // engine refused to guess a partner for. Such pages are excluded from aligned
+  // text comparison and from inserted/deleted structure detection, so their
+  // content was never compared. Surfacing that as partial coverage on the three
+  // channels whose per-page comparison was skipped keeps every consumer honest;
+  // the ambiguity is a property of the pair, so the reason is not side-prefixed.
+  if (alignments.some(alignment => alignment.match_basis === "repeated_ambiguous")) {
+    for (const channel of ["semantic", "text", "structure"]) {
+      raiseCoverage(result[channel], "partial", "REPEATED_PAGE_AMBIGUITY");
     }
   }
   if (!includeVisual) {
@@ -765,6 +821,24 @@ function detectFormChanges(state, includeVisual, alignments) {
   const beforeByKey = grouped(beforeItems);
   const afterByKey = grouped(afterItems);
   let changes = 0;
+  // `appearance_state` (the widget `/AS`) is captured on every observation
+  // (output-schemas.js:263) but is NOT compared here, and adding it to this
+  // list would not help. For CHECKBOX widgets the pinned pdfjs 5.4.624 resolves
+  // `fieldValue` from `/AS`, so the observed `value` already reflects the
+  // displayed state (even when a file's `/V` and `/AS` disagree, `value`
+  // follows `/AS`); comparing `appearance_state` too would only duplicate that
+  // change. That redundancy is pinned by test/compare-pdfs-coverage.test.js.
+  //
+  // KNOWN GAP (not redundancy): for RADIO groups pdfjs does not expose
+  // per-widget `appearanceState`, and `fieldValue` is the shared parent `/V`
+  // for every widget. So `appearance_state` falls back to that same shared
+  // `fieldValue`, and a per-widget `/AS` change with an unchanged group `/V`
+  // changes neither `value` nor the fallback `appearance_state` — it is NOT
+  // detected. Adding `appearance_state` to `properties` cannot close this,
+  // because the observed value is the same fallback; detecting it requires
+  // capturing the real per-widget `/AS` in the observation layer. Tracked as a
+  // separate follow-up; named honestly in docs/MCP_CONTRACT.md rather than
+  // claimed as covered.
   const properties = ["type", "value", "default_value", "options", "flags", "widget_page",
     "widget_native_region", "widget_display_region", "rotation"];
   for (const key of new Set([...beforeByKey.keys(), ...afterByKey.keys()])) {
@@ -978,11 +1052,13 @@ export function buildPdfComparison({
 }) {
   validateDocumentInput(before, "before");
   validateDocumentInput(after, "after");
-  const coverageByChannel = derivePdfComparisonCoverage([before, after], includeVisual);
   const alignments = alignComparisonPages(before.layout.pages, after.layout.pages, {
     beforeCompositeAnchors: pageCompositeAnchors(before),
     afterCompositeAnchors: pageCompositeAnchors(after),
   });
+  // Coverage derivation needs the alignments so repeated-page ambiguity (Bug 2)
+  // degrades the affected channels in the engine, before any consumer sees it.
+  const coverageByChannel = derivePdfComparisonCoverage([before, after], includeVisual, alignments);
   const pairs = alignedPagePairs(before, after, alignments);
   const state = createState(mode, before, after);
   detectStructure(state, alignments);
@@ -1260,6 +1336,18 @@ export function validatePdfComparisonSemantics(payload) {
     .flatMap(([channel, value]) => value.reason_codes.map(reason => `${channel}:${reason}`))
     .filter((value, index, values) => values.indexOf(value) === index).sort(compareCodePoints);
   if (canonical(payload.limitations) !== canonical(expectedLimitations)) semanticError("limitations do not match coverage reasons");
+
+  // Bug 2 invariant: a repeated-ambiguous alignment means the engine did not
+  // compare those pages' semantic, text, or structure content, so none of those
+  // channels may still claim `supported`, and each must carry the typed reason.
+  if (payload.page_alignments.some(alignment => alignment.match_basis === "repeated_ambiguous")) {
+    for (const channel of ["semantic", "text", "structure"]) {
+      const entry = payload.coverage[channel];
+      if (entry.status === "supported" || !entry.reason_codes.includes("REPEATED_PAGE_AMBIGUITY")) {
+        semanticError(`${channel} coverage ignores repeated-page ambiguity`);
+      }
+    }
+  }
 
   const beforePages = new Set();
   const afterPages = new Set();

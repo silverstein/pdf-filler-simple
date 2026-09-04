@@ -36,8 +36,15 @@ describe("current PDF Tools compare_pdfs baseline", () => {
     for (const channel of ["semantic", "text", "structure", "form_field", "annotation", "metadata"]) {
       expect(scored.aggregate.channel_metrics[channel].f1, channel).toBe(1);
     }
-    expect(report.pairs.every(pair => Object.values(pair.channel_status)
-      .every(status => status === "supported"))).toBe(true);
+    // The seven authored PDFs contain mixed text/vector pages. compare_pdfs
+    // now truthfully marks the semantic and text channels partial; the frozen
+    // v1 evaluation schema projects that state to `unavailable` while keeping
+    // the channels that were fully observed supported.
+    expect(report.pairs.every(pair => pair.channel_status.semantic === "unavailable"
+      && pair.channel_status.text === "unavailable")).toBe(true);
+    for (const channel of ["structure", "form_field", "annotation", "metadata", "visual"]) {
+      expect(report.pairs.every(pair => pair.channel_status[channel] === "supported"), channel).toBe(true);
+    }
     expect(report.pairs.every(pair => pair.tool_calls === 6)).toBe(true);
     expect(report.pairs.every(pair => pair.iteration_costs.length === 5)).toBe(true);
     expect(report.pairs.every(pair => pair.peak_rss_bytes === null

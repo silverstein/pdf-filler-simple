@@ -141,13 +141,32 @@ parser, observation digest, page count, and pre/post immutability evidence for
 both inputs. It aligns pages without resolving repeated-page ambiguity, emits
 source-bound observations and typed changes across seven coverage channels,
 and keeps widgets under the form channel rather than ordinary annotations.
+Coverage is degraded, never inflated, for content the engine did not actually
+compare: a compared page whose Extraction IR reports a failed text layer or
+extraction drops the semantic and text channels to `unavailable`, a partial
+one drops them to `partial` (a scanned, image-only, or otherwise non-text
+page is therefore never reported as fully covered by the text channels), and
+any repeated/template page the aligner refuses to pair degrades the semantic,
+text, and structure channels to `partial` with a typed `REPEATED_PAGE_AMBIGUITY`
+reason rather than being silently skipped. A checkbox's displayed appearance
+state (`/AS`) is captured on the observation but intentionally not a separate
+compared property, because the parser folds it into the observed field value,
+so a change in it is already reported through that value rather than duplicated.
+This folding does not hold for radio groups: the parser reports the shared
+group value for every widget and does not expose per-widget `/AS`, so a change
+to an individual radio widget's displayed state while the group value is
+unchanged is **not currently detected** — a named coverage gap, not a claim of
+full form-appearance coverage.
 Evidence display regions preserve PDF.js viewport coordinates even when PDF
 content is clipped or lies partly outside the CropBox; consumers clip those
 regions for display rather than rewriting the source coordinates.
 Default-material suppressions are retained as reversible typed decisions;
-forensic mode reports them. A complete result means the requested channels
-were observed under this policy. It never sets an equivalence claim, and an
-empty reported set is not proof that the files are semantically identical.
+forensic mode reports them. A complete result means every requested channel was
+fully observed under this policy; a partial result names the channels and pages
+that were not. `no_reported_changes` is fail-closed: an empty change set is not
+reported as green when any requested channel is less than fully supported. It
+never sets an equivalence claim, and an empty reported set is not proof that the
+files are semantically identical.
 
 Comparison refuses page-cap prefixes, changed sources, malformed PDFs,
 encrypted inputs, output-cap truncation, unknown input fields, and invalid
