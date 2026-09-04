@@ -74,17 +74,51 @@ host and operating system being claimed.
 
 `server/lumin-oauth-loopback.js` is an internal native-app OAuth helper.
 `server/lumin-sign-v1-mapper.js` validates and maps the narrow request shape,
-and `server/lumin-sign-v1-transport.js` can execute one explicitly authorized
-direct-PDF request through an injected transport. All three are packaged for
-source parity, but none is registered as an MCP tool or runs merely because the
-server starts. The mapper itself continues to return `transport_allowed: false`.
+`server/lumin-sign-v1-transport.js` can execute one explicitly authorized
+direct-PDF request through an injected transport, and
+`server/lumin-sign-v1-operation.js` adds the private durable operation boundary.
+All four are packaged for source parity, but none is registered as an MCP tool
+or runs merely because the server starts. The mapper itself continues to return
+`transport_allowed: false`.
 Calling the transport requires a separate, short-lived authority object that
 binds the exact prepared-PDF receipt, PDF digest, complete validated request
-mapping, mapper contract, and participant identities. One invocation makes at
-most one request and never retries it automatically. Authority reuse is not
-durably prevented by this internal module,
-so a future public workflow must add persistent attempt consumption before it can
-claim one-use execution authority.
+mapping, mapper contract, and participant identities. The low-level transport
+also requires a pre-request hook; future product wiring must use the durable
+wrapper rather than treating an arbitrary hook as persistence. One invocation
+makes at most one request and never retries it automatically.
+
+The durable wrapper creates a private operation directory keyed by the exact
+execution-authority digest and atomically links a fully synced exclusive claim
+before the transport may enter its one provider request. A second process or
+restart cannot reuse that authority. A crash before the claim link leaves no
+provider authority consumed; a crash after it remains a consumed, inspectable
+unknown operation instead of becoming retry permission. Claims, outcomes, and
+observations become visible only as complete files. Created, rejected, and
+unknown outcomes are content-bound and retained with 0600 files under 0700
+directories on POSIX hosts. An unknown outcome has no safely bound provider
+request ID, so polling, artifact access, and webhooks cannot reconcile it
+automatically. Manual provider-side investigation is required without turning
+ambiguity into retry permission. Polling may
+append bounded status observations, and artifact access retains only the signed
+URL digest and expiry. The signed URL is returned only for immediate caller
+consumption and is never written. App webhooks are accepted only after a
+constant-time HMAC-SHA256 check over the exact raw body; the app signing secret
+and body are not persisted. Duplicate webhook delivery follows Lumin's published
+`signature_request_id` plus `event_type` idempotency rule, while conflicting
+bytes for the same pair fail closed.
+
+Lumin's current documentation limits app webhooks to private/server OAuth apps.
+The desktop integration is a public PKCE client, so this verifier is a disabled
+future server-side contract and is not a webhook capability of the current app.
+Authenticated polling is the current reconciliation path. Enabling app webhooks
+would require a separately approved server integration and signing-secret
+custody boundary.
+
+Portable Node cannot verify the required private Windows ACL or open NTFS
+directories for `fsync`. The durable wrapper therefore fails closed on Windows
+until a separately reviewed ACL-aware state adapter exists. This does not limit
+the existing cross-platform PDF tools because the Lumin modules remain internal
+and unregistered.
 
 Lumin currently registers `http://127.0.0.1/callback` for public PKCE clients
 and ignores the loopback port when matching the redirect. At authorization
@@ -105,10 +139,28 @@ commit `cd8ddd73e32c016038691dad21d0e4594c8eeebb`. It accepts an access token on
 as an ephemeral argument, injects no client secret, bounds the PDF and response,
 keeps the timeout active through response-body consumption, rejects redirects,
 and returns only a digest-bound provider identity receipt. A transport or
-response ambiguity is never retried. This is an internal vertical slice, not a
-shipped signing feature: there is no public tool, token store, webhook verifier,
-status lifecycle, cancellation path, or release claim yet. Tests inject a fake
-transport and must not make a live Lumin request.
+response ambiguity is never retried. Status and artifact calls likewise require
+an injected transport and ephemeral OAuth token. The lifecycle contract pins the
+official OpenAPI snapshot identity observed on 2026-09-04 plus Lumin's app
+webhook verification and idempotency documentation. It does not invent a webhook
+replay window or ordering guarantee that Lumin has not published.
+
+The exact official OpenAPI snapshot is retained as a compressed base64 test
+fixture and replayed through `verifyLuminSignV1OpenApiBytes` in CI. When Lumin
+publishes a new snapshot, fetch it to a temporary path, run
+`node scripts/verify-lumin-sign-v1-openapi.mjs <temporary-path>`, review every
+projected change, then replace the fixture and pinned identity together. Do not
+refresh the fixture or projection from the network during CI.
+
+This remains an internal vertical slice, not a shipped signing feature. There is
+no public tool, token store, callback listener, cancellation path, artifact
+download transaction, or release claim. The caller still owns secure state-root
+selection, OAuth token custody, webhook endpoint hosting, signing-secret custody,
+retention, and user-visible consent. The filesystem design assumes a trusted
+same-user and administrator boundary; it prevents accidental and concurrent
+reuse but is not a cryptographic defense against a hostile process with the same
+OS authority. Tests inject fake transports and must not make a live Lumin
+request.
 
 ## Data flow (ASCII map)
 

@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -11,6 +12,14 @@ import {
   LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION,
   LUMIN_SIGN_V1_DIRECT_UPLOAD_REFERENCE,
 } from "../server/lumin-sign-v1-transport.js";
+import {
+  executeDurableLuminSignV1DirectUpload,
+  inspectLuminSignV1Operation,
+  LUMIN_SIGN_V1_OPERATION_REFERENCES,
+  pollAndRecordLuminSignV1Status,
+  requestAndRecordLuminSignV1ArtifactAccess,
+  verifyAndRecordLuminSignV1Webhook,
+} from "../server/lumin-sign-v1-operation.js";
 
 const NOW_MS = Date.parse("2030-01-01T00:00:30.000Z");
 const PDF_BYTES = Buffer.from("%PDF-1.7\n%%EOF\n", "ascii");
@@ -163,6 +172,12 @@ function authority(receipt = preparationReceipt(), mapped = mapping()) {
   };
 }
 
+function authoritySha256(value) {
+  return createHash("sha256")
+    .update(`pdf-tools.lumin-sign-v1-execution-authority.v1\0${canonicalJson(value)}`)
+    .digest("hex");
+}
+
 function input() {
   const receipt = preparationReceipt();
   const mapped = structuredClone(mapping());
@@ -191,6 +206,7 @@ function successResponse(overrides = {}) {
 
 async function execute(value, fetchImpl) {
   return executeAuthorizedLuminSignV1DirectUpload(value, {
+    beforeRequest: async () => {},
     fetchImpl,
     nowMs: NOW_MS,
     timeoutMs: 5_000,
@@ -307,6 +323,38 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
     });
   });
 
+  it("requires a pre-request persistence hook before any provider entry", async () => {
+    let calls = 0;
+    await expect(executeAuthorizedLuminSignV1DirectUpload(input(), {
+      fetchImpl: async () => {
+        calls += 1;
+        return successResponse();
+      },
+    })).rejects.toMatchObject({ code: "LUMIN_TRANSPORT_INPUT_INVALID" });
+    expect(calls).toBe(0);
+  });
+
+  it("materializes the validated PDF before the asynchronous persistence hook", async () => {
+    const value = input();
+    const expectedBytes = Buffer.from(value.prepared_pdf_bytes);
+    const originalBuffer = value.prepared_pdf_bytes;
+    const result = await executeAuthorizedLuminSignV1DirectUpload(value, {
+      nowMs: NOW_MS,
+      timeoutMs: 5_000,
+      beforeRequest: async () => {
+        originalBuffer.fill(0x58);
+        value.prepared_pdf_bytes = Buffer.from("%PDF-substituted\n%%EOF\n");
+      },
+      fetchImpl: async (_url, options) => {
+        const uploaded = Buffer.from(await options.body.get("file").arrayBuffer());
+        expect(uploaded).toEqual(expectedBytes);
+        expect(createHash("sha256").update(uploaded).digest("hex")).toBe(PDF_SHA256);
+        return successResponse();
+      },
+    });
+    expect(result.request.prepared_document_sha256).toBe(PDF_SHA256);
+  });
+
   it("accepts RFC bearer padding without exposing the access token", async () => {
     const value = input();
     value.access_token = "synthetic-token==";
@@ -317,6 +365,7 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
   it("keeps the timeout active while reading the provider response body", async () => {
     let calls = 0;
     await expect(executeAuthorizedLuminSignV1DirectUpload(input(), {
+      beforeRequest: async () => {},
       nowMs: NOW_MS,
       timeoutMs: 5,
       fetchImpl: async (_url, options) => {
@@ -390,11 +439,14 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
 
   it("keeps the source and share transport bytes identical", async () => {
     const repoRoot = path.resolve(import.meta.dirname, "..");
-    const [source, share] = await Promise.all([
+    const [source, share, operationSource, operationShare] = await Promise.all([
       fs.readFile(path.join(repoRoot, "server/lumin-sign-v1-transport.js")),
       fs.readFile(path.join(repoRoot, "pdf-toolkit-mcp-share/server/lumin-sign-v1-transport.js")),
+      fs.readFile(path.join(repoRoot, "server/lumin-sign-v1-operation.js")),
+      fs.readFile(path.join(repoRoot, "pdf-toolkit-mcp-share/server/lumin-sign-v1-operation.js")),
     ]);
     expect(share.equals(source)).toBe(true);
+    expect(operationShare.equals(operationSource)).toBe(true);
   });
 
   it("keeps the provider transport internal and absent from both MCP entry points", async () => {
@@ -405,7 +457,601 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
     ]);
     expect(sourceIndex).not.toContain("lumin-sign-v1-transport");
     expect(sourceIndex).not.toContain("executeAuthorizedLuminSignV1DirectUpload");
+    expect(sourceIndex).not.toContain("lumin-sign-v1-operation");
+    expect(sourceIndex).not.toContain("executeDurableLuminSignV1DirectUpload");
     expect(shareIndex).not.toContain("lumin-sign-v1-transport");
     expect(shareIndex).not.toContain("executeAuthorizedLuminSignV1DirectUpload");
+    expect(shareIndex).not.toContain("lumin-sign-v1-operation");
+    expect(shareIndex).not.toContain("executeDurableLuminSignV1DirectUpload");
+  });
+});
+
+async function withLifecycleState(operation) {
+  const temporaryRoot = await fs.realpath(os.tmpdir());
+  const parent = await fs.mkdtemp(path.join(temporaryRoot, "pdf-tools-lumin-operation-"));
+  await fs.chmod(parent, 0o700);
+  const stateRoot = path.join(parent, "state");
+  try {
+    return await operation({ parent, stateRoot });
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+}
+
+async function createDurableOperation(stateRoot) {
+  const value = input();
+  const durable = await executeDurableLuminSignV1DirectUpload(value, {
+    stateRoot,
+    nowMs: NOW_MS,
+    timeoutMs: 5_000,
+    fetchImpl: async () => successResponse(),
+  });
+  return { authoritySha256: authoritySha256(value.execution_authority), durable, value };
+}
+
+describe("durable Lumin Sign v1 operation lifecycle", () => {
+  it("pins the exact OpenAPI identity and official lifecycle documentation used by the contract", () => {
+    expect(LUMIN_SIGN_V1_OPERATION_REFERENCES).toEqual({
+      observed_at: "2026-09-04",
+      openapi: {
+        url: "https://developers.luminpdf.com/tabs/api-reference/openapi.json",
+        sha256: "8842b7938870ea05b8c8d5869a33cc16b33b2eb0b8f2b1c60607203e39bfd037",
+        status_path: "/signature_request/{signature_request_id}",
+        artifact_path: "/signature_request/{signature_request_id}/file",
+        status_values: [
+          "APPROVED",
+          "CANCELLED",
+          "FAILED",
+          "NEED_TO_SIGN",
+          "REJECTED",
+          "WAITING_FOR_OTHERS",
+          "WAITING_FOR_PROCESSING",
+        ],
+        artifact_file_types: ["agreement", "coc", "merged"],
+      },
+      app_webhooks: {
+        url: "https://developers.luminpdf.com/tabs/guides/webhooks/app-webhooks",
+        signature_header: "X-Signature",
+        verification: "HMAC-SHA256 of the exact raw request body with the app signing secret",
+        supported_app_type: "private_server_only",
+        current_public_pkce_client_compatible: false,
+        activation_status: "future_server_contract_only",
+      },
+      webhook_overview: {
+        url: "https://developers.luminpdf.com/tabs/guides/webhooks/overview",
+        idempotency: "signature_request_id plus event_type",
+      },
+    });
+  });
+
+  it("durably consumes the exact authority before request entry and refuses every reuse", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      let calls = 0;
+      const first = await executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        timeoutMs: 5_000,
+        fetchImpl: async () => {
+          calls += 1;
+          const entered = await inspectLuminSignV1Operation({
+            state_root: stateRoot,
+            authority_sha256: authorityDigest,
+          });
+          expect(entered).toMatchObject({
+            authority_sha256: authorityDigest,
+            operation_status: "outcome_unknown",
+            automatic_retry_allowed: false,
+          });
+          return successResponse();
+        },
+      });
+      expect(calls).toBe(1);
+      expect(first.operation).toMatchObject({
+        operation_status: "request_created",
+        authority_sha256: authorityDigest,
+        attempt_count: 1,
+        automatic_retry_performed: false,
+      });
+      const operationPath = path.join(stateRoot, "lumin-sign-v1-operations", authorityDigest);
+      const retainedText = (await Promise.all([
+        fs.readFile(path.join(operationPath, "claim.v1.json"), "utf8"),
+        fs.readFile(path.join(operationPath, "outcome.v1.json"), "utf8"),
+      ])).join("\n");
+      expect(retainedText).not.toContain(ACCESS_TOKEN);
+      expect(retainedText).not.toContain("client@example.com");
+      expect(retainedText).not.toContain("audit@example.com");
+      expect((await fs.lstat(stateRoot)).mode & 0o777).toBe(0o700);
+      const claimStats = await fs.lstat(path.join(operationPath, "claim.v1.json"));
+      const outcomeStats = await fs.lstat(path.join(operationPath, "outcome.v1.json"));
+      expect(claimStats.mode & 0o777).toBe(0o600);
+      expect(outcomeStats.mode & 0o777).toBe(0o600);
+      expect(claimStats.nlink).toBe(1);
+      expect(outcomeStats.nlink).toBe(1);
+      await expect(fs.readdir(path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        ".staging",
+      ))).resolves.toEqual([]);
+
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        timeoutMs: 5_000,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_ALREADY_CONSUMED" });
+      expect(calls).toBe(1);
+    });
+  });
+
+  it("allows exactly one provider entry under concurrent same-authority callers", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      let calls = 0;
+      const invoke = () => executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        timeoutMs: 5_000,
+        fetchImpl: async () => {
+          calls += 1;
+          await new Promise(resolve => setTimeout(resolve, 10));
+          return successResponse();
+        },
+      });
+      const settled = await Promise.allSettled([invoke(), invoke()]);
+      expect(settled.filter(result => result.status === "fulfilled")).toHaveLength(1);
+      expect(settled.filter(result => result.status === "rejected")).toHaveLength(1);
+      expect(settled.find(result => result.status === "rejected").reason).toMatchObject({
+        code: "LUMIN_OPERATION_ALREADY_CONSUMED",
+      });
+      expect(calls).toBe(1);
+    });
+  });
+
+  it("retains an unknown create outcome and never turns it into retry authority", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        timeoutMs: 5_000,
+        fetchImpl: async () => {
+          calls += 1;
+          throw new Error("private transport cause");
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_CREATE_OUTCOME_UNKNOWN" });
+      expect(calls).toBe(1);
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).resolves.toMatchObject({
+        operation_status: "outcome_unknown",
+        automatic_retry_allowed: false,
+      });
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_ALREADY_CONSUMED" });
+      expect(calls).toBe(1);
+    });
+  });
+
+  it("retains a definite provider rejection without permitting a second create", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return new Response(JSON.stringify({ error: "synthetic rejection" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_CREATE_REJECTED" });
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).resolves.toMatchObject({ operation_status: "request_rejected" });
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_ALREADY_CONSUMED" });
+      expect(calls).toBe(1);
+    });
+  });
+
+  it("recovers an empty pre-claim directory without creating a second provider attempt", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      const operationsRoot = path.join(stateRoot, "lumin-sign-v1-operations");
+      await fs.mkdir(stateRoot, { mode: 0o700 });
+      await fs.mkdir(operationsRoot, { mode: 0o700 });
+      await fs.mkdir(path.join(operationsRoot, authorityDigest), { mode: 0o700 });
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).resolves.toMatchObject({
+        operation: { operation_status: "request_created" },
+      });
+      expect(calls).toBe(1);
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).resolves.toMatchObject({ operation_status: "request_created" });
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_ALREADY_CONSUMED" });
+      expect(calls).toBe(1);
+    });
+  });
+
+  it("rejects an outcome-shaped pre-claim directory before provider entry", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      const operationPath = path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+      );
+      await fs.mkdir(operationPath, { recursive: true, mode: 0o700 });
+      await fs.writeFile(
+        path.join(operationPath, "outcome.v1.json"),
+        "{\"operation_status\":\"forged_without_claim\"}\n",
+        { mode: 0o600 },
+      );
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_REJECTED" });
+      expect(calls).toBe(0);
+      await expect(fs.lstat(path.join(operationPath, "claim.v1.json")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("does not create durable state for a locally invalid request", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      value.prepared_pdf_bytes = Buffer.from("not a PDF");
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_TRANSPORT_INPUT_INVALID" });
+      expect(calls).toBe(0);
+      await expect(fs.lstat(stateRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("returns a stable typed error when private state cannot be established", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      await fs.mkdir(stateRoot, { mode: 0o755 });
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({
+        code: "LUMIN_OPERATION_STATE_REJECTED",
+        message: "LUMIN_OPERATION_STATE_REJECTED: The durable operation claim could not be committed before any provider call.",
+      });
+      expect(calls).toBe(0);
+    });
+  });
+
+  it("rejects retained state drift, unsafe modes, and symlink substitution", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const operationPath = path.join(stateRoot, "lumin-sign-v1-operations", authorityDigest);
+      const claimPath = path.join(operationPath, "claim.v1.json");
+      const original = await fs.readFile(claimPath);
+      await fs.writeFile(claimPath, Buffer.concat([original.subarray(0, -2), Buffer.from(" \n")]));
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_INVALID" });
+      await fs.writeFile(claimPath, original, { mode: 0o600 });
+      await fs.chmod(stateRoot, 0o755);
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_INVALID" });
+      await fs.chmod(stateRoot, 0o700);
+      const target = path.join(operationPath, "claim-target.json");
+      await fs.rename(claimPath, target);
+      await fs.symlink(target, claimPath);
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_INVALID" });
+    });
+  });
+
+  it("polls the exact created request and persists only a privacy-safe status observation", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      let calls = 0;
+      const observation = await pollAndRecordLuminSignV1Status({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        timeoutMs: 5_000,
+        fetchImpl: async (url, options) => {
+          calls += 1;
+          expect(url).toBe("https://api.luminpdf.com/v1/signature_request/sigreq.synthetic-123");
+          expect(options).toMatchObject({ method: "GET", redirect: "error" });
+          expect(options.headers.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
+          return new Response(JSON.stringify({
+            signature_request: {
+              signature_request_id: "sigreq.synthetic-123",
+              title: "Private title not retained",
+              status: "APPROVED",
+              signers: [{ email_address: "private@example.com" }],
+            },
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        },
+      });
+      expect(calls).toBe(1);
+      expect(observation).toMatchObject({
+        observation_source: "authenticated_poll",
+        signature_request_id: "sigreq.synthetic-123",
+        status: "APPROVED",
+        access_token_persisted: false,
+        response_body_persisted: false,
+      });
+      const operationBytes = await fs.readFile(path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+        `poll-${observation.observation_sha256}.v1.json`,
+      ), "utf8");
+      expect(operationBytes).not.toContain(ACCESS_TOKEN);
+      expect(operationBytes).not.toContain("private@example.com");
+      expect(operationBytes).not.toContain("Private title");
+    });
+  });
+
+  it("rejects ambiguous duplicate members and request-ID drift in status responses", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      for (const body of [
+        '{"signature_request":{"signature_request_id":"wrong","signature_request_id":"sigreq.synthetic-123","status":"APPROVED"}}',
+        '{"signature_request":{"signature_request_id":"wrong","status":"APPROVED"}}',
+      ]) {
+        await expect(pollAndRecordLuminSignV1Status({
+          access_token: ACCESS_TOKEN,
+          authority_sha256: authorityDigest,
+          state_root: stateRoot,
+        }, {
+          nowMs: NOW_MS + 1_000,
+          fetchImpl: async () => new Response(body, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        })).rejects.toMatchObject({ code: "LUMIN_STATUS_OBSERVATION_FAILED" });
+      }
+    });
+  });
+
+  it("records an artifact access identity without persisting the signed URL or token", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const signedUrl = "https://files.luminpdf.com/download/synthetic.pdf?token=private";
+      const artifact = await requestAndRecordLuminSignV1ArtifactAccess({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        file_type: "merged",
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: async (url, options) => {
+          expect(url).toBe("https://api.luminpdf.com/v1/signature_request/sigreq.synthetic-123/file?type=merged");
+          expect(options.headers.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
+          return new Response(JSON.stringify({
+            signed_url: signedUrl,
+            expires_at: Math.floor((NOW_MS + 1_000) / 1000) + 1_800,
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        },
+      });
+      expect(artifact.signed_url).toBe(signedUrl);
+      expect(artifact.persistence_policy).toBe("ephemeral_caller_consumption_only");
+      const observationPath = path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+        `artifact-merged-${artifact.observation.observation_sha256}.v1.json`,
+      );
+      const retained = await fs.readFile(observationPath, "utf8");
+      expect(retained).not.toContain(signedUrl);
+      expect(retained).not.toContain(ACCESS_TOKEN);
+      expect(retained).toContain(createHash("sha256").update(signedUrl).digest("hex"));
+    });
+  });
+
+  it.each([
+    ["non-HTTPS URL", { signed_url: "http://files.luminpdf.com/private", expires_at: Math.floor((NOW_MS + 1_000) / 1000) + 1_800 }],
+    ["overlong expiry", { signed_url: "https://files.luminpdf.com/private", expires_at: Math.floor((NOW_MS + 1_000) / 1000) + 3_600 }],
+  ])("rejects %s artifact access without persisting it", async (_label, providerBody) => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      await expect(requestAndRecordLuminSignV1ArtifactAccess({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        file_type: "agreement",
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: async () => new Response(JSON.stringify(providerBody), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      })).rejects.toMatchObject({ code: "LUMIN_ARTIFACT_OBSERVATION_FAILED" });
+      const observationsPath = path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+      );
+      await expect(fs.lstat(observationsPath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("verifies webhook HMAC over exact raw bytes and deduplicates by request plus event type", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const secret = Buffer.from("synthetic-app-signing-secret");
+      const rawBody = Buffer.from(JSON.stringify({
+        event: { event_time: NOW_MS + 2_000, event_type: "signature_request_approved" },
+        signature_request: {
+          signature_request_id: "sigreq.synthetic-123",
+          title: "Private title not retained",
+          status: "APPROVED",
+          signers: [{ email_address: "private@example.com" }],
+        },
+      }));
+      const signature = createHmac("sha256", secret).update(rawBody).digest("hex");
+      const first = await verifyAndRecordLuminSignV1Webhook({
+        authority_sha256: authorityDigest,
+        raw_body: rawBody,
+        signing_secret: secret,
+        state_root: stateRoot,
+        x_signature: signature,
+      }, { nowMs: NOW_MS + 3_000 });
+      const duplicate = await verifyAndRecordLuminSignV1Webhook({
+        authority_sha256: authorityDigest,
+        raw_body: rawBody,
+        signing_secret: secret,
+        state_root: stateRoot,
+        x_signature: signature,
+      }, { nowMs: NOW_MS + 4_000 });
+      expect(duplicate).toEqual(first);
+      expect(first).toMatchObject({
+        observation_source: "verified_app_webhook",
+        signature_request_id: "sigreq.synthetic-123",
+        event_type: "signature_request_approved",
+        status: "APPROVED",
+        signing_secret_persisted: false,
+        raw_body_persisted: false,
+      });
+      const retained = await fs.readFile(path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+        `webhook-${first.idempotency_sha256}.v1.json`,
+      ), "utf8");
+      expect(retained).not.toContain(secret.toString("utf8"));
+      expect(retained).not.toContain("private@example.com");
+      expect(retained).not.toContain("Private title");
+    });
+  });
+
+  it("rejects conflicting webhook bytes for an already consumed provider idempotency pair", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const secret = Buffer.from("synthetic-app-signing-secret");
+      const build = title => {
+        const rawBody = Buffer.from(JSON.stringify({
+          event: { event_time: NOW_MS + 2_000, event_type: "signature_request_approved" },
+          signature_request: {
+            signature_request_id: "sigreq.synthetic-123",
+            title,
+            status: "APPROVED",
+          },
+        }));
+        return {
+          authority_sha256: authorityDigest,
+          raw_body: rawBody,
+          signing_secret: secret,
+          state_root: stateRoot,
+          x_signature: createHmac("sha256", secret).update(rawBody).digest("hex"),
+        };
+      };
+      await expect(verifyAndRecordLuminSignV1Webhook(build("first"), {
+        nowMs: NOW_MS + 3_000,
+      })).resolves.toMatchObject({ event_type: "signature_request_approved" });
+      await expect(verifyAndRecordLuminSignV1Webhook(build("conflicting duplicate"), {
+        nowMs: NOW_MS + 4_000,
+      })).rejects.toMatchObject({ code: "LUMIN_WEBHOOK_REJECTED" });
+    });
+  });
+
+  it.each([
+    ["wrong HMAC", value => { value.x_signature = "f".repeat(64); }],
+    ["wrong request", value => {
+      const parsed = JSON.parse(value.raw_body.toString("utf8"));
+      parsed.signature_request.signature_request_id = "sigreq.other";
+      value.raw_body = Buffer.from(JSON.stringify(parsed));
+      value.x_signature = createHmac("sha256", value.signing_secret).update(value.raw_body).digest("hex");
+    }],
+    ["duplicate member", value => {
+      value.raw_body = Buffer.from('{"event":{"event_time":1893456032000,"event_type":"signature_request_approved"},"signature_request":{"signature_request_id":"wrong","signature_request_id":"sigreq.synthetic-123","status":"APPROVED"}}');
+      value.x_signature = createHmac("sha256", value.signing_secret).update(value.raw_body).digest("hex");
+    }],
+  ])("rejects %s webhook evidence without durable observation", async (_label, mutate) => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const signingSecret = Buffer.from("synthetic-app-signing-secret");
+      const rawBody = Buffer.from(JSON.stringify({
+        event: { event_time: NOW_MS + 2_000, event_type: "signature_request_approved" },
+        signature_request: { signature_request_id: "sigreq.synthetic-123", status: "APPROVED" },
+      }));
+      const value = {
+        authority_sha256: authorityDigest,
+        raw_body: rawBody,
+        signing_secret: signingSecret,
+        state_root: stateRoot,
+        x_signature: createHmac("sha256", signingSecret).update(rawBody).digest("hex"),
+      };
+      mutate(value);
+      await expect(verifyAndRecordLuminSignV1Webhook(value, {
+        nowMs: NOW_MS + 3_000,
+      })).rejects.toMatchObject({ code: "LUMIN_WEBHOOK_REJECTED" });
+    });
   });
 });

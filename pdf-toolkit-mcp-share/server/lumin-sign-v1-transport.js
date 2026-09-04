@@ -572,6 +572,8 @@ export async function executeAuthorizedLuminSignV1DirectUpload(input, options = 
   let validated;
   let accessToken;
   let fetchImpl;
+  let beforeRequest;
+  let preparedPdfBytes;
   let nowMs;
   let timeoutMs;
   try {
@@ -582,9 +584,11 @@ export async function executeAuthorizedLuminSignV1DirectUpload(input, options = 
       "preparation_receipt",
       "prepared_pdf_bytes",
     ]);
-    const validatedOptions = assertRecord(options, ["fetchImpl"], ["nowMs", "timeoutMs"]);
+    const validatedOptions = assertRecord(options, ["fetchImpl"], ["beforeRequest", "nowMs", "timeoutMs"]);
     fetchImpl = validatedOptions.fetchImpl;
     if (typeof fetchImpl !== "function") throw new Error("missing transport implementation");
+    beforeRequest = validatedOptions.beforeRequest;
+    if (typeof beforeRequest !== "function") throw new Error("missing pre-request hook");
     nowMs = validatedOptions.nowMs === undefined ? Date.now() : validatedOptions.nowMs;
     timeoutMs = validatedOptions.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : validatedOptions.timeoutMs;
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("invalid clock");
@@ -593,7 +597,7 @@ export async function executeAuthorizedLuminSignV1DirectUpload(input, options = 
     }
     accessToken = assertString(execution.access_token, { max: 8192, pattern: TOKEN_PATTERN });
     if (!Buffer.isBuffer(execution.prepared_pdf_bytes)) throw new Error("invalid PDF bytes");
-    const preparedPdfBytes = execution.prepared_pdf_bytes;
+    preparedPdfBytes = Buffer.from(execution.prepared_pdf_bytes);
     if (
       preparedPdfBytes.length < 5
       || preparedPdfBytes.length > MAX_PREPARED_PDF_BYTES
@@ -634,7 +638,7 @@ export async function executeAuthorizedLuminSignV1DirectUpload(input, options = 
   const form = new FormData();
   form.append(
     validated.mapping.request.file_transfer.form_field,
-    new Blob([input.prepared_pdf_bytes], { type: "application/pdf" }),
+    new Blob([preparedPdfBytes], { type: "application/pdf" }),
     validated.mapping.request.file_transfer.filename,
   );
   form.append("title", validated.mapping.body.title);
@@ -643,6 +647,26 @@ export async function executeAuthorizedLuminSignV1DirectUpload(input, options = 
   validated.mapping.viewers.forEach((person, index) => appendPerson(form, `viewers[${index}]`, person));
   form.append("use_text_tags", "true");
   form.append("signing_type", "SAME_TIME");
+
+  try {
+    await beforeRequest(deepFreeze(isolateOutput({
+      schema_version: 1,
+      provider: "lumin_sign",
+      action: "create_signature_request",
+      authority_sha256: validated.authority.authoritySha256,
+      preparation_receipt_sha256: validated.preparation.receiptSha256,
+      mapper_contract_sha256: validated.mapping.mapperContractSha256,
+      request_mapping_sha256: validated.mapping.requestMappingSha256,
+      prepared_document_sha256: validated.mapping.preparedDocumentSha256,
+      prepared_document_size_bytes: validated.mapping.preparedDocumentSizeBytes,
+      participant_ids: [...validated.mapping.participantIds],
+    })));
+  } catch {
+    throw transportError(
+      "LUMIN_OPERATION_STATE_REJECTED",
+      "The durable operation claim could not be committed before any provider call.",
+    );
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
