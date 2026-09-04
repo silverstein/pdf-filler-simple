@@ -501,18 +501,30 @@ async function evaluatorBinding() {
   };
 }
 
-async function writeAtomicExclusive(filename, value) {
+export async function validateOutputDestination(filename) {
+  if (!path.isAbsolute(filename) || path.resolve(filename) !== filename) {
+    throw new Error("Evaluation output must be an absolute normalized path");
+  }
   if (filename === REPO_ROOT || filename.startsWith(`${REPO_ROOT}${path.sep}`)) {
     throw new Error("Evaluation output must be written outside the repository");
   }
   const parent = path.dirname(filename);
-  await canonicalDirectory(parent, "output directory");
+  try {
+    await canonicalDirectory(parent, "output directory");
+  } catch (error) {
+    throw new Error(`Output directory is unavailable or unsafe: ${parent}`, { cause: error });
+  }
   try {
     await fs.lstat(filename);
     throw new Error(`Output already exists: ${filename}`);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+  return { filename, parent };
+}
+
+async function writeAtomicExclusive(filename, value) {
+  const { parent } = await validateOutputDestination(filename);
   const temporary = path.join(parent, `.${path.basename(filename)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
   const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
   const handle = await fs.open(temporary, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600);
@@ -946,11 +958,12 @@ function assertReferenceReplay(report, run, manifest) {
   };
 }
 
-async function main() {
+export async function runOlmocrBench(argv = process.argv.slice(2), dependencies = {}) {
   if (!["linux", "darwin"].includes(process.platform)) {
     throw new Error("The olmOCR-bench gate requires a POSIX Linux or macOS host");
   }
-  const options = parseArguments(process.argv.slice(2));
+  const options = parseArguments(argv);
+  if (options.outputPath) await validateOutputDestination(options.outputPath);
   const { manifest, binding: manifestBinding } = await loadManifest(options.manifestPath);
   const [corpus, evaluator] = await Promise.all([
     verifyCorpus(options.benchRoot, manifest),
@@ -972,7 +985,8 @@ async function main() {
   }
   if (options.command === "run") {
     const candidate = await candidateBinding();
-    const { selected, records } = await runConversions({
+    const conversionRunner = dependencies.runConversions ?? runConversions;
+    const { selected, records } = await conversionRunner({
       benchRoot: options.benchRoot,
       pdfs: corpus.pdfs,
       limit: options.limit,
@@ -1068,7 +1082,7 @@ async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch(error => {
+  runOlmocrBench().catch(error => {
     process.stderr.write(`${error.stack ?? error.message}\n`);
     process.exitCode = 1;
   });
