@@ -173,7 +173,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-09-02: add the provider-neutral signing-preparation receipt and align the
 // combined extraction/signing feature line to 0.13.0. Tool names remain stable;
 // the preparation input/output schemas and runtime server version change.
-const TOOL_CONTRACT_SHA256 = "40d9a66e994d1616d19db822d53d8d1213f9843d4a37e72fc1d134379a8b0b31";
+const TOOL_CONTRACT_SHA256 = "7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

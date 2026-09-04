@@ -104,7 +104,7 @@ created and no model or provider is called.
   status is `partial` and the Markdown declaration, bytes, and digest change.
 - `normalizations` reports page-number, running-header, running-footer, removed
   character, and affected-page counts.
-- Renderer identity is `pdf-tools.layout-markdown-renderer` `1.19.0`.
+- Renderer identity is `pdf-tools.layout-markdown-renderer` `1.20.0`.
 - Source and share-bundle implementations remain byte-identical.
 
 ## Acceptance

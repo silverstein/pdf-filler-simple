@@ -194,6 +194,25 @@ const CORPUS = {
       positionedTextItem(")", { top: 100, left: 131, width: 3.84, eol: true }),
     ],
   }],
+  lowercaseOperatorEquation: [{
+    items: [
+      positionedTextItem("x", { top: 100, left: 100, width: 6, fontName: "f2" }),
+      positionedTextItem("=", { top: 100, left: 107, width: 7 }),
+      positionedTextItem("lim", { top: 100, left: 115, width: 15, eol: true }),
+    ],
+  }],
+  mergedNamedOperatorEquation: [{
+    items: [textItem("lim x=0", { top: 100 })],
+  }],
+  mergedFunctionOperatorEquation: [{
+    items: [textItem("max(x)=5", { top: 100 })],
+  }],
+  mergedSymbolEquation: [{
+    items: [textItem("x ∈ X", { top: 100 })],
+  }],
+  mergedInlineMath: [{
+    items: [textItem("For any x ∈ X, choose y.", { top: 100 })],
+  }],
   relationEquation: [{
     items: [
       positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
@@ -220,6 +239,27 @@ const CORPUS = {
       positionedTextItem("=", { top: 100, left: 119, width: 7 }),
       positionedTextItem("5", { top: 100, left: 127, width: 5, eol: true }),
     ],
+  }],
+  mergedAmbiguousNamedRelation: [{
+    items: [textItem("max=5", { top: 100 })],
+  }],
+  mergedAmbiguousNamedVariable: [{
+    items: [textItem("max x=5", { top: 100 })],
+  }],
+  mergedProgrammingDeclaration: [{
+    items: [textItem("int x=5", { top: 100 })],
+  }],
+  mergedOperatorSubstring: [{
+    items: [textItem("maximum(x)=5", { top: 100 })],
+  }],
+  mergedConfiguration: [{
+    items: [textItem("PATH=/tmp", { top: 100 })],
+  }],
+  loneMergedSymbol: [{
+    items: [textItem("∑", { top: 100 })],
+  }],
+  checkmarkStatus: [{
+    items: [textItem("A2 ≥ 80% √", { top: 100 })],
   }],
   genericCrossFontRelation: [{
     items: [
@@ -275,6 +315,16 @@ const PRE_CHANGE_BODIES = {
   "footnoteMarker:compact": "<!-- PDF page 1 -->\n\nThe measured throughput was stable²\nacross every observed trial in the study.",
   namedOperatorEquation: "<!-- PDF page 1 -->\n\nC= Lim\nlog N(T)",
   "namedOperatorEquation:compact": "<!-- PDF page 1 -->\n\nC= Lim\nlog N(T)",
+  lowercaseOperatorEquation: "<!-- PDF page 1 -->\n\nx=lim",
+  "lowercaseOperatorEquation:compact": "<!-- PDF page 1 -->\n\nx=lim",
+  mergedNamedOperatorEquation: "<!-- PDF page 1 -->\n\nlim x=0",
+  "mergedNamedOperatorEquation:compact": "<!-- PDF page 1 -->\n\nlim x=0",
+  mergedFunctionOperatorEquation: "<!-- PDF page 1 -->\n\nmax(x)=5",
+  "mergedFunctionOperatorEquation:compact": "<!-- PDF page 1 -->\n\nmax(x)=5",
+  mergedSymbolEquation: "<!-- PDF page 1 -->\n\nx ∈ X",
+  "mergedSymbolEquation:compact": "<!-- PDF page 1 -->\n\nx ∈ X",
+  mergedInlineMath: "<!-- PDF page 1 -->\n\nFor any x ∈ X, choose y.",
+  "mergedInlineMath:compact": "<!-- PDF page 1 -->\n\nFor any x ∈ X, choose y.",
   relationEquation: "<!-- PDF page 1 -->\n\nlogN=5",
   "relationEquation:compact": "<!-- PDF page 1 -->\n\nlogN=5",
   compactRunWithoutMarker: "<!-- PDF page 1 -->\n\nlogN",
@@ -283,6 +333,20 @@ const PRE_CHANGE_BODIES = {
   "namedOperatorWithoutRelation:compact": "<!-- PDF page 1 -->\n\nMax5",
   sameFontNamedRelation: "<!-- PDF page 1 -->\n\nMax=5",
   "sameFontNamedRelation:compact": "<!-- PDF page 1 -->\n\nMax=5",
+  mergedAmbiguousNamedRelation: "<!-- PDF page 1 -->\n\nmax=5",
+  "mergedAmbiguousNamedRelation:compact": "<!-- PDF page 1 -->\n\nmax=5",
+  mergedAmbiguousNamedVariable: "<!-- PDF page 1 -->\n\nmax x=5",
+  "mergedAmbiguousNamedVariable:compact": "<!-- PDF page 1 -->\n\nmax x=5",
+  mergedProgrammingDeclaration: "<!-- PDF page 1 -->\n\nint x=5",
+  "mergedProgrammingDeclaration:compact": "<!-- PDF page 1 -->\n\nint x=5",
+  mergedOperatorSubstring: "<!-- PDF page 1 -->\n\nmaximum(x)=5",
+  "mergedOperatorSubstring:compact": "<!-- PDF page 1 -->\n\nmaximum(x)=5",
+  mergedConfiguration: "<!-- PDF page 1 -->\n\nPATH=/tmp",
+  "mergedConfiguration:compact": "<!-- PDF page 1 -->\n\nPATH=/tmp",
+  loneMergedSymbol: "<!-- PDF page 1 -->\n\n∑",
+  "loneMergedSymbol:compact": "<!-- PDF page 1 -->\n\n∑",
+  checkmarkStatus: "<!-- PDF page 1 -->\n\nA2 ≥ 80% √",
+  "checkmarkStatus:compact": "<!-- PDF page 1 -->\n\nA2 ≥ 80% √",
   genericCrossFontRelation: "<!-- PDF page 1 -->\n\nA=B",
   "genericCrossFontRelation:compact": "<!-- PDF page 1 -->\n\nA=B",
   symbolicOperatorEquation: "<!-- PDF page 1 -->\n\nκ∑",
@@ -347,6 +411,11 @@ describe("MATH_NOT_RECONSTRUCTED typed gap", () => {
   it("declares compact runs proven by a math symbol or a cross-font relation", async () => {
     for (const name of [
       "namedOperatorEquation",
+      "lowercaseOperatorEquation",
+      "mergedNamedOperatorEquation",
+      "mergedFunctionOperatorEquation",
+      "mergedSymbolEquation",
+      "mergedInlineMath",
       "relationEquation",
       "genericCrossFontRelation",
       "symbolicOperatorEquation",
@@ -363,6 +432,13 @@ describe("MATH_NOT_RECONSTRUCTED typed gap", () => {
       "compactRunWithoutMarker",
       "namedOperatorWithoutRelation",
       "sameFontNamedRelation",
+      "mergedAmbiguousNamedRelation",
+      "mergedAmbiguousNamedVariable",
+      "mergedProgrammingDeclaration",
+      "mergedOperatorSubstring",
+      "mergedConfiguration",
+      "loneMergedSymbol",
+      "checkmarkStatus",
       "ruledTable",
     ]) {
       const result = renderPdfLayoutToMarkdown(await layoutFor(name));
