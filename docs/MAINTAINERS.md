@@ -83,9 +83,13 @@ or runs merely because the server starts. The mapper itself continues to return
 Calling the transport requires a separate, short-lived authority object that
 binds the exact prepared-PDF receipt, PDF digest, complete validated request
 mapping, mapper contract, and participant identities. The low-level transport
-also requires a pre-request hook; future product wiring must use the durable
-wrapper rather than treating an arbitrary hook as persistence. One invocation
-makes at most one request and never retries it automatically.
+requires the pre-request hook to return a content-bound acknowledgement of the
+exact durable claim file. A no-op hook, mismatched claim, or invalid
+acknowledgement digest fails before provider entry. This keyless acknowledgement
+binds content but cannot prove that an arbitrary callback persisted it. Future
+product wiring must therefore use the durable wrapper, which creates and reopens
+the acknowledged file.
+One invocation makes at most one request and never retries it automatically.
 
 The durable wrapper creates a private operation directory keyed by the exact
 execution-authority digest and atomically links a fully synced exclusive claim
@@ -95,13 +99,25 @@ provider authority consumed; a crash after it remains a consumed, inspectable
 unknown operation instead of becoming retry permission. Claims, outcomes, and
 observations become visible only as complete files. Created, rejected, and
 unknown outcomes are content-bound and retained with 0600 files under 0700
-directories on POSIX hosts. An unknown outcome has no safely bound provider
-request ID, so polling, artifact access, and webhooks cannot reconcile it
+directories owned by the current POSIX user. Incomplete staging files younger
+than five minutes are left untouched so reconciliation cannot race an active
+writer. A fully linked stage is safely removed, while an older unlinked stage
+is moved into a private quarantine on the next operation. Quarantine is retained
+for operator review rather than silently discarded, and its contents are inert
+to execution. An unknown outcome has no
+safely bound provider request ID, so polling, artifact access, and webhooks
+cannot reconcile it
 automatically. Manual provider-side investigation is required without turning
-ambiguity into retry permission. Polling may
-append bounded status observations, and artifact access retains only the signed
-URL digest and expiry. The signed URL is returned only for immediate caller
-consumption and is never written. App webhooks are accepted only after a
+ambiguity into retry permission. Status and artifact APIs distinguish that
+terminally unreconcilable state from retry-safe failures while reading an
+already created request. A read while the create outcome is still being retained
+or was never retained is explicitly `outcome_not_retained`; the state cannot
+distinguish those cases, but re-reading is safe. Typed errors carry `reconciliation_class`,
+`read_retry_safe`, and the invariant `create_retry_allowed: false`. Retrying
+those read-only observations cannot submit a second signing request. Polling
+may append bounded status observations, and artifact access retains only the
+signed URL digest and expiry. The signed URL is returned only for immediate
+caller consumption and is never written. App webhooks are accepted only after a
 constant-time HMAC-SHA256 check over the exact raw body; the app signing secret
 and body are not persisted. Duplicate webhook delivery follows Lumin's published
 `signature_request_id` plus `event_type` idempotency rule, while conflicting

@@ -2,7 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256,
   mapLuminSignV1SignatureRequest,
@@ -204,9 +204,54 @@ function successResponse(overrides = {}) {
   });
 }
 
+function durableClaimAcknowledgement(requestIdentity, startedAt = new Date(NOW_MS).toISOString()) {
+  const claimUnsigned = {
+    schema_version: 1,
+    provider: "lumin_sign",
+    action: "create_signature_request",
+    operation_status: "authority_consumed",
+    automatic_retry_allowed: false,
+    authority_sha256: requestIdentity.authority_sha256,
+    preparation_receipt_sha256: requestIdentity.preparation_receipt_sha256,
+    mapper_contract_sha256: requestIdentity.mapper_contract_sha256,
+    request_mapping_sha256: requestIdentity.request_mapping_sha256,
+    prepared_document_sha256: requestIdentity.prepared_document_sha256,
+    prepared_document_size_bytes: requestIdentity.prepared_document_size_bytes,
+    participant_ids: Array.from(requestIdentity.participant_ids),
+    started_at: startedAt,
+  };
+  const claimSha256 = createHash("sha256")
+    .update(`pdf-tools.lumin-sign-v1-operation-claim.v1\0${canonicalJson(claimUnsigned)}`)
+    .digest("hex");
+  const claimBytes = Buffer.from(`${canonicalJson({ ...claimUnsigned, claim_sha256: claimSha256 })}\n`);
+  const unsigned = {
+    schema_version: 1,
+    provider: "lumin_sign",
+    action: "create_signature_request",
+    commit_status: "durable_claim_committed",
+    authority_sha256: requestIdentity.authority_sha256,
+    preparation_receipt_sha256: requestIdentity.preparation_receipt_sha256,
+    mapper_contract_sha256: requestIdentity.mapper_contract_sha256,
+    request_mapping_sha256: requestIdentity.request_mapping_sha256,
+    prepared_document_sha256: requestIdentity.prepared_document_sha256,
+    prepared_document_size_bytes: requestIdentity.prepared_document_size_bytes,
+    participant_ids: Array.from(requestIdentity.participant_ids),
+    claim_started_at: startedAt,
+    claim_sha256: claimSha256,
+    claim_file_sha256: createHash("sha256").update(claimBytes).digest("hex"),
+    claim_file_size_bytes: claimBytes.length,
+  };
+  return {
+    ...unsigned,
+    acknowledgement_sha256: createHash("sha256")
+      .update(`pdf-tools.lumin-sign-v1-durable-claim-acknowledgement.v1\0${canonicalJson(unsigned)}`)
+      .digest("hex"),
+  };
+}
+
 async function execute(value, fetchImpl) {
   return executeAuthorizedLuminSignV1DirectUpload(value, {
-    beforeRequest: async () => {},
+    beforeRequest: async requestIdentity => durableClaimAcknowledgement(requestIdentity),
     fetchImpl,
     nowMs: NOW_MS,
     timeoutMs: 5_000,
@@ -272,6 +317,8 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
         request_mapping_sha256: createHash("sha256")
           .update(`pdf-tools.lumin-sign-v1-request-mapping.v1\0${canonicalJson(mapping())}`)
           .digest("hex"),
+        durable_claim_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        durable_claim_acknowledgement_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
       response: {
         status_code: 201,
@@ -334,6 +381,27 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
     expect(calls).toBe(0);
   });
 
+  it("rejects a no-op or drifted durable-claim acknowledgement before provider entry", async () => {
+    for (const beforeRequest of [
+      async () => undefined,
+      async requestIdentity => ({
+        ...durableClaimAcknowledgement(requestIdentity),
+        claim_file_sha256: "f".repeat(64),
+      }),
+    ]) {
+      let calls = 0;
+      await expect(executeAuthorizedLuminSignV1DirectUpload(input(), {
+        beforeRequest,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+        nowMs: NOW_MS,
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_REJECTED" });
+      expect(calls).toBe(0);
+    }
+  });
+
   it("materializes the validated PDF before the asynchronous persistence hook", async () => {
     const value = input();
     const expectedBytes = Buffer.from(value.prepared_pdf_bytes);
@@ -341,9 +409,10 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
     const result = await executeAuthorizedLuminSignV1DirectUpload(value, {
       nowMs: NOW_MS,
       timeoutMs: 5_000,
-      beforeRequest: async () => {
+      beforeRequest: async requestIdentity => {
         originalBuffer.fill(0x58);
         value.prepared_pdf_bytes = Buffer.from("%PDF-substituted\n%%EOF\n");
+        return durableClaimAcknowledgement(requestIdentity);
       },
       fetchImpl: async (_url, options) => {
         const uploaded = Buffer.from(await options.body.get("file").arrayBuffer());
@@ -365,7 +434,7 @@ describe("executeAuthorizedLuminSignV1DirectUpload", () => {
   it("keeps the timeout active while reading the provider response body", async () => {
     let calls = 0;
     await expect(executeAuthorizedLuminSignV1DirectUpload(input(), {
-      beforeRequest: async () => {},
+      beforeRequest: async requestIdentity => durableClaimAcknowledgement(requestIdentity),
       nowMs: NOW_MS,
       timeoutMs: 5,
       fetchImpl: async (_url, options) => {
@@ -541,8 +610,11 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
           });
           expect(entered).toMatchObject({
             authority_sha256: authorityDigest,
-            operation_status: "outcome_unknown",
+            operation_status: "authority_consumed",
+            outcome_status: "not_retained",
+            reconciliation_class: "outcome_not_retained",
             automatic_retry_allowed: false,
+            create_retry_allowed: false,
           });
           return successResponse();
         },
@@ -584,6 +656,31 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
           return successResponse();
         },
       })).rejects.toMatchObject({ code: "LUMIN_OPERATION_ALREADY_CONSUMED" });
+      expect(calls).toBe(1);
+    });
+  });
+
+  it("uses one exact clock observation for the durable claim and transport acknowledgement", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const clock = vi.spyOn(Date, "now")
+        .mockReturnValueOnce(NOW_MS)
+        .mockReturnValueOnce(NOW_MS + 1)
+        .mockReturnValue(NOW_MS + 2);
+      let calls = 0;
+      try {
+        await expect(executeDurableLuminSignV1DirectUpload(input(), {
+          stateRoot,
+          timeoutMs: 5_000,
+          fetchImpl: async () => {
+            calls += 1;
+            return successResponse();
+          },
+        })).resolves.toMatchObject({
+          operation: { operation_status: "request_created" },
+        });
+      } finally {
+        clock.mockRestore();
+      }
       expect(calls).toBe(1);
     });
   });
@@ -780,6 +877,183 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
     });
   });
 
+  it("rejects private state owned by a different effective POSIX user before provider entry", async () => {
+    if (process.platform === "win32" || typeof process.getuid !== "function") return;
+    await withLifecycleState(async ({ stateRoot }) => {
+      const userIdMethod = typeof process.geteuid === "function" ? "geteuid" : "getuid";
+      const actualUid = process[userIdMethod]();
+      const getuid = vi.spyOn(process, userIdMethod).mockReturnValue(actualUid + 1);
+      let calls = 0;
+      try {
+        await expect(executeDurableLuminSignV1DirectUpload(input(), {
+          stateRoot,
+          nowMs: NOW_MS,
+          fetchImpl: async () => {
+            calls += 1;
+            return successResponse();
+          },
+        })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_REJECTED" });
+      } finally {
+        getuid.mockRestore();
+      }
+      expect(calls).toBe(0);
+    });
+  });
+
+  it("quarantines a stale uncommitted stage without blocking a new exact authority", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const operationsRoot = path.join(stateRoot, "lumin-sign-v1-operations");
+      const stagingRoot = path.join(operationsRoot, ".staging");
+      await fs.mkdir(stateRoot, { mode: 0o700 });
+      await fs.mkdir(operationsRoot, { mode: 0o700 });
+      await fs.mkdir(stagingRoot, { mode: 0o700 });
+      const stageName = "claim.v1.json-11111111-1111-4111-8111-111111111111.tmp";
+      const stagePath = path.join(stagingRoot, stageName);
+      await fs.writeFile(stagePath, "{\"stale\":true}\n", { mode: 0o600 });
+      await fs.utimes(stagePath, new Date(0), new Date(0));
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).resolves.toMatchObject({ operation: { operation_status: "request_created" } });
+      expect(calls).toBe(1);
+      await expect(fs.lstat(stagePath)).rejects.toMatchObject({ code: "ENOENT" });
+      const quarantinedPath = path.join(stagingRoot, ".quarantine", stageName);
+      const quarantined = await fs.lstat(quarantinedPath);
+      expect(quarantined.isFile()).toBe(true);
+      expect(quarantined.mode & 0o777).toBe(0o600);
+      expect(quarantined.nlink).toBe(1);
+    });
+  });
+
+  it("reconciles one stale stage concurrently without blocking distinct authorities", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const operationsRoot = path.join(stateRoot, "lumin-sign-v1-operations");
+      const stagingRoot = path.join(operationsRoot, ".staging");
+      await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      const stageName = "claim.v1.json-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.tmp";
+      const stagePath = path.join(stagingRoot, stageName);
+      await fs.writeFile(stagePath, "{\"stale\":true}\n", { mode: 0o600 });
+      await fs.utimes(stagePath, new Date(0), new Date(0));
+      const values = Array.from({ length: 4 }, (_, index) => {
+        const value = input();
+        value.execution_authority.approved_at = new Date(
+          Date.parse("2030-01-01T00:00:00.000Z") + index,
+        ).toISOString();
+        return value;
+      });
+      let calls = 0;
+      const settled = await Promise.allSettled(values.map(value =>
+        executeDurableLuminSignV1DirectUpload(value, {
+          stateRoot,
+          nowMs: NOW_MS,
+          fetchImpl: async () => {
+            calls += 1;
+            return successResponse();
+          },
+        })));
+      expect(settled.every(result => result.status === "fulfilled")).toBe(true);
+      expect(calls).toBe(4);
+      await expect(fs.lstat(stagePath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.lstat(path.join(stagingRoot, ".quarantine", stageName)))
+        .resolves.toMatchObject({ nlink: 1 });
+    });
+  });
+
+  it("treats quarantine contents as inert operator evidence", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const quarantineRoot = path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        ".staging",
+        ".quarantine",
+      );
+      await fs.mkdir(quarantineRoot, { recursive: true, mode: 0o700 });
+      const notePath = path.join(quarantineRoot, "operator-review.txt");
+      await fs.writeFile(notePath, "retained for manual review\n", { mode: 0o600 });
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).resolves.toMatchObject({ operation: { operation_status: "request_created" } });
+      expect(calls).toBe(1);
+      await expect(fs.readFile(notePath, "utf8")).resolves.toBe("retained for manual review\n");
+    });
+  });
+
+  it("rejects a staging timestamp materially in the future", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const stagingRoot = path.join(stateRoot, "lumin-sign-v1-operations", ".staging");
+      await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      const stagePath = path.join(
+        stagingRoot,
+        "claim.v1.json-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.tmp",
+      );
+      await fs.writeFile(stagePath, "{\"future\":true}\n", { mode: 0o600 });
+      const future = new Date(Date.now() + 2 * 60 * 1000);
+      await fs.utimes(stagePath, future, future);
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_REJECTED" });
+      expect(calls).toBe(0);
+    });
+  });
+
+  it("leaves a fresh unlinked stage untouched so reconciliation cannot race its writer", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const stagingRoot = path.join(stateRoot, "lumin-sign-v1-operations", ".staging");
+      await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      const stageName = "outcome.v1.json-22222222-2222-4222-8222-222222222222.tmp";
+      const stagePath = path.join(stagingRoot, stageName);
+      await fs.writeFile(stagePath, "{\"active\":true}\n", { mode: 0o600 });
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).resolves.toMatchObject({ operation: { operation_status: "request_created" } });
+      expect(calls).toBe(1);
+      await expect(fs.readFile(stagePath, "utf8")).resolves.toBe("{\"active\":true}\n");
+      await expect(fs.lstat(path.join(stagingRoot, ".quarantine")))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("rejects unsafe staging entries before a provider call", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const stagingRoot = path.join(stateRoot, "lumin-sign-v1-operations", ".staging");
+      await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      await fs.writeFile(path.join(stagingRoot, "unexpected.txt"), "unsafe\n", { mode: 0o600 });
+      let calls = 0;
+      await expect(executeDurableLuminSignV1DirectUpload(input(), {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          calls += 1;
+          return successResponse();
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_OPERATION_STATE_REJECTED" });
+      expect(calls).toBe(0);
+    });
+  });
+
   it("rejects retained state drift, unsafe modes, and symlink substitution", async () => {
     await withLifecycleState(async ({ stateRoot }) => {
       const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
@@ -855,6 +1129,147 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
     });
   });
 
+  it("distinguishes an unreconcilable create from retry-safe status and artifact reads", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      await expect(executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          throw new Error("synthetic ambiguous create");
+        },
+      })).rejects.toMatchObject({ code: "LUMIN_CREATE_OUTCOME_UNKNOWN" });
+      let readCalls = 0;
+      await expect(pollAndRecordLuminSignV1Status({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: async () => {
+          readCalls += 1;
+          return new Response("{}");
+        },
+      })).rejects.toMatchObject({
+        code: "LUMIN_OPERATION_UNRECONCILABLE",
+        reconciliation_class: "terminal_unreconcilable",
+        read_retry_safe: false,
+        create_retry_allowed: false,
+      });
+      await expect(requestAndRecordLuminSignV1ArtifactAccess({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        file_type: "merged",
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: async () => {
+          readCalls += 1;
+          return new Response("{}");
+        },
+      })).rejects.toMatchObject({
+        code: "LUMIN_OPERATION_UNRECONCILABLE",
+        reconciliation_class: "terminal_unreconcilable",
+        read_retry_safe: false,
+        create_retry_allowed: false,
+      });
+      expect(readCalls).toBe(0);
+    });
+
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      let readCalls = 0;
+      const unavailable = async () => {
+        readCalls += 1;
+        throw new Error("synthetic read outage");
+      };
+      await expect(pollAndRecordLuminSignV1Status({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: unavailable,
+      })).rejects.toMatchObject({
+        code: "LUMIN_STATUS_OBSERVATION_RETRYABLE",
+        reconciliation_class: "retryable_read_failure",
+        read_retry_safe: true,
+        create_retry_allowed: false,
+      });
+      await expect(requestAndRecordLuminSignV1ArtifactAccess({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        file_type: "merged",
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: unavailable,
+      })).rejects.toMatchObject({
+        code: "LUMIN_ARTIFACT_OBSERVATION_RETRYABLE",
+        reconciliation_class: "retryable_read_failure",
+        read_retry_safe: true,
+        create_retry_allowed: false,
+      });
+      expect(readCalls).toBe(2);
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).resolves.toMatchObject({ operation_status: "request_created" });
+    });
+  });
+
+  it("classifies reads during an in-flight create as safe to retry without allowing create retry", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const value = input();
+      const authorityDigest = authoritySha256(value.execution_authority);
+      let releaseCreate;
+      let markEntered;
+      const entered = new Promise(resolve => { markEntered = resolve; });
+      const creation = executeDurableLuminSignV1DirectUpload(value, {
+        stateRoot,
+        nowMs: NOW_MS,
+        fetchImpl: async () => {
+          markEntered();
+          return new Promise(resolve => { releaseCreate = () => resolve(successResponse()); });
+        },
+      });
+      await entered;
+      let readCalls = 0;
+      for (const read of [
+        () => pollAndRecordLuminSignV1Status({
+          access_token: ACCESS_TOKEN,
+          authority_sha256: authorityDigest,
+          state_root: stateRoot,
+        }, {
+          nowMs: NOW_MS + 1,
+          fetchImpl: async () => { readCalls += 1; return new Response("{}"); },
+        }),
+        () => requestAndRecordLuminSignV1ArtifactAccess({
+          access_token: ACCESS_TOKEN,
+          authority_sha256: authorityDigest,
+          file_type: "merged",
+          state_root: stateRoot,
+        }, {
+          nowMs: NOW_MS + 1,
+          fetchImpl: async () => { readCalls += 1; return new Response("{}"); },
+        }),
+      ]) {
+        await expect(read()).rejects.toMatchObject({
+          code: "LUMIN_OPERATION_OUTCOME_NOT_RETAINED",
+          reconciliation_class: "outcome_not_retained",
+          read_retry_safe: true,
+          create_retry_allowed: false,
+        });
+      }
+      expect(readCalls).toBe(0);
+      releaseCreate();
+      await expect(creation).resolves.toMatchObject({
+        operation: { operation_status: "request_created" },
+      });
+    });
+  });
+
   it("rejects ambiguous duplicate members and request-ID drift in status responses", async () => {
     await withLifecycleState(async ({ stateRoot }) => {
       const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
@@ -872,7 +1287,7 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
-        })).rejects.toMatchObject({ code: "LUMIN_STATUS_OBSERVATION_FAILED" });
+        })).rejects.toMatchObject({ code: "LUMIN_STATUS_OBSERVATION_RETRYABLE" });
       }
     });
   });
@@ -930,7 +1345,7 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
-      })).rejects.toMatchObject({ code: "LUMIN_ARTIFACT_OBSERVATION_FAILED" });
+      })).rejects.toMatchObject({ code: "LUMIN_ARTIFACT_OBSERVATION_RETRYABLE" });
       const observationsPath = path.join(
         stateRoot,
         "lumin-sign-v1-operations",
