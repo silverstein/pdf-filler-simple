@@ -58,6 +58,7 @@ export const SHARE_FILES = [
   "server/helpers.js",
   "server/index.js",
   "server/layout-extraction.js",
+  "server/lumin-oauth-loopback.js",
   "server/lumin-sign-v1-mapper.js",
   "server/markdown-conversion.js",
   "server/markdown-output-transaction.js",

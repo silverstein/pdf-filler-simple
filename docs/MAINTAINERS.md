@@ -70,6 +70,27 @@ host and operating system being claimed.
 - PDF.js text extraction and canvas-backed page/region rendering are lazy loaded to avoid startup overhead.
 - Interactive viewer UI lives in `ui/`, built to `dist-ui/` via Vite.
 
+### Lumin OAuth preparation
+
+`server/lumin-oauth-loopback.js` is an internal native-app OAuth helper. It is
+packaged for source parity but is not registered as an MCP tool and does not
+run merely because the server starts. Provider request transport remains
+disabled in `server/lumin-sign-v1-mapper.js`.
+
+Lumin currently registers `http://127.0.0.1/callback` for public PKCE clients
+and ignores the loopback port when matching the redirect. At authorization
+time the helper binds an operating-system-selected port on `127.0.0.1` and
+sends `http://127.0.0.1:<port>/callback` in the request. Keep the IP literal
+and `/callback` path exact. Do not switch this to `localhost`, a fixed port, a
+non-loopback listener, or a custom URI scheme without new provider evidence.
+
+The helper uses PKCE S256, a separate random state value, a one-use callback,
+strict callback parameter and Host validation, bounded inputs and responses,
+and a public-client token exchange with no client secret. It never writes or
+logs the verifier, authorization code, or returned tokens. Credential storage,
+refresh, revocation, signing request transport, callback verification, and
+provider artifact handling are separate incomplete product boundaries.
+
 ## Data flow (ASCII map)
 
 ```
