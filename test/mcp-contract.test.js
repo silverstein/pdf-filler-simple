@@ -180,7 +180,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // wire-visible coverage-semantics change. No tool name, description, input
 // schema, or read-only annotation changes. The prior current-master digest was
 // 7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae.
-const TOOL_CONTRACT_SHA256 = "RECONCILE_AFTER_CURRENT_MASTER";
+const TOOL_CONTRACT_SHA256 = "bf26c415fee3b797c41acb3eb2e78d84066c6da10b41c0a8a44da8adf2680c34";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
