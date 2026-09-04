@@ -1,4 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
+import { LUMIN_SIGN_V1_OPERATION_REFERENCES } from "../server/lumin-sign-v1-operation.js";
 import {
   LUMIN_SIGN_V1_OPENAPI_PROJECTION,
   LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256,
@@ -24,6 +27,67 @@ function syntheticSpecification() {
           responses: { 201: {}, "4XX": {} },
         },
       },
+      "/signature_request/{signature_request_id}": {
+        get: {
+          security: [
+            { ApiKey: [] },
+            { BearerAuth: ["sign:requests.read"] },
+            { BearerAuth: ["sign:requests"] },
+          ],
+          responses: {
+            200: {
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      signature_request: { $ref: "#/components/schemas/SignatureRequest" },
+                    },
+                  },
+                },
+              },
+            },
+            "4XX": {},
+          },
+        },
+      },
+      "/signature_request/{signature_request_id}/file": {
+        get: {
+          security: [
+            { ApiKey: [] },
+            { BearerAuth: ["sign:requests.read"] },
+            { BearerAuth: ["sign:requests"] },
+          ],
+          parameters: [
+            {
+              in: "query",
+              name: "type",
+              schema: {
+                type: "string",
+                enum: ["agreement", "coc", "merged"],
+                default: "agreement",
+              },
+            },
+          ],
+          responses: {
+            200: {
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      signed_url: { type: "string" },
+                      expires_at: { type: "integer", format: "unix-epoch" },
+                    },
+                  },
+                },
+                "application/pdf": { schema: { type: "string", format: "binary" } },
+              },
+            },
+            "4XX": {},
+          },
+        },
+      },
     },
     components: {
       securitySchemes: {
@@ -34,7 +98,10 @@ function syntheticSpecification() {
             authorizationCode: {
               authorizationUrl: "https://auth.luminpdf.com/oauth2/auth",
               tokenUrl: "https://auth.luminpdf.com/oauth2/token",
-              scopes: { "sign:requests": "Create, update, or view signature requests." },
+              scopes: {
+                "sign:requests": "Create, update, or view signature requests.",
+                "sign:requests.read": "View signature requests.",
+              },
             },
           },
         },
@@ -73,6 +140,22 @@ function syntheticSpecification() {
             name: { type: "string" },
           },
         },
+        SignatureRequest: {
+          properties: {
+            status: {
+              type: "string",
+              enum: [
+                "NEED_TO_SIGN",
+                "WAITING_FOR_OTHERS",
+                "APPROVED",
+                "REJECTED",
+                "WAITING_FOR_PROCESSING",
+                "FAILED",
+                "CANCELLED",
+              ],
+            },
+          },
+        },
       },
     },
   };
@@ -84,8 +167,49 @@ describe("Lumin Sign v1 official OpenAPI contract", () => {
       LUMIN_SIGN_V1_OPENAPI_PROJECTION,
     );
     expect(LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256).toBe(
-      "8f3fb987391ce1552ff25c8784b9dc2725cac9b2f833abe005e9f2569a9b2701",
+      "bf2ca8985c3291e41e1fe78c42dc9782edc4e473be8134fe5c2ce4aa615c29f9",
     );
+  });
+
+  it("keeps lifecycle runtime enums bound to the machine-readable projection", () => {
+    expect(LUMIN_SIGN_V1_OPERATION_REFERENCES.openapi.status_values).toEqual(
+      LUMIN_SIGN_V1_OPENAPI_PROJECTION.lifecycle_operations.status.status_enum,
+    );
+    expect(LUMIN_SIGN_V1_OPERATION_REFERENCES.openapi.artifact_file_types).toEqual(
+      LUMIN_SIGN_V1_OPENAPI_PROJECTION.lifecycle_operations.artifact.file_types,
+    );
+  });
+
+  it("replays the exact pinned official snapshot in CI", async () => {
+    const encoded = await readFile(
+      new URL("./fixtures/lumin-sign-v1-openapi-2026-09-04.json.gz.b64", import.meta.url),
+      "utf8",
+    );
+    const bytes = gunzipSync(Buffer.from(encoded.replace(/\s/g, ""), "base64"));
+    expect(verifyLuminSignV1OpenApiBytes(bytes)).toMatchObject({
+      source: LUMIN_SIGN_V1_OPENAPI_SOURCE,
+      contract_projection_sha256: LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256,
+    });
+  });
+
+  it.each([
+    ["status path", specification => { delete specification.paths["/signature_request/{signature_request_id}"]; }],
+    ["artifact path", specification => { delete specification.paths["/signature_request/{signature_request_id}/file"]; }],
+  ])("rejects a missing %s used by the lifecycle", (_label, mutate) => {
+    const specification = syntheticSpecification();
+    mutate(specification);
+    expect(() => projectLuminSignV1OpenApi(specification)).toThrow();
+  });
+
+  it.each([
+    ["status enum", specification => { specification.components.schemas.SignatureRequest.properties.status.enum.pop(); }],
+    ["artifact type", specification => {
+      specification.paths["/signature_request/{signature_request_id}/file"].get.parameters[0].schema.enum.pop();
+    }],
+  ])("detects %s drift used by the lifecycle", (_label, mutate) => {
+    const specification = syntheticSpecification();
+    mutate(specification);
+    expect(projectLuminSignV1OpenApi(specification)).not.toEqual(LUMIN_SIGN_V1_OPENAPI_PROJECTION);
   });
 
   it("surfaces the schema/example group-type contradiction rather than choosing silently", () => {

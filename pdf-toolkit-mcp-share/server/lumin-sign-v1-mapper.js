@@ -33,7 +33,7 @@ const MAPPER_CONTRACT = Object.freeze({
   official_openapi_source_url: "https://developers.luminpdf.com/tabs/api-reference/openapi.json",
   official_openapi_source_bytes: 118_174,
   official_openapi_source_sha256: "8842b7938870ea05b8c8d5869a33cc16b33b2eb0b8f2b1c60607203e39bfd037",
-  official_openapi_projection_sha256: "8f3fb987391ce1552ff25c8784b9dc2725cac9b2f833abe005e9f2569a9b2701",
+  official_openapi_projection_sha256: "bf2ca8985c3291e41e1fe78c42dc9782edc4e473be8134fe5c2ce4aa615c29f9",
   official_direct_upload_reference: LUMIN_SIGN_V1_DIRECT_UPLOAD_REFERENCE,
   official_reference_identity_status: "exact_snapshot_pinned",
   authentication_alternatives: [

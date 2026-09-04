@@ -77,6 +77,14 @@ function authAlternatives(specification, operation) {
 
 export function projectLuminSignV1OpenApi(specification) {
   const operation = required(specification?.paths?.["/signature_request/send"]?.post, "send operation");
+  const statusOperation = required(
+    specification?.paths?.["/signature_request/{signature_request_id}"]?.get,
+    "status operation",
+  );
+  const artifactOperation = required(
+    specification?.paths?.["/signature_request/{signature_request_id}/file"]?.get,
+    "artifact operation",
+  );
   const requestSchemaRef = required(
     operation.requestBody?.content?.["application/json"]?.schema?.$ref,
     "send application/json request schema",
@@ -84,6 +92,20 @@ export function projectLuminSignV1OpenApi(specification) {
   const requestSchema = required(specification.components?.schemas?.SignatureRequestDTO, "SignatureRequestDTO");
   const signer = required(specification.components?.schemas?.Signer, "Signer");
   const viewer = required(specification.components?.schemas?.Viewer, "Viewer");
+  const signatureRequest = required(specification.components?.schemas?.SignatureRequest, "SignatureRequest");
+  const statusResponseSchema = required(
+    statusOperation.responses?.["200"]?.content?.["application/json"]?.schema,
+    "status response schema",
+  );
+  const artifactResponse = required(artifactOperation.responses?.["200"], "artifact response");
+  const artifactJsonSchema = required(
+    artifactResponse.content?.["application/json"]?.schema,
+    "artifact JSON response schema",
+  );
+  const artifactTypeParameter = required(
+    artifactOperation.parameters?.find(parameter => parameter?.in === "query" && parameter?.name === "type"),
+    "artifact type parameter",
+  );
   const exampleSigner = required(requestSchema.example?.signers?.[0], "SignatureRequestDTO example signer");
   const signerGroupSchemaType = required(signer.properties?.group?.type, "Signer group type");
   const signerGroupExampleType = typeof required(exampleSigner.group, "example signer group");
@@ -101,6 +123,34 @@ export function projectLuminSignV1OpenApi(specification) {
       response_codes: Object.keys(required(operation.responses, "send responses")).sort(),
     },
     authentication_alternatives: authAlternatives(specification, operation),
+    lifecycle_operations: {
+      status: {
+        method: "GET",
+        path: "/signature_request/{signature_request_id}",
+        response_codes: Object.keys(required(statusOperation.responses, "status responses")).sort(),
+        response_schema_ref: required(
+          statusResponseSchema.properties?.signature_request?.$ref,
+          "status signature_request schema ref",
+        ),
+        status_enum: sortedStrings(signatureRequest.properties?.status?.enum, "SignatureRequest status enum"),
+        authentication_alternatives: authAlternatives(specification, statusOperation),
+      },
+      artifact: {
+        method: "GET",
+        path: "/signature_request/{signature_request_id}/file",
+        response_codes: Object.keys(required(artifactOperation.responses, "artifact responses")).sort(),
+        response_content_types: Object.keys(required(artifactResponse.content, "artifact response content")).sort(),
+        file_types: sortedStrings(artifactTypeParameter.schema?.enum, "artifact file types"),
+        default_file_type: required(artifactTypeParameter.schema?.default, "artifact default file type"),
+        response_property_names: Object.keys(required(artifactJsonSchema.properties, "artifact properties")).sort(),
+        signed_url_type: required(artifactJsonSchema.properties?.signed_url?.type, "artifact signed_url type"),
+        expires_at: {
+          type: required(artifactJsonSchema.properties?.expires_at?.type, "artifact expires_at type"),
+          format: required(artifactJsonSchema.properties?.expires_at?.format, "artifact expires_at format"),
+        },
+        authentication_alternatives: authAlternatives(specification, artifactOperation),
+      },
+    },
     request_body: {
       property_names: Object.keys(required(requestSchema.properties, "SignatureRequestDTO properties")).sort(),
       file_url_type: required(requestSchema.properties?.file_url?.type, "file_url type"),
@@ -171,6 +221,84 @@ export const LUMIN_SIGN_V1_OPENAPI_PROJECTION = deepFreeze({
       token_url: "https://auth.luminpdf.com/oauth2/token",
     },
   ],
+  lifecycle_operations: {
+    status: {
+      method: "GET",
+      path: "/signature_request/{signature_request_id}",
+      response_codes: ["200", "4XX"],
+      response_schema_ref: "#/components/schemas/SignatureRequest",
+      status_enum: [
+        "APPROVED",
+        "CANCELLED",
+        "FAILED",
+        "NEED_TO_SIGN",
+        "REJECTED",
+        "WAITING_FOR_OTHERS",
+        "WAITING_FOR_PROCESSING",
+      ],
+      authentication_alternatives: [
+        {
+          scheme: "ApiKey",
+          type: "apiKey",
+          required_scopes: [],
+          location: "header",
+          name: "X-API-Key",
+        },
+        {
+          scheme: "BearerAuth",
+          type: "oauth2",
+          required_scopes: ["sign:requests.read"],
+          flow: "authorizationCode",
+          authorization_url: "https://auth.luminpdf.com/oauth2/auth",
+          token_url: "https://auth.luminpdf.com/oauth2/token",
+        },
+        {
+          scheme: "BearerAuth",
+          type: "oauth2",
+          required_scopes: ["sign:requests"],
+          flow: "authorizationCode",
+          authorization_url: "https://auth.luminpdf.com/oauth2/auth",
+          token_url: "https://auth.luminpdf.com/oauth2/token",
+        },
+      ],
+    },
+    artifact: {
+      method: "GET",
+      path: "/signature_request/{signature_request_id}/file",
+      response_codes: ["200", "4XX"],
+      response_content_types: ["application/json", "application/pdf"],
+      file_types: ["agreement", "coc", "merged"],
+      default_file_type: "agreement",
+      response_property_names: ["expires_at", "signed_url"],
+      signed_url_type: "string",
+      expires_at: { type: "integer", format: "unix-epoch" },
+      authentication_alternatives: [
+        {
+          scheme: "ApiKey",
+          type: "apiKey",
+          required_scopes: [],
+          location: "header",
+          name: "X-API-Key",
+        },
+        {
+          scheme: "BearerAuth",
+          type: "oauth2",
+          required_scopes: ["sign:requests.read"],
+          flow: "authorizationCode",
+          authorization_url: "https://auth.luminpdf.com/oauth2/auth",
+          token_url: "https://auth.luminpdf.com/oauth2/token",
+        },
+        {
+          scheme: "BearerAuth",
+          type: "oauth2",
+          required_scopes: ["sign:requests"],
+          flow: "authorizationCode",
+          authorization_url: "https://auth.luminpdf.com/oauth2/auth",
+          token_url: "https://auth.luminpdf.com/oauth2/token",
+        },
+      ],
+    },
+  },
   request_body: {
     property_names: [
       "custom_email",
@@ -229,7 +357,7 @@ export function verifyLuminSignV1OpenApiBytes(bytes) {
   }
   const projection = projectLuminSignV1OpenApi(specification);
   if (canonicalJson(projection) !== canonicalJson(LUMIN_SIGN_V1_OPENAPI_PROJECTION)) {
-    throw new Error("LUMIN_OPENAPI_CONTRACT_MISMATCH: derived send-signature contract differs from the reviewed projection");
+    throw new Error("LUMIN_OPENAPI_CONTRACT_MISMATCH: derived signing contract differs from the reviewed projection");
   }
   return Object.freeze({
     schema_version: 1,
