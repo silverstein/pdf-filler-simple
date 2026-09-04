@@ -91,12 +91,18 @@ describe("mapLuminSignV1SignatureRequest", () => {
         source_bytes: LUMIN_SIGN_V1_OPENAPI_SOURCE.bytes,
         source_sha256: LUMIN_SIGN_V1_OPENAPI_SOURCE.sha256,
         contract_projection_sha256: LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256,
+        direct_upload_reference: {
+          repository: "https://github.com/luminpdf/lumin-sign-api-docs",
+          commit: "cd8ddd73e32c016038691dad21d0e4594c8eeebb",
+          path: "src/theme/ApiDemoPanel/signature-request.multipart.js",
+          bytes: 7_288,
+          sha256: "8b82481c0c06bd560e1e107c08ed90b31640d9bd4cd3941635bbf4d328c814c4",
+        },
         openapi_document_version: "3.1.0",
         provider_info_version: "1.0.0",
         discrepancy_codes: ["SIGNER_GROUP_SCHEMA_EXAMPLE_TYPE_MISMATCH"],
         unmapped_official_request_options: [
           "custom_email",
-          "file",
           "file_urls",
           "files",
           "signer_verification",
@@ -113,6 +119,10 @@ describe("mapLuminSignV1SignatureRequest", () => {
         method: "POST",
         path: "/signature_request/send",
         content_type: "application/json",
+        file_transfer: {
+          kind: "https_url",
+          body_field: "file_url",
+        },
         authentication_alternatives: [
           {
             scheme: "ApiKey",
@@ -146,6 +156,8 @@ describe("mapLuminSignV1SignatureRequest", () => {
       bindings: {
         prepared_document_sha256: "a".repeat(64),
         prepared_document_size_bytes: 12_345,
+        signer_participant_ids: ["signer.client", "signer.consultant"],
+        viewer_participant_ids: ["viewer.counsel"],
         participant_ids: ["signer.client", "signer.consultant", "viewer.counsel"],
       },
       limitations: [
@@ -168,8 +180,32 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(result.request).not.toHaveProperty("authorization");
     expect(result.request.body).not.toHaveProperty("api_key");
     expect(LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256).toBe(
-      "cb9f421e408d9388d6ea2ba553e8d2731aceed0fc5d7264c7cbafb630a528c39",
+      "e9284f70d1acdc159a59fd2c2c0e0ead9fd194c957eb56e1f457026fc4e4af7a",
     );
+  });
+
+  it("maps direct PDF transfer metadata without embedding file bytes or enabling transport", () => {
+    const intent = validIntent();
+    intent.prepared_document.transfer = { kind: "direct_file" };
+    const result = map(intent);
+    expect(result.request).toMatchObject({
+      content_type: "multipart/form-data",
+      file_transfer: {
+        kind: "direct_file",
+        form_field: "file",
+        filename: "prepared-document.pdf",
+        media_type: "application/pdf",
+      },
+      body: {
+        title: "Consulting agreement",
+        signing_type: "SAME_TIME",
+      },
+    });
+    expect(result.request.body).not.toHaveProperty("file");
+    expect(result.request.body).not.toHaveProperty("file_url");
+    expect(result.transport_allowed).toBe(false);
+    expect(result.limitations).toContain("direct_file_bytes_not_attached_by_mapper");
+    expect(result.limitations).not.toContain("transfer_url_destination_not_resolved");
   });
 
   it("fails closed on ordered signing or any signer group until the official type conflict is resolved", () => {

@@ -428,6 +428,7 @@ describe("MCPB static declarations", () => {
       "type3-cm-pk-reference.js",
       "lumin-oauth-loopback.js",
       "lumin-sign-v1-mapper.js",
+      "lumin-sign-v1-transport.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
       "pdf-lib-subprocess.js",
@@ -448,7 +449,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(26);
+    expect(mirrored).toHaveLength(27);
     for (const relativePath of [
       "scripts/eval-strict-json.mjs",
       "scripts/verified-extraction-proposal.mjs",

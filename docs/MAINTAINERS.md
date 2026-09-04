@@ -70,12 +70,21 @@ host and operating system being claimed.
 - PDF.js text extraction and canvas-backed page/region rendering are lazy loaded to avoid startup overhead.
 - Interactive viewer UI lives in `ui/`, built to `dist-ui/` via Vite.
 
-### Lumin OAuth preparation
+### Lumin signing preparation
 
-`server/lumin-oauth-loopback.js` is an internal native-app OAuth helper. It is
-packaged for source parity but is not registered as an MCP tool and does not
-run merely because the server starts. Provider request transport remains
-disabled in `server/lumin-sign-v1-mapper.js`.
+`server/lumin-oauth-loopback.js` is an internal native-app OAuth helper.
+`server/lumin-sign-v1-mapper.js` validates and maps the narrow request shape,
+and `server/lumin-sign-v1-transport.js` can execute one explicitly authorized
+direct-PDF request through an injected transport. All three are packaged for
+source parity, but none is registered as an MCP tool or runs merely because the
+server starts. The mapper itself continues to return `transport_allowed: false`.
+Calling the transport requires a separate, short-lived authority object that
+binds the exact prepared-PDF receipt, PDF digest, complete validated request
+mapping, mapper contract, and participant identities. One invocation makes at
+most one request and never retries it automatically. Authority reuse is not
+durably prevented by this internal module,
+so a future public workflow must add persistent attempt consumption before it can
+claim one-use execution authority.
 
 Lumin currently registers `http://127.0.0.1/callback` for public PKCE clients
 and ignores the loopback port when matching the redirect. At authorization
@@ -84,12 +93,22 @@ sends `http://127.0.0.1:<port>/callback` in the request. Keep the IP literal
 and `/callback` path exact. Do not switch this to `localhost`, a fixed port, a
 non-loopback listener, or a custom URI scheme without new provider evidence.
 
-The helper uses PKCE S256, a separate random state value, a one-use callback,
+The OAuth helper uses PKCE S256, a separate random state value, a one-use callback,
 strict callback parameter and Host validation, bounded inputs and responses,
 and a public-client token exchange with no client secret. It never writes or
 logs the verifier, authorization code, or returned tokens. Credential storage,
-refresh, revocation, signing request transport, callback verification, and
-provider artifact handling are separate incomplete product boundaries.
+refresh, revocation, callback verification, and provider artifact handling are
+separate incomplete product boundaries.
+
+The direct-PDF transport is pinned to Lumin's exact multipart example at Git
+commit `cd8ddd73e32c016038691dad21d0e4594c8eeebb`. It accepts an access token only
+as an ephemeral argument, injects no client secret, bounds the PDF and response,
+keeps the timeout active through response-body consumption, rejects redirects,
+and returns only a digest-bound provider identity receipt. A transport or
+response ambiguity is never retried. This is an internal vertical slice, not a
+shipped signing feature: there is no public tool, token store, webhook verifier,
+status lifecycle, cancellation path, or release claim yet. Tests inject a fake
+transport and must not make a live Lumin request.
 
 ## Data flow (ASCII map)
 

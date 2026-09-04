@@ -6,6 +6,15 @@ const MAX_LOCAL_PREPARED_DOCUMENT_BYTES = 200 * 1024 * 1024;
 const MAX_LOCAL_PARTICIPANTS = 100;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+export const LUMIN_SIGN_V1_DIRECT_UPLOAD_REFERENCE = Object.freeze({
+  repository: "https://github.com/luminpdf/lumin-sign-api-docs",
+  commit: "cd8ddd73e32c016038691dad21d0e4594c8eeebb",
+  path: "src/theme/ApiDemoPanel/signature-request.multipart.js",
+  bytes: 7_288,
+  sha256: "8b82481c0c06bd560e1e107c08ed90b31640d9bd4cd3941635bbf4d328c814c4",
+});
+
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -25,6 +34,7 @@ const MAPPER_CONTRACT = Object.freeze({
   official_openapi_source_bytes: 118_174,
   official_openapi_source_sha256: "8842b7938870ea05b8c8d5869a33cc16b33b2eb0b8f2b1c60607203e39bfd037",
   official_openapi_projection_sha256: "8f3fb987391ce1552ff25c8784b9dc2725cac9b2f833abe005e9f2569a9b2701",
+  official_direct_upload_reference: LUMIN_SIGN_V1_DIRECT_UPLOAD_REFERENCE,
   official_reference_identity_status: "exact_snapshot_pinned",
   authentication_alternatives: [
     {
@@ -41,13 +51,12 @@ const MAPPER_CONTRACT = Object.freeze({
       required_scopes: ["sign:requests"],
     },
   ],
-  supported_transfer: "https_url",
+  supported_transfers: ["https_url", "direct_file"],
   supported_field_mapping: "lumin_text_tags",
   supported_signing_types: ["SAME_TIME"],
   blocked_signing_types: ["ORDER"],
   unmapped_official_request_options: [
     "custom_email",
-    "file",
     "file_urls",
     "files",
     "signer_verification",
@@ -247,9 +256,17 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
     ) {
       throw new Error("invalid prepared size");
     }
-    const transfer = assertExactKeys(preparedDocument.transfer, ["kind", "url"]);
-    if (transfer.kind !== "https_url") throw new Error("unsupported transfer");
-    const fileUrl = assertPublicHttpsUrl(transfer.url);
+    const transferKind = preparedDocument.transfer?.kind;
+    let transfer;
+    let fileUrl = null;
+    if (transferKind === "https_url") {
+      transfer = assertExactKeys(preparedDocument.transfer, ["kind", "url"]);
+      fileUrl = assertPublicHttpsUrl(transfer.url);
+    } else if (transferKind === "direct_file") {
+      transfer = assertExactKeys(preparedDocument.transfer, ["kind"]);
+    } else {
+      throw new Error("unsupported transfer");
+    }
 
     const fieldMapping = assertExactKeys(requestIntent.field_mapping, ["evidence_status", "method"]);
     if (fieldMapping.method !== "lumin_text_tags" || fieldMapping.evidence_status !== "caller_asserted") {
@@ -276,7 +293,7 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
     const participantIds = [...mappedSigners, ...mappedViewers].map(value => value.participantId);
     if (new Set(participantIds).size !== participantIds.length) throw new Error("duplicate participant binding");
     const body = {
-      file_url: fileUrl,
+      ...(fileUrl === null ? {} : { file_url: fileUrl }),
       title,
       signers: mappedSigners.map(value => value.signer),
       expires_at: requestIntent.expires_at_ms,
@@ -297,6 +314,7 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         source_bytes: MAPPER_CONTRACT.official_openapi_source_bytes,
         source_sha256: MAPPER_CONTRACT.official_openapi_source_sha256,
         contract_projection_sha256: MAPPER_CONTRACT.official_openapi_projection_sha256,
+        direct_upload_reference: { ...MAPPER_CONTRACT.official_direct_upload_reference },
         openapi_document_version: "3.1.0",
         provider_info_version: "1.0.0",
         discrepancy_codes: ["SIGNER_GROUP_SCHEMA_EXAMPLE_TYPE_MISMATCH"],
@@ -312,7 +330,18 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         base_url: MAPPER_CONTRACT.base_url,
         method: MAPPER_CONTRACT.method,
         path: MAPPER_CONTRACT.path,
-        content_type: "application/json",
+        content_type: transfer.kind === "direct_file" ? "multipart/form-data" : "application/json",
+        file_transfer: transfer.kind === "direct_file"
+          ? {
+              kind: "direct_file",
+              form_field: "file",
+              filename: "prepared-document.pdf",
+              media_type: "application/pdf",
+            }
+          : {
+              kind: "https_url",
+              body_field: "file_url",
+            },
         authentication_alternatives: MAPPER_CONTRACT.authentication_alternatives.map(alternative => ({
           ...alternative,
           required_scopes: [...alternative.required_scopes],
@@ -322,6 +351,8 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
       bindings: {
         prepared_document_sha256: preparedDocument.sha256,
         prepared_document_size_bytes: preparedDocument.size_bytes,
+        signer_participant_ids: mappedSigners.map(value => value.participantId),
+        viewer_participant_ids: mappedViewers.map(value => value.participantId),
         participant_ids: participantIds,
       },
       limitations: [
@@ -336,7 +367,9 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         "participant_field_constraints_are_local_narrowing",
         "provider_expiry_horizon_not_established",
         "plan_specific_upload_limit_not_established",
-        "transfer_url_destination_not_resolved",
+        ...(transfer.kind === "https_url"
+          ? ["transfer_url_destination_not_resolved"]
+          : ["direct_file_bytes_not_attached_by_mapper"]),
         "transport_not_requested",
       ],
     }));
