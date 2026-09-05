@@ -24,6 +24,8 @@ an `isError` result is never forced through a success schema.
 | `apply_signature` | active document plus signature-stamp audit fields |
 | `apply_text` | active document plus text placement |
 | `bulk_fill_from_csv` | row results and bounded record preview |
+| `check_lumin_status` | authenticated poll status, exact operation authority, retained observation digest, and explicit read-only retry safety |
+| `finish_lumin_authorization` | opaque connected-session identity, token expiry, and explicit no-persistence facts |
 | `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
 | `create_extraction_workspace` | exact source/schema/map identities, genesis generation, leaf obligations, and private workspace state |
 | `create_signature` | saved signature metadata |
@@ -33,6 +35,7 @@ an `isError` result is never forced through a success schema.
 | `detect_signature_zones` | detected coordinate zones |
 | `delete_extraction_workspace` | exact identity/generation deletion receipt with no recovery claim |
 | `display_pdf` | active document and form summary |
+| `download_lumin_artifact` | local PDF identity, artifact type and observation digest, with explicit signed-URL and token non-persistence |
 | `extract_to_csv` | CSV counts, headers, and bounded row preview |
 | `fetch_pdf_from_url` | active document and download provenance |
 | `fill_pdf` | active document and field-fill outcome |
@@ -49,6 +52,7 @@ an `isError` result is never forced through a success schema.
 | `load_signature` | signature metadata and optional preview |
 | `merge_pdfs` | active output document and page count |
 | `prepare_signing_packet` | active document, fills, legacy pending placements, and a source/output-bound provider-neutral preparation receipt with value-free field outcomes, typed zones, readiness gaps, and `provider_execution_status: not_requested` |
+| `prepare_lumin_request` | exact local prepared-PDF identity, recipients, disclosure, required confirmation, expiry, and proof that no provider was contacted |
 | `read_pdf_bytes` | bounded base64 byte chunk |
 | `read_pdf_content` | complete/partial text or image-fallback result with page-scoped routing facts (`read_pages_without_text`, integrity signals, typed `page_read_error`) preserved through failure and resource-limit branches |
 | `read_pdf_fields` | active document and form fields |
@@ -63,8 +67,10 @@ an `isError` result is never forced through a success schema.
 | `rotate_pdf_pages` | active output document and rotation outcome |
 | `search_pdf_text` | bounded page matches |
 | `set_active_document` | populated active-document state |
+| `send_lumin_request` | one-shot create outcome, provider request identity, authority digest, status, and explicit no-retry and no-token-persistence facts |
 | `submit_extraction_proposal` | new immutable generation containing one explicitly unverified leaf proposal |
 | `split_pdf` | input path, output directory, and the page range and page count of every file written |
+| `start_lumin_authorization` | opaque pending-session identity, callback expiry, and proof that no PDF was sent |
 | `validate_pdf` | versioned PDF field-validation result |
 | `verify_extraction_proposal` | new immutable generation containing the deterministic cited replay result and typed status |
 
@@ -98,6 +104,18 @@ duplicate zone geometry, malformed identifiers, unsupported types, unresolved
 pages, out-of-bounds geometry, and clipped provider-ready zones fail closed.
 Legacy calls may still prepare a local artifact with a clipped zone, but its
 receipt remains `incomplete` with a typed crop-visibility gap.
+
+### Consent-gated Lumin workflow
+
+The six Lumin tools retain structured results without credentials or temporary
+signed URLs. Authorization returns only an opaque process-local session ID.
+Request preparation is local and binds the exact prepared PDF, provider-neutral
+receipt, mapped recipients, disclosure, and confirmation digest. Sending
+requires that exact digest plus the user's fresh verbatim confirmation and then
+consumes one durable authority with no automatic retry. Status polling and
+artifact access can safely repeat reads of an existing provider request but can
+never create it again. Artifact download returns only the local PDF identity and
+the retained observation digest.
 `ready_for_provider_mapping`
 means only that a later provider adapter can consume the local intent; it does
 not establish signer identity, consent, enforceability, provider acceptance,

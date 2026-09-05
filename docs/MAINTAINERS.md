@@ -70,16 +70,19 @@ host and operating system being claimed.
 - PDF.js text extraction and canvas-backed page/region rendering are lazy loaded to avoid startup overhead.
 - Interactive viewer UI lives in `ui/`, built to `dist-ui/` via Vite.
 
-### Lumin signing preparation
+### Optional Lumin signing workflow
 
 `server/lumin-oauth-loopback.js` is an internal native-app OAuth helper.
 `server/lumin-sign-v1-mapper.js` validates and maps the narrow request shape,
 `server/lumin-sign-v1-transport.js` can execute one explicitly authorized
 direct-PDF request through an injected transport, and
 `server/lumin-sign-v1-operation.js` adds the private durable operation boundary.
-All four are packaged for source parity, but none is registered as an MCP tool
-or runs merely because the server starts. The mapper itself continues to return
-`transport_allowed: false`.
+`server/lumin-signing-tools.js` is the public orchestration layer. It registers
+six tools for browser authorization, local request preparation, one-shot send,
+status polling, and artifact download. None runs merely because the server
+starts. The mapper itself continues to return `transport_allowed: false`; only
+the public layer's fresh exact confirmation can construct the short-lived
+authority consumed by the durable wrapper.
 Calling the transport requires a separate, short-lived authority object that
 binds the exact prepared-PDF receipt, PDF digest, complete validated request
 mapping, mapper contract, and participant identities. The low-level transport
@@ -132,9 +135,8 @@ custody boundary.
 
 Portable Node cannot verify the required private Windows ACL or open NTFS
 directories for `fsync`. The durable wrapper therefore fails closed on Windows
-until a separately reviewed ACL-aware state adapter exists. This does not limit
-the existing cross-platform PDF tools because the Lumin modules remain internal
-and unregistered.
+until a separately reviewed ACL-aware state adapter exists. This limits only
+Lumin request creation; the existing local PDF tools remain cross-platform.
 
 Lumin currently registers `http://127.0.0.1/callback` for public PKCE clients
 and ignores the loopback port when matching the redirect. At authorization
@@ -146,9 +148,10 @@ non-loopback listener, or a custom URI scheme without new provider evidence.
 The OAuth helper uses PKCE S256, a separate random state value, a one-use callback,
 strict callback parameter and Host validation, bounded inputs and responses,
 and a public-client token exchange with no client secret. It never writes or
-logs the verifier, authorization code, or returned tokens. Credential storage,
-refresh, revocation, callback verification, and provider artifact handling are
-separate incomplete product boundaries.
+logs the verifier, authorization code, or returned tokens. The public layer
+holds only the access token in process memory behind an opaque session ID,
+discards the refresh token, and requires a new browser connection after restart
+or expiry. Inputs, results, local operation state, and errors contain no token.
 
 The direct-PDF transport is pinned to Lumin's exact multipart example at Git
 commit `cd8ddd73e32c016038691dad21d0e4594c8eeebb`. It accepts an access token only
@@ -168,11 +171,11 @@ publishes a new snapshot, fetch it to a temporary path, run
 projected change, then replace the fixture and pinned identity together. Do not
 refresh the fixture or projection from the network during CI.
 
-This remains an internal vertical slice, not a shipped signing feature. There is
-no public tool, token store, callback listener, cancellation path, artifact
-download transaction, or release claim. The caller still owns secure state-root
-selection, OAuth token custody, webhook endpoint hosting, signing-secret custody,
-retention, and user-visible consent. The filesystem design assumes a trusted
+This is a source-complete public MCP workflow but not a released capability until
+its release gate is separately approved. It has no cancellation tool and no
+webhook endpoint. The public layer owns private state-root selection, ephemeral
+OAuth token custody, user-visible disclosure, exact confirmation, polling, and
+no-overwrite artifact download. The filesystem design assumes a trusted
 same-user and administrator boundary; it prevents accidental and concurrent
 reuse but is not a cryptographic defense against a hostile process with the same
 OS authority. Tests inject fake transports and must not make a live Lumin

@@ -117,6 +117,11 @@ import {
   VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
   createVerifiedExtractionToolHandler,
 } from "./verified-extraction-tools.js";
+import {
+  LUMIN_SIGNING_TOOL_DEFINITIONS,
+  LUMIN_SIGNING_TOOL_NAMES,
+  createLuminSigningToolHandler,
+} from "./lumin-signing-tools.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
   "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
@@ -1757,8 +1762,10 @@ function ensurePluginDataConfigTemplate(configPath) {
       JSON.stringify({
         _comment: "Optional folders this server may read and write directly. Absolute paths only. "
           + "A non-empty list replaces the private plugin workspace rather than adding to it, "
-          + "so list every direct folder you need. Restart the server after editing.",
+          + "so list every direct folder you need. luminOAuthClientId is a public application ID, "
+          + "not a secret. Restart the server after editing.",
         allowedDirectories: [],
+        luminOAuthClientId: "",
       }, null, 2) + "\n",
       { mode: 0o600 },
     );
@@ -1902,6 +1909,27 @@ function buildAllowedDirectories() {
 
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
 
+function configuredLuminClientId() {
+  const environmentValue = process.env.LUMIN_OAUTH_CLIENT_ID;
+  if (environmentValue && !environmentValue.includes("${")) return environmentValue.trim();
+  for (const configPath of [PLUGIN_DATA_CONFIG_PATH, HOME_CONFIG_PATH]) {
+    if (!configPath || !existsSync(configPath)) continue;
+    try {
+      const value = JSON.parse(readFileSync(configPath, "utf8")).luminOAuthClientId;
+      if (typeof value === "string" && value === value.trim() && value.length > 0) return value;
+    } catch {}
+  }
+  return null;
+}
+
+const LUMIN_OAUTH_CLIENT_ID = configuredLuminClientId();
+const LUMIN_OPERATION_STATE_ROOT = canonicalizePathForPolicy(path.join(
+  process.env.PLUGIN_DATA && !process.env.PLUGIN_DATA.includes("${")
+    ? path.resolve(process.env.PLUGIN_DATA)
+    : PROFILES_DIR,
+  "lumin-signing-state",
+));
+
 // Where a tool browses when the caller names no directory. An explicitly
 // configured value always wins. Otherwise prefer the first allowed directory
 // over a home folder, which is no longer granted by default: falling back to an
@@ -2022,6 +2050,53 @@ const handleVerifiedExtractionTool = createVerifiedExtractionToolHandler({
 const VERIFIED_EXTRACTION_TOOL_NAMES = new Set(
   VERIFIED_EXTRACTION_TOOL_DEFINITIONS.map(tool => tool.name),
 );
+
+const handleLuminSigningTool = createLuminSigningToolHandler({
+  clientId: LUMIN_OAUTH_CLIENT_ID,
+  stateRoot: LUMIN_OPERATION_STATE_ROOT,
+  readPreparedPdf: async inputPath => {
+    const canonicalPath = resolveCanonicalPath(inputPath);
+    return {
+      canonicalPath,
+      bytes: await readCurrentPdfMutationBytes(canonicalPath),
+    };
+  },
+  resolveOutputPath: inputPath => resolvePath(inputPath),
+  downloadSignedPdf: async ({ signedUrl, outputPath }) => {
+    let result;
+    try {
+      result = await downloadPdfFromUrl(signedUrl, {
+        filename: path.basename(outputPath),
+        destinationDir: path.dirname(outputPath),
+        overwrite: false,
+        maxSizeMb: 200,
+        allowPrivateHosts: false,
+        maxRedirects: 0,
+        assertPathAllowed,
+      });
+      const identity = await hashBoundedPdfFileSafely(
+        result.path,
+        PDF_MUTATION_MAX_FILE_BYTES,
+        {
+          assertPathAllowed,
+          createSizeLimitError: pdfMutationFileLimitError,
+          requirePdfHeader: true,
+        },
+      );
+      noteDocumentOpened(identity.canonicalPath);
+      return {
+        canonicalPath: identity.canonicalPath,
+        bytes: identity.sizeBytes,
+        sha256: identity.sha256,
+      };
+    } catch {
+      throw new Error("The Lumin artifact could not be downloaded safely.");
+    } finally {
+      result = null;
+    }
+  },
+});
+const LUMIN_SIGNING_TOOL_NAME_SET = new Set(LUMIN_SIGNING_TOOL_NAMES);
 
 function comparisonSourceChangedError() {
   const error = new Error("A comparison source changed while it was being inspected.");
@@ -4916,6 +4991,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           openWorldHint: false
         }
       },
+      ...LUMIN_SIGNING_TOOL_DEFINITIONS,
       ...VERIFIED_EXTRACTION_TOOL_DEFINITIONS,
     ].map(withToolOutputSchema),
   };
@@ -4926,6 +5002,24 @@ async function handleToolCall(request) {
   const { name, arguments: args } = request.params;
 
   try {
+    if (LUMIN_SIGNING_TOOL_NAME_SET.has(name)) {
+      const structuredContent = await handleLuminSigningTool(name, args ?? {});
+      const summary = name === "start_lumin_authorization"
+        ? "Opened Lumin authorization in the browser."
+        : name === "finish_lumin_authorization"
+          ? "Connected the Lumin account for this PDF Tools session."
+          : name === "prepare_lumin_request"
+            ? "Prepared the Lumin signing request locally. Nothing was sent."
+            : name === "send_lumin_request"
+              ? `Created Lumin signing request ${structuredContent.signature_request_id}.`
+              : name === "check_lumin_status"
+                ? `Lumin signing status: ${structuredContent.provider_status}.`
+                : `Downloaded the Lumin ${structuredContent.file_type} PDF to ${structuredContent.pdf_path}.`;
+      return {
+        content: [{ type: "text", text: summary }],
+        structuredContent,
+      };
+    }
     if (VERIFIED_EXTRACTION_TOOL_NAMES.has(name)) {
       const structuredContent = await handleVerifiedExtractionTool(name, args ?? {});
       const summary = name === "create_extraction_workspace"
@@ -8023,6 +8117,9 @@ async function handleToolCall(request) {
     let errorCode = error?.code === "path_policy_denied"
       ? "path_policy_denied"
       : "tool_execution_failed";
+    if (LUMIN_SIGNING_TOOL_NAME_SET.has(name) && /^LUMIN_[A-Z0-9_]+$/.test(error?.code ?? "")) {
+      errorCode = error.code;
+    }
     if (
       error?.code === PDF_RESOURCE_LIMIT_CODE
       && (PDFJS_TOOL_NAMES.has(name) || PDF_LIB_MUTATION_TOOL_NAMES.has(name))

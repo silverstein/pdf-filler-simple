@@ -398,6 +398,16 @@ const signingPreparationReceipt = object({
   provider_execution_status: { const: "not_requested" },
   receipt_sha256: sha256Digest,
 });
+const luminParticipant = object({
+  participant_id: string,
+  name: string,
+  email_address: string,
+});
+const luminPreparedDocument = object({
+  canonical_path: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+});
 const signatureZone = object({
   type: enumString(["signature", "initials", "name", "date"]),
   label: string,
@@ -428,6 +438,13 @@ const standardError = object({
       "path_policy_denied",
       "tool_execution_failed",
     ]),
+  }),
+});
+const luminSigningError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: { type: "string", pattern: "^LUMIN_[A-Z0-9_]+$" },
   }),
 });
 const contentWorkerFailure = object({
@@ -1784,6 +1801,78 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     fill_errors: arrayOf(fillError),
     preparation_receipt: signingPreparationReceipt,
   }),
+  start_lumin_authorization: object({
+    status: { const: "awaiting_user_authorization" },
+    provider: { const: "lumin_sign" },
+    authorization_session_id: string,
+    callback_expires_at: string,
+    browser_opened: { const: true },
+    pdf_sent: { const: false },
+  }),
+  finish_lumin_authorization: object({
+    status: { const: "connected" },
+    provider: { const: "lumin_sign" },
+    authorization_session_id: string,
+    token_expires_at: string,
+    access_token_persisted: { const: false },
+    refresh_token_persisted: { const: false },
+    pdf_sent: { const: false },
+  }),
+  prepare_lumin_request: object({
+    status: { const: "ready_for_user_confirmation" },
+    provider: { const: "lumin_sign" },
+    request_preparation_id: string,
+    confirmation_sha256: sha256Digest,
+    confirmation_expires_at: string,
+    disclosure: string,
+    confirmation_statement_required: string,
+    prepared_document: luminPreparedDocument,
+    title: string,
+    request_expires_at: string,
+    signers: arrayOf(luminParticipant),
+    viewers: arrayOf(luminParticipant),
+    provider_contacted: { const: false },
+    pdf_sent: { const: false },
+  }),
+  send_lumin_request: object({
+    status: { const: "request_created" },
+    provider: { const: "lumin_sign" },
+    authority_sha256: sha256Digest,
+    operation_status: { const: "request_created" },
+    signature_request_id: string,
+    provider_status: string,
+    created_at: integer,
+    attempt_count: { const: 1 },
+    automatic_retry_performed: { const: false },
+    create_retry_allowed: { const: false },
+    access_token_persisted: { const: false },
+  }),
+  check_lumin_status: object({
+    status: { const: "observed" },
+    provider: { const: "lumin_sign" },
+    authority_sha256: sha256Digest,
+    signature_request_id: string,
+    provider_status: string,
+    observed_at: string,
+    observation_sha256: sha256Digest,
+    read_retry_safe: { const: true },
+    create_retry_allowed: { const: false },
+    access_token_persisted: { const: false },
+  }),
+  download_lumin_artifact: object({
+    status: { const: "downloaded" },
+    provider: { const: "lumin_sign" },
+    authority_sha256: sha256Digest,
+    file_type: enumString(["agreement", "coc", "merged"]),
+    pdf_path: string,
+    size_bytes: integer,
+    sha256: sha256Digest,
+    artifact_observation_sha256: sha256Digest,
+    access_url_persisted: { const: false },
+    access_url_returned: { const: false },
+    access_token_persisted: { const: false },
+    create_retry_allowed: { const: false },
+  }),
   apply_text: activeDocument({
     pdf_path: string,
     page: integer,
@@ -1842,6 +1931,16 @@ const specialErrorSchemas = {
   get_page_analysis: [pdfResourceLimitError],
   detect_signature_zones: [layoutPasswordError, pdfResourceLimitError],
 };
+for (const toolName of [
+  "start_lumin_authorization",
+  "finish_lumin_authorization",
+  "prepare_lumin_request",
+  "send_lumin_request",
+  "check_lumin_status",
+  "download_lumin_artifact",
+]) {
+  specialErrorSchemas[toolName] = [luminSigningError];
+}
 for (const toolName of [
   "add_signature_field",
   "apply_page_plan",
