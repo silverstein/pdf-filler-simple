@@ -970,7 +970,11 @@ describe("transactional verified extraction workspace", () => {
       ...authority,
       expectedCurrentWorkspaceIdentitySha256: winner.workspace_identity_sha256,
     })).resolves.toMatchObject({ state: "abandoned_initialization" });
-    expect((await inspectExtractionWorkspace({ rootPath, workspaceId })).state).toBe("complete");
+    expect((await inspectExtractionWorkspace({
+      rootPath,
+      workspaceId,
+      expectedWorkspaceIdentitySha256: winner.workspace_identity_sha256,
+    })).state).toBe("complete");
   });
 
   it.each(["replacement", "symlink", "file", ...(process.platform === "win32" ? [] : ["mode"])])(
