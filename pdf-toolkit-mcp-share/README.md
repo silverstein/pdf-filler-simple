@@ -145,13 +145,15 @@ carries their structured output contracts.
 - **submit_extraction_proposal** / **verify_extraction_proposal** - Retain an untrusted leaf proposal, then deterministically replay its exact citations without a model inside PDF Tools
 
 Lumin signing is optional and external. The prepared PDF plus listed names and
-email addresses leave the device only after the send confirmation. Configure a
-public OAuth client ID with `LUMIN_OAUTH_CLIENT_ID` or
+email addresses leave the device only after the send confirmation. PDF Tools
+checks the exact text and time, while the host and agent remain responsible for
+passing only what the user actually confirmed. Configure a public OAuth client
+ID with `LUMIN_OAUTH_CLIENT_ID` or
 `luminOAuthClientId` in the plugin's private `config.json`, registered for
 `http://127.0.0.1/callback`. Access tokens stay only in the running process.
 Creation is one-shot with no automatic retry, status uses polling, and existing
-download files are never replaced. Durable Lumin creation currently supports
-macOS and Linux and fails closed on Windows.
+download files are never replaced. The public Lumin workflow currently supports
+macOS and Linux and fails closed on Windows before OAuth or signing state begins.
 
 ### Current Extraction Boundary
 

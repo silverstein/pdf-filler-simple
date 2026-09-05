@@ -134,9 +134,10 @@ would require a separately approved server integration and signing-secret
 custody boundary.
 
 Portable Node cannot verify the required private Windows ACL or open NTFS
-directories for `fsync`. The durable wrapper therefore fails closed on Windows
-until a separately reviewed ACL-aware state adapter exists. This limits only
-Lumin request creation; the existing local PDF tools remain cross-platform.
+directories for `fsync`. The public Lumin workflow therefore fails closed on
+Windows before OAuth or operation state begins, until a separately reviewed
+ACL-aware state adapter exists. The existing local PDF tools remain
+cross-platform.
 
 Lumin currently registers `http://127.0.0.1/callback` for public PKCE clients
 and ignores the loopback port when matching the redirect. At authorization

@@ -13,7 +13,10 @@ import {
   pollAndRecordLuminSignV1Status,
   requestAndRecordLuminSignV1ArtifactAccess,
 } from "./lumin-sign-v1-operation.js";
-import { LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION } from "./lumin-sign-v1-transport.js";
+import {
+  LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION,
+  validateLuminSignV1DirectUploadPreparation,
+} from "./lumin-sign-v1-transport.js";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -26,7 +29,10 @@ const AUTHORIZATION_SCOPES = Object.freeze([
 ]);
 const MAX_PENDING_AUTHORIZATIONS = 8;
 const MAX_CONNECTIONS = 8;
+const MAX_PREPARATIONS = 64;
+const MAX_PREPARATION_RECEIPT_BYTES = 4 * 1024 * 1024;
 const AUTHORIZATION_TIMEOUT_MS = 5 * 60 * 1000;
+const AUTHORIZATION_COMPLETION_WAIT_MS = 45 * 1000;
 const REQUEST_PREPARATION_LIFETIME_MS = 30 * 60 * 1000;
 const USER_CONFIRMATION_LIFETIME_MS = 10 * 60 * 1000;
 const EXECUTION_AUTHORITY_LIFETIME_MS = 10 * 60 * 1000;
@@ -93,6 +99,7 @@ export const LUMIN_SIGNING_TOOL_DEFINITIONS = Object.freeze([
       properties: {
         pdf_path: { type: "string", description: "Exact prepared PDF path returned by prepare_signing_packet." },
         preparation_receipt: { type: "object", description: "Exact preparation_receipt returned by prepare_signing_packet." },
+        authorization_session_id: { type: "string", description: "Connected Lumin session returned by finish_lumin_authorization. The prepared confirmation is bound to this session." },
         title: { type: "string", maxLength: 255, description: "Title recipients will see in Lumin." },
         expires_at: { type: "string", format: "date-time", description: "ISO-8601 time after which the Lumin request expires." },
         signers: {
@@ -125,7 +132,7 @@ export const LUMIN_SIGNING_TOOL_DEFINITIONS = Object.freeze([
           },
         },
       },
-      required: ["pdf_path", "preparation_receipt", "title", "expires_at", "signers"],
+      required: ["pdf_path", "preparation_receipt", "authorization_session_id", "title", "expires_at", "signers"],
       additionalProperties: false,
     },
     annotations: {
@@ -335,7 +342,13 @@ function validatePreparationReceipt(value, preparedDocument) {
   }
   const receiptUnsigned = cloneJson(receipt);
   delete receiptUnsigned.receipt_sha256;
-  const expectedReceiptSha256 = domainSha256("pdf-tools.signing-preparation-receipt.v1", receiptUnsigned);
+  const canonicalReceipt = canonicalJson(receiptUnsigned);
+  if (Buffer.byteLength(canonicalReceipt, "utf8") > MAX_PREPARATION_RECEIPT_BYTES) {
+    throw toolError("LUMIN_PREPARATION_RECEIPT_INVALID", "The signing preparation receipt is too large.");
+  }
+  const expectedReceiptSha256 = createHash("sha256")
+    .update(`pdf-tools.signing-preparation-receipt.v1\0${canonicalReceipt}`, "utf8")
+    .digest("hex");
   if (receipt.receipt_sha256 !== expectedReceiptSha256) {
     throw toolError("LUMIN_PREPARATION_RECEIPT_INVALID", "The signing preparation receipt does not match its contents.");
   }
@@ -386,10 +399,19 @@ export function createLuminSigningToolHandler({
   fetchImpl = globalThis.fetch,
   now = Date.now,
   idFactory = randomUUID,
+  platform = osPlatform(),
+  authorizationCompletionWaitMs = AUTHORIZATION_COMPLETION_WAIT_MS,
 } = {}) {
   const pendingAuthorizations = new Map();
   const connections = new Map();
   const preparations = new Map();
+  if (
+    !Number.isSafeInteger(authorizationCompletionWaitMs)
+    || authorizationCompletionWaitMs < 1
+    || authorizationCompletionWaitMs > AUTHORIZATION_COMPLETION_WAIT_MS
+  ) {
+    throw toolError("LUMIN_WORKFLOW_CONFIGURATION_INVALID", "The Lumin authorization wait limit is invalid.");
+  }
 
   function currentMs() {
     const value = now();
@@ -398,6 +420,12 @@ export function createLuminSigningToolHandler({
   }
 
   function requireConfigured() {
+    if (platform === "win32") {
+      throw toolError(
+        "LUMIN_SIGNING_PLATFORM_UNSUPPORTED",
+        "Lumin signing is not available on Windows in this release.",
+      );
+    }
     if (typeof clientId !== "string" || !clientId || clientId.includes("${")) {
       throw toolError(
         "LUMIN_OAUTH_NOT_CONFIGURED",
@@ -422,6 +450,15 @@ export function createLuminSigningToolHandler({
   async function handleStart(value) {
     assertRecord(value, []);
     requireConfigured();
+    const nowMs = currentMs();
+    const expired = [];
+    for (const [id, pending] of pendingAuthorizations) {
+      if (pending.expiresAtMs <= nowMs) {
+        pendingAuthorizations.delete(id);
+        expired.push(pending.session.close().catch(() => {}));
+      }
+    }
+    await Promise.all(expired);
     if (pendingAuthorizations.size >= MAX_PENDING_AUTHORIZATIONS) {
       throw toolError("LUMIN_AUTHORIZATION_LIMIT_REACHED", "Too many Lumin authorization sessions are already pending.");
     }
@@ -470,19 +507,45 @@ export function createLuminSigningToolHandler({
       pendingAuthorizations.delete(id);
       throw toolError("LUMIN_AUTHORIZATION_SESSION_INVALID", "The Lumin authorization session is missing or expired.");
     }
-    pendingAuthorizations.delete(id);
+    if (pending.completionInProgress) {
+      throw toolError("LUMIN_AUTHORIZATION_PENDING", "Lumin authorization is still waiting for the browser callback.");
+    }
+    pending.completionInProgress = true;
     let token;
     try {
-      const callback = await pending.session.waitForCallback();
+      let timer;
+      const outcome = await Promise.race([
+        pending.session.waitForCallback().then(
+          callback => ({ kind: "callback", callback }),
+          error => ({ kind: "error", error }),
+        ),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve({ kind: "pending" }), authorizationCompletionWaitMs);
+          timer.unref?.();
+        }),
+      ]);
+      clearTimeout(timer);
+      if (outcome.kind === "pending") {
+        pending.completionInProgress = false;
+        throw toolError(
+          "LUMIN_AUTHORIZATION_PENDING",
+          "Lumin authorization is still waiting for the browser callback. Call this tool again after finishing in the browser.",
+        );
+      }
+      pendingAuthorizations.delete(id);
+      if (outcome.kind === "error") throw outcome.error;
+      const callback = outcome.callback;
       token = await pending.session.exchangeToken(callback, { fetchFn: fetchImpl });
     } catch (error) {
+      if (error?.code === "LUMIN_AUTHORIZATION_PENDING") throw error;
+      pendingAuthorizations.delete(id);
       throw sanitizedDependencyError(
         error,
         "LUMIN_OAUTH_TOKEN_REQUEST_FAILED",
         "Lumin authorization could not be completed safely.",
       );
     } finally {
-      await pending.session.close().catch(() => {});
+      if (!pendingAuthorizations.has(id)) await pending.session.close().catch(() => {});
     }
     if (connections.size >= MAX_CONNECTIONS) {
       const oldest = connections.keys().next().value;
@@ -507,12 +570,20 @@ export function createLuminSigningToolHandler({
 
   async function handlePrepare(value) {
     const args = assertRecord(value, [
+      "authorization_session_id",
       "expires_at",
       "pdf_path",
       "preparation_receipt",
       "signers",
       "title",
     ], ["viewers"]);
+    requireConfigured();
+    const authorizationSessionId = assertString(
+      args.authorization_session_id,
+      "authorization session ID",
+      { max: 128, pattern: IDENTIFIER_PATTERN },
+    );
+    requireConnection(authorizationSessionId);
     const preparedDocument = await readPreparedPdf(assertString(args.pdf_path, "PDF path", { max: 32_768 }));
     if (!preparedDocument || typeof preparedDocument.canonicalPath !== "string" || !Buffer.isBuffer(preparedDocument.bytes)) {
       throw toolError("LUMIN_PREPARED_PDF_INVALID", "The prepared PDF could not be read safely.");
@@ -540,12 +611,31 @@ export function createLuminSigningToolHandler({
       signers,
       ...(viewers.length ? { viewers } : {}),
     }, { nowMs });
+    try {
+      validateLuminSignV1DirectUploadPreparation({
+        mapping,
+        preparation_receipt: receipt,
+        prepared_pdf_bytes: preparedDocument.bytes,
+      }, { nowMs });
+    } catch {
+      throw toolError(
+        "LUMIN_PREPARATION_NOT_PROVIDER_READY",
+        "The signing packet is not ready for the Lumin request.",
+      );
+    }
+    for (const [id, preparation] of preparations) {
+      if (preparation.expiresAtMs <= nowMs) preparations.delete(id);
+    }
+    if (preparations.size >= MAX_PREPARATIONS) {
+      throw toolError("LUMIN_REQUEST_PREPARATION_LIMIT_REACHED", "Too many Lumin signing requests are awaiting confirmation.");
+    }
     const requestPreparationId = idFactory();
     const confirmation = {
       schema_version: 1,
       provider: "lumin_sign",
       action: "create_signature_request",
       request_preparation_id: requestPreparationId,
+      authorization_session_id: authorizationSessionId,
       preparation_receipt_sha256: receipt.receipt_sha256,
       request_mapping_sha256: domainSha256("pdf-tools.lumin-sign-v1-request-mapping.v1", mapping),
       prepared_document_sha256: sha256(preparedDocument.bytes),
@@ -558,6 +648,7 @@ export function createLuminSigningToolHandler({
       createdAtMs: nowMs,
       expiresAtMs: nowMs + REQUEST_PREPARATION_LIFETIME_MS,
       pdfPath: preparedDocument.canonicalPath,
+      authorizationSessionId,
       receipt,
       mapping: cloneJson(mapping),
       confirmationSha256,
@@ -566,6 +657,7 @@ export function createLuminSigningToolHandler({
       status: "ready_for_user_confirmation",
       provider: "lumin_sign",
       request_preparation_id: requestPreparationId,
+      authorization_session_id: authorizationSessionId,
       confirmation_sha256: confirmationSha256,
       confirmation_expires_at: new Date(nowMs + REQUEST_PREPARATION_LIFETIME_MS).toISOString(),
       disclosure: LUMIN_SIGNING_DISCLOSURE,
@@ -593,7 +685,11 @@ export function createLuminSigningToolHandler({
       "user_confirmed_at",
     ]);
     requireConfigured();
-    const connection = requireConnection(args.authorization_session_id);
+    const authorizationSessionId = assertString(
+      args.authorization_session_id,
+      "authorization session ID",
+      { max: 128, pattern: IDENTIFIER_PATTERN },
+    );
     const preparationId = assertString(args.request_preparation_id, "request preparation ID", { max: 128, pattern: IDENTIFIER_PATTERN });
     const preparation = preparations.get(preparationId);
     const nowMs = currentMs();
@@ -601,6 +697,13 @@ export function createLuminSigningToolHandler({
       preparations.delete(preparationId);
       throw toolError("LUMIN_REQUEST_PREPARATION_EXPIRED", "Prepare the Lumin signing request again before sending.");
     }
+    if (authorizationSessionId !== preparation.authorizationSessionId) {
+      throw toolError(
+        "LUMIN_AUTHORIZATION_SESSION_CHANGED",
+        "The connected Lumin session does not match the confirmed request preparation.",
+      );
+    }
+    const connection = requireConnection(authorizationSessionId);
     if (
       args.confirmation_sha256 !== preparation.confirmationSha256
       || args.confirmation_statement !== LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION
@@ -611,6 +714,10 @@ export function createLuminSigningToolHandler({
     if (confirmedAtMs > nowMs || nowMs - confirmedAtMs >= USER_CONFIRMATION_LIFETIME_MS) {
       throw toolError("LUMIN_USER_CONFIRMATION_EXPIRED", "The user confirmation is missing, future-dated, or older than 10 minutes.");
     }
+    // The user's exact confirmation is a one-shot capability. Consume it
+    // synchronously before the first await so concurrent sends cannot both
+    // pass validation or enter local/provider work.
+    preparations.delete(preparationId);
     const preparedDocument = await readPreparedPdf(preparation.pdfPath);
     validatePreparationReceipt(preparation.receipt, preparedDocument);
     const mapped = mapLuminSignV1SignatureRequest({
@@ -655,10 +762,6 @@ export function createLuminSigningToolHandler({
       automatic_retry_allowed: false,
     };
     const authoritySha256 = domainSha256("pdf-tools.lumin-sign-v1-execution-authority.v1", authority);
-    // The user's exact confirmation is a one-shot capability. Consume the
-    // in-memory preparation before entering the provider call so an ambiguous
-    // transport outcome cannot be retried under a freshly generated authority.
-    preparations.delete(preparationId);
     let execution;
     try {
       execution = await executeCreate({

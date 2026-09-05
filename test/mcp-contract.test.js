@@ -184,7 +184,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // wire-visible coverage-semantics change. No tool name, description, input
 // schema, or read-only annotation changes. The prior current-master digest was
 // 7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae.
-const TOOL_CONTRACT_SHA256 = "c81d13ae7f8fc11fe7c101068febb608d786ca43a743437997db2baa2abed088";
+const TOOL_CONTRACT_SHA256 = "fd4b388bf9f7e45a4cbffea05a15ecc99c739c1486bdfa2b7b91e7ec3bbc6216";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -452,6 +452,7 @@ describe("MCPB static declarations", () => {
       "lumin-sign-v1-mapper.js",
       "lumin-sign-v1-operation.js",
       "lumin-sign-v1-transport.js",
+      "lumin-signing-tools.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
       "pdf-lib-subprocess.js",

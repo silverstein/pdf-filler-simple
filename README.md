@@ -111,6 +111,11 @@ connected Lumin session, and the user's fresh verbatim confirmation. The
 prepared PDF plus listed names and email addresses then leave the device and are
 handled by Lumin.
 
+PDF Tools can validate the exact confirmation text and its freshness, but it
+cannot independently prove who typed it. The MCP host must present the
+destructive tool action, and the agent must pass only the user's actual words
+and time. Agents must never fabricate either value.
+
 Configure a public OAuth client ID in the extension's **Lumin OAuth Client ID**
 setting. Other stdio hosts may set `LUMIN_OAUTH_CLIENT_ID`; Agent Plugin users
 may set `luminOAuthClientId` in the plugin's private `config.json`. Register the
@@ -123,7 +128,7 @@ is uncertain, PDF Tools preserves that uncertainty and will not create another
 request under the same authority. Status polling is the current desktop path.
 Lumin app webhooks require a private server app and are not part of this public
 PKCE workflow. The durable signing-operation store currently supports macOS and
-Linux; Lumin request creation fails closed on Windows until a reviewed
+Linux. The public Lumin workflow fails closed on Windows until a reviewed
 ACL-aware state adapter exists.
 
 ### Page Organization Tools

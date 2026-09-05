@@ -1822,6 +1822,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     status: { const: "ready_for_user_confirmation" },
     provider: { const: "lumin_sign" },
     request_preparation_id: string,
+    authorization_session_id: string,
     confirmation_sha256: sha256Digest,
     confirmation_expires_at: string,
     disclosure: string,

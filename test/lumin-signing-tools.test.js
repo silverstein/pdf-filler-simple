@@ -110,6 +110,7 @@ function prepareInput(overrides = {}) {
   return {
     pdf_path: PDF_PATH,
     preparation_receipt: preparationReceipt(),
+    authorization_session_id: "authorization.session",
     title: "Synthetic signing request",
     expires_at: "2030-01-02T00:00:00.000Z",
     signers: [{
@@ -267,12 +268,78 @@ describe("public Lumin signing workflow", () => {
     await expect(attempt).rejects.not.toThrow(ACCESS_TOKEN);
   });
 
+  it("fails closed on Windows before opening OAuth or durable signing state", async () => {
+    const { dependencies, handle } = workflow({ platform: "win32" });
+    await expect(handle("start_lumin_authorization", {})).rejects.toMatchObject({
+      code: "LUMIN_SIGNING_PLATFORM_UNSUPPORTED",
+    });
+    expect(dependencies.createOAuthSession).not.toHaveBeenCalled();
+    expect(dependencies.openExternal).not.toHaveBeenCalled();
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
+  });
+
+  it("prunes expired unfinished OAuth sessions before applying the pending limit", async () => {
+    let observedNow = NOW_MS;
+    let sequence = 0;
+    const closed = [];
+    const { handle } = workflow({
+      now: () => observedNow,
+      idFactory: () => `authorization.session.${sequence += 1}`,
+      createOAuthSession: vi.fn(async () => ({
+        authorizationUrl: "https://auth.luminpdf.com/oauth2/auth?opaque=one",
+        waitForCallback: vi.fn(() => new Promise(() => {})),
+        exchangeToken: vi.fn(),
+        close: vi.fn(async () => closed.push(true)),
+      })),
+    });
+    for (let index = 0; index < 8; index += 1) {
+      await handle("start_lumin_authorization", {});
+    }
+    observedNow += 300_001;
+    await expect(handle("start_lumin_authorization", {})).resolves.toMatchObject({
+      authorization_session_id: "authorization.session.9",
+    });
+    expect(closed).toHaveLength(8);
+  });
+
+  it("bounds each finish call without discarding a callback that is still pending", async () => {
+    let resolveCallback;
+    const callbackPromise = new Promise(resolve => {
+      resolveCallback = resolve;
+    });
+    const session = {
+      authorizationUrl: "https://auth.luminpdf.com/oauth2/auth?opaque=one",
+      waitForCallback: vi.fn(() => callbackPromise),
+      exchangeToken: vi.fn(async () => ({
+        accessToken: ACCESS_TOKEN,
+        refreshToken: null,
+        expiresIn: 3600,
+      })),
+      close: vi.fn(async () => {}),
+    };
+    const { handle } = workflow({
+      authorizationCompletionWaitMs: 1,
+      createOAuthSession: vi.fn(async () => session),
+    });
+    const started = await handle("start_lumin_authorization", {});
+    await expect(handle("finish_lumin_authorization", {
+      authorization_session_id: started.authorization_session_id,
+    })).rejects.toMatchObject({ code: "LUMIN_AUTHORIZATION_PENDING" });
+    resolveCallback({ code: "one-time", redirectUri: "http://127.0.0.1:12345/callback" });
+    await expect(handle("finish_lumin_authorization", {
+      authorization_session_id: started.authorization_session_id,
+    })).resolves.toMatchObject({ status: "connected" });
+    expect(session.exchangeToken).toHaveBeenCalledTimes(1);
+  });
+
   it("prepares locally and binds the exact PDF, receipt, recipients, disclosure, and confirmation", async () => {
     const { dependencies, handle } = workflow();
+    await connect(handle);
     const prepared = await handle("prepare_lumin_request", prepareInput());
     expect(prepared).toMatchObject({
       status: "ready_for_user_confirmation",
-      request_preparation_id: "authorization.session",
+      request_preparation_id: "preparation.request",
+      authorization_session_id: "authorization.session",
       disclosure: LUMIN_SIGNING_DISCLOSURE,
       confirmation_statement_required: LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION,
       prepared_document: { canonical_path: PDF_PATH, sha256: PDF_SHA256 },
@@ -289,6 +356,7 @@ describe("public Lumin signing workflow", () => {
     const changed = workflow({
       readPreparedPdf: vi.fn(async () => ({ canonicalPath: PDF_PATH, bytes: Buffer.from("%PDF-changed", "ascii") })),
     });
+    await connect(changed.handle);
     await expect(changed.handle("prepare_lumin_request", prepareInput())).rejects.toMatchObject({
       code: "LUMIN_PREPARED_PDF_CHANGED",
     });
@@ -296,8 +364,24 @@ describe("public Lumin signing workflow", () => {
     const drifted = preparationReceipt();
     drifted.handoff_status = "needs_input";
     const { handle } = workflow();
+    await connect(handle);
     await expect(handle("prepare_lumin_request", prepareInput({ preparation_receipt: drifted })))
       .rejects.toMatchObject({ code: "LUMIN_PREPARATION_NOT_READY" });
+  });
+
+  it("rejects signer zones that are not bound to the proposed Lumin signers", async () => {
+    const receipt = preparationReceipt();
+    receipt.zones[0].participant_binding.participant_id = "signer.someone-else";
+    const unsigned = { ...receipt };
+    delete unsigned.receipt_sha256;
+    receipt.receipt_sha256 = createHash("sha256")
+      .update(`pdf-tools.signing-preparation-receipt.v1\0${canonicalJson(unsigned)}`)
+      .digest("hex");
+    const { dependencies, handle } = workflow();
+    await connect(handle);
+    await expect(handle("prepare_lumin_request", prepareInput({ preparation_receipt: receipt })))
+      .rejects.toMatchObject({ code: "LUMIN_PREPARATION_NOT_PROVIDER_READY" });
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
   });
 
   it("requires an exact fresh user confirmation before the sole create attempt", async () => {
@@ -311,6 +395,10 @@ describe("public Lumin signing workflow", () => {
       confirmation_statement: LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION,
       user_confirmed_at: new Date(NOW_MS).toISOString(),
     };
+    await expect(handle("send_lumin_request", {
+      ...input,
+      authorization_session_id: "another.session",
+    })).rejects.toMatchObject({ code: "LUMIN_AUTHORIZATION_SESSION_CHANGED" });
     await expect(handle("send_lumin_request", {
       ...input,
       confirmation_statement: "Yes, send it",
@@ -376,6 +464,38 @@ describe("public Lumin signing workflow", () => {
     await expect(handle("send_lumin_request", input)).rejects.toMatchObject({
       code: "LUMIN_REQUEST_PREPARATION_EXPIRED",
     });
+    expect(dependencies.executeCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("consumes a confirmation before the first await so concurrent sends cannot both run", async () => {
+    let readCount = 0;
+    let releaseSecondRead;
+    const secondRead = new Promise(resolve => {
+      releaseSecondRead = resolve;
+    });
+    const { dependencies, handle } = workflow({
+      readPreparedPdf: vi.fn(async () => {
+        readCount += 1;
+        if (readCount === 2) await secondRead;
+        return { canonicalPath: PDF_PATH, bytes: Buffer.from(PDF_BYTES) };
+      }),
+    });
+    const authorizationId = await connect(handle);
+    const prepared = await handle("prepare_lumin_request", prepareInput());
+    const input = {
+      request_preparation_id: prepared.request_preparation_id,
+      authorization_session_id: authorizationId,
+      confirmation_sha256: prepared.confirmation_sha256,
+      confirmation_statement: LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION,
+      user_confirmed_at: new Date(NOW_MS).toISOString(),
+    };
+    const first = handle("send_lumin_request", input);
+    await vi.waitFor(() => expect(readCount).toBe(2));
+    await expect(handle("send_lumin_request", input)).rejects.toMatchObject({
+      code: "LUMIN_REQUEST_PREPARATION_EXPIRED",
+    });
+    releaseSecondRead();
+    await expect(first).resolves.toMatchObject({ status: "request_created" });
     expect(dependencies.executeCreate).toHaveBeenCalledTimes(1);
   });
 
