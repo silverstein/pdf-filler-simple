@@ -260,28 +260,51 @@ function sameFileIdentity(left, right) {
   return sameWorkspaceFileIdentityForPlatform(left, right);
 }
 
-async function assertPrivateDirectory(directory, label) {
+export function sameWorkspaceDirectoryIdentityForPlatform(left, right,
+  platform = process.platform) {
+  const deviceMatches = left.dev === right.dev || (
+    platform === "win32" && (zeroDevice(left.dev) !== zeroDevice(right.dev))
+  );
+  // A shared root's entries may change while another creator publishes its
+  // claim. Size, link count and modification/change times describe that mutable
+  // inventory, not replacement of the directory. Keep object identity, owner,
+  // permissions and birth time exact. Retained files still use the full guard.
+  return deviceMatches && left.ino === right.ino && left.mode === right.mode
+    && left.uid === right.uid && left.gid === right.gid
+    && left.birthtimeNs === right.birthtimeNs;
+}
+
+async function assertPrivateDirectory(directory, label, {
+  concurrentEntries = false,
+  faultInjector = null,
+} = {}) {
   const resolved = resolvedAbsolute(directory, label);
   const before = await lstat(resolved, { bigint: true });
   assertion(before.isDirectory() && !before.isSymbolicLink(), `${label} is not a physical directory`);
   assertion(workspacePrivateModeMatchesForPlatform(before, 0o700),
     `${label} mode must be 0700`);
+  if (label === "workspace root") {
+    await inject(faultInjector, "after_workspace_root_lstat", { directory: resolved });
+  }
   assertion(await realpath(resolved) === resolved, `${label} uses a symlinked or aliased path`);
   const after = await lstat(resolved, { bigint: true });
-  assertion(sameFileIdentity(before, after), `${label} changed during inspection`);
+  assertion(after.isDirectory() && !after.isSymbolicLink(), `${label} is not a physical directory`);
+  assertion(concurrentEntries
+    ? sameWorkspaceDirectoryIdentityForPlatform(before, after)
+    : sameFileIdentity(before, after), `${label} changed during inspection`);
   return before;
 }
 
-async function ensurePrivateRoot(rootPath) {
+async function ensurePrivateRoot(rootPath, faultInjector = null) {
   const resolved = resolvedAbsolute(rootPath, "workspace root");
   try {
     await access(resolved, constants.F_OK);
   } catch {
     const parent = path.dirname(resolved);
-    await assertPrivateDirectory(parent, "workspace root parent");
+    await assertPrivateDirectory(parent, "workspace root parent", { concurrentEntries: true });
     await mkdir(resolved, { mode: 0o700 });
   }
-  await assertPrivateDirectory(resolved, "workspace root");
+  await assertPrivateDirectory(resolved, "workspace root", { concurrentEntries: true, faultInjector });
   return resolved;
 }
 
@@ -1326,7 +1349,7 @@ export async function createExtractionWorkspace({
   transactionId = null,
   faultInjector = null,
 }) {
-  const root = await ensurePrivateRoot(rootPath);
+  const root = await ensurePrivateRoot(rootPath, faultInjector);
   workspaceDirectoryName(workspaceId);
   const policy = normalizePolicy(workspacePolicy);
   const leaves = normalizeLeaves(leafObligations, policy);

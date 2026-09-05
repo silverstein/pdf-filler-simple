@@ -19,6 +19,7 @@ import {
   inspectExtractionWorkspace,
   readExtractionWorkspacePage,
   recoverExtractionWorkspace,
+  sameWorkspaceDirectoryIdentityForPlatform,
   sameWorkspaceFileIdentityForPlatform,
   workspaceDirectoryFsyncSupportedForPlatform,
   workspacePrivateModeMatchesForPlatform,
@@ -56,11 +57,34 @@ function portableWorkspaceStat(overrides = {}) {
     mtimeNs: 123456789n,
     ctimeNs: 123456780n,
     birthtimeNs: 123456700n,
+    uid: 501n,
+    gid: 20n,
     ...overrides,
   };
 }
 
 describe("verified extraction platform filesystem contracts", () => {
+  it("separates mutable directory entries from the retained-file identity guard", () => {
+    const before = portableWorkspaceStat({ mode: 0o40700n });
+    const after = { ...before, size: 4096n, nlink: 4n, mtimeNs: 999n, ctimeNs: 1000n };
+    for (const platform of ["darwin", "linux", "win32"]) {
+      expect(sameWorkspaceDirectoryIdentityForPlatform(before, after, platform)).toBe(true);
+      expect(sameWorkspaceFileIdentityForPlatform(before, after, platform)).toBe(false);
+      for (const drift of [
+        { dev: 42n }, { ino: 9002n }, { mode: 0o40755n },
+        { uid: 502n }, { gid: 21n }, { birthtimeNs: 123456701n },
+      ]) {
+        expect(sameWorkspaceDirectoryIdentityForPlatform(before, { ...after, ...drift }, platform))
+          .toBe(false);
+      }
+    }
+    expect(sameWorkspaceDirectoryIdentityForPlatform(
+      { ...before, dev: 0n }, { ...after, dev: 2660852064n }, "win32",
+    )).toBe(true);
+    expect(sameWorkspaceDirectoryIdentityForPlatform(
+      { ...before, dev: 0n }, { ...after, dev: 2660852064n, birthtimeNs: 1n }, "win32",
+    )).toBe(false);
+  });
   it("uses NTFS physical identity facts when POSIX device and mode bits are unavailable", () => {
     expect(workspaceDirectoryFsyncSupportedForPlatform("win32")).toBe(false);
     expect(workspaceDirectoryFsyncSupportedForPlatform("darwin")).toBe(true);
@@ -906,6 +930,71 @@ describe("transactional verified extraction workspace", () => {
       expectedWorkspaceIdentitySha256: pointer.workspace_identity_sha256,
     })).resolves.toMatchObject({ state: "complete" });
   });
+
+  it("retains a recoverable loser when another creator publishes during root inspection", async () => {
+    await fs.mkdir(rootPath, { mode: 0o700 });
+    let releaseInspection;
+    const inspectionBarrier = new Promise(resolve => { releaseInspection = resolve; });
+    let enteredInspection;
+    const entered = new Promise(resolve => { enteredInspection = resolve; });
+    const loserTransactionId = "a".repeat(32);
+    const workspaceId = "root-inspection-race";
+    const loser = create({
+      workspaceId,
+      transactionId: loserTransactionId,
+      faultInjector: async phase => {
+        if (phase === "after_workspace_root_lstat") {
+          enteredInspection();
+          await inspectionBarrier;
+        }
+      },
+    }).then(value => ({ value }), error => ({ error }));
+    await entered;
+    let winner;
+    try {
+      winner = await create({ workspaceId, transactionId: "b".repeat(32) });
+    } finally {
+      releaseInspection();
+    }
+    expect((await loser).error).toMatchObject({ code: "EEXIST" });
+    const { pointer } = await workspaceFromRoot(rootPath);
+    const initializations = (await fs.readdir(rootPath)).filter(name => name.startsWith(".initializing-"));
+    expect(initializations).toHaveLength(2);
+    const loserDirectory = initializations.find(name => name !== pointer.workspace_directory_name);
+    const authority = await initializationAbandonmentAuthority(rootPath, workspaceId, loserTransactionId);
+    await expect(abandonExtractionWorkspaceInitialization({
+      rootPath,
+      workspaceId,
+      transactionId: loserTransactionId,
+      initializationDirectoryName: loserDirectory,
+      ...authority,
+      expectedCurrentWorkspaceIdentitySha256: winner.workspace_identity_sha256,
+    })).resolves.toMatchObject({ state: "abandoned_initialization" });
+    expect((await inspectExtractionWorkspace({ rootPath, workspaceId })).state).toBe("complete");
+  });
+
+  it.each(["replacement", "symlink", "file", ...(process.platform === "win32" ? [] : ["mode"])])(
+    "rejects %s of the shared root during inspection without publishing a claim",
+    async kind => {
+      await fs.mkdir(rootPath, { mode: 0o700 });
+      const originalPath = path.join(parentPath, "original-root");
+      await expect(create({
+        faultInjector: async phase => {
+          if (phase !== "after_workspace_root_lstat") return;
+          if (kind === "mode") {
+            await fs.chmod(rootPath, 0o755);
+            return;
+          }
+          await fs.rename(rootPath, originalPath);
+          if (kind === "replacement") await fs.mkdir(rootPath, { mode: 0o700 });
+          else if (kind === "symlink") await fs.symlink(originalPath, rootPath, "junction");
+          else await fs.writeFile(rootPath, "not a directory", { mode: 0o600, flag: "wx" });
+        },
+      })).rejects.toThrow(/changed during inspection|symlinked or aliased|not a physical directory/u);
+      const physicalRoot = kind === "mode" ? rootPath : originalPath;
+      expect(await fs.readdir(physicalRoot)).toEqual([]);
+    },
+  );
 
   it("binds the pointer to the exact private data directory in the workspace identity", async () => {
     const created = await create();
