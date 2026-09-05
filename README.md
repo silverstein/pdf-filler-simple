@@ -116,7 +116,19 @@ cannot independently prove who typed it. The MCP host must present the
 destructive tool action, and the agent must pass only the user's actual words
 and time. Agents must never fabricate either value.
 
-Configure a public OAuth client ID in the extension's **Lumin OAuth Client ID**
+This is currently a maintainer-configured integration, not a fully qualified
+one-click signup experience. An ordinary user should not need to create a
+developer app. If signing is not configured, ask the installation's maintainer;
+creating a personal Lumin account alone does not enable the integration.
+
+Once configured, ask PDF Tools to connect Lumin. Sign in and approve access in
+the browser, never by sharing passwords or callback URLs in chat. If you need
+an account, create it on Lumin's website. If signup does not return to the
+connection before it expires, start the connection again. Connecting does not
+upload a PDF, send an invitation, or approve a signature. After reconnecting,
+check an existing request rather than sending it again.
+
+For maintainers: configure a public OAuth client ID in the extension's **Lumin OAuth Client ID**
 setting. Other stdio hosts may set `LUMIN_OAUTH_CLIENT_ID`; Agent Plugin users
 may set `luminOAuthClientId` in the plugin's private `config.json`. Register the
 exact redirect URI `http://127.0.0.1/callback`. The OAuth access token stays only
@@ -130,6 +142,12 @@ Lumin app webhooks require a private server app and are not part of this public
 PKCE workflow. The durable signing-operation store currently supports macOS and
 Linux. The public Lumin workflow fails closed on Windows until a reviewed
 ACL-aware state adapter exists.
+
+Lumin also provides its own hosted MCP and an API-key-based local extension.
+These are separate connections, not automatically installed, authenticated, or
+invoked by PDF Tools. See [Lumin onboarding and integration boundaries](docs/LUMIN_ONBOARDING.md)
+for the capability comparison, first-time-user limitations, and attribution
+proposal. No signup tracking or analytics reporting is enabled by this work.
 
 ### Page Organization Tools
 

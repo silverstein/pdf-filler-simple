@@ -4,6 +4,7 @@ import {
   LUMIN_SIGNING_DISCLOSURE,
   LUMIN_SIGNING_TOOL_DEFINITIONS,
   createLuminSigningToolHandler,
+  formatLuminSigningToolText,
 } from "../server/lumin-signing-tools.js";
 import { validateStructuredToolResult } from "../server/output-schemas.js";
 import { LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION } from "../server/lumin-sign-v1-transport.js";
@@ -231,6 +232,10 @@ describe("public Lumin signing workflow", () => {
     });
     expect(dependencies.openExternal).toHaveBeenCalledWith("https://auth.luminpdf.com/oauth2/auth?opaque=one");
     expect(JSON.stringify(started)).not.toContain("auth.luminpdf.com");
+    expect(started.next_step).toContain("create one on Lumin's website");
+    expect(started.next_step).toContain("Never paste passwords");
+    expect(formatLuminSigningToolText("start_lumin_authorization", started)).toContain(started.next_step);
+    expect(formatLuminSigningToolText("start_lumin_authorization", started)).not.toContain(started.authorization_session_id);
     expectValidStructuredOutput("start_lumin_authorization", started);
     const completed = await handle("finish_lumin_authorization", {
       authorization_session_id: started.authorization_session_id,
@@ -243,6 +248,12 @@ describe("public Lumin signing workflow", () => {
       pdf_sent: false,
     });
     expect(JSON.stringify(completed)).not.toContain("token-that-must-never-escape");
+    expect(completed.next_step).toContain("no PDF or signing request has been sent");
+    expect(completed.next_step).toContain("check_lumin_status");
+    expect(formatLuminSigningToolText("finish_lumin_authorization", completed)).toContain(completed.next_step);
+    expect(formatLuminSigningToolText("finish_lumin_authorization", completed)).not.toContain(ACCESS_TOKEN);
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
+    expect(dependencies.readPreparedPdf).not.toHaveBeenCalled();
     expectValidStructuredOutput("finish_lumin_authorization", completed);
   });
 
@@ -250,9 +261,91 @@ describe("public Lumin signing workflow", () => {
     const { dependencies, handle } = workflow({ clientId: null });
     await expect(handle("start_lumin_authorization", {})).rejects.toMatchObject({
       code: "LUMIN_OAUTH_NOT_CONFIGURED",
+      message: expect.stringContaining("Creating a personal Lumin account will not fix"),
     });
     expect(dependencies.createOAuthSession).not.toHaveBeenCalled();
     expect(dependencies.openExternal).not.toHaveBeenCalled();
+    expect(dependencies.fetchImpl).not.toHaveBeenCalled();
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects account credentials and signup parameters without starting authorization", async () => {
+    const { dependencies, handle } = workflow();
+    for (const args of [{ password: "do-not-send" }, { email: "user@example.test" }, { signup: true }]) {
+      await expect(handle("start_lumin_authorization", args)).rejects.toMatchObject({ code: "LUMIN_WORKFLOW_INPUT_INVALID" });
+    }
+    expect(dependencies.createOAuthSession).not.toHaveBeenCalled();
+    expect(dependencies.openExternal).not.toHaveBeenCalled();
+    expect(dependencies.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("preserves non-connection text without appending unrelated provider fields", () => {
+    const extra = { next_step: ACCESS_TOKEN };
+    expect(formatLuminSigningToolText("prepare_lumin_request", extra))
+      .toBe("Prepared the Lumin signing request locally. Nothing was sent.");
+    expect(formatLuminSigningToolText("send_lumin_request", { ...extra, signature_request_id: "request.1" }))
+      .toBe("Created Lumin signing request request.1.");
+    expect(formatLuminSigningToolText("check_lumin_status", { ...extra, provider_status: "APPROVED" }))
+      .toBe("Lumin signing status: APPROVED.");
+    expect(formatLuminSigningToolText("download_lumin_artifact", { ...extra, file_type: "agreement", pdf_path: "/synthetic/result.pdf" }))
+      .toBe("Downloaded the Lumin agreement PDF to /synthetic/result.pdf.");
+  });
+
+  it("closes an expired signup connection before advising a fresh browser attempt", async () => {
+    let nowMs = NOW_MS;
+    const { dependencies, handle } = workflow({ now: () => nowMs });
+    const started = await handle("start_lumin_authorization", {});
+    const session = await dependencies.createOAuthSession.mock.results[0].value;
+    nowMs += 300_000;
+    await expect(handle("finish_lumin_authorization", { authorization_session_id: started.authorization_session_id }))
+      .rejects.toMatchObject({ code: "LUMIN_AUTHORIZATION_SESSION_INVALID", message: expect.stringContaining("new session ID") });
+    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.exchangeToken).not.toHaveBeenCalled();
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
+    const fresh = await handle("start_lumin_authorization", {});
+    expect(fresh.authorization_session_id).not.toBe(started.authorization_session_id);
+    expect(fresh.pdf_sent).toBe(false);
+  });
+
+  it("allows a new connection after cancellation without replaying the old session or leaking provider text", async () => {
+    const { dependencies, handle } = workflow();
+    const started = await handle("start_lumin_authorization", {});
+    const session = await dependencies.createOAuthSession.mock.results[0].value;
+    session.waitForCallback.mockRejectedValue(Object.assign(new Error(ACCESS_TOKEN), { code: "LUMIN_OAUTH_PROVIDER_ERROR" }));
+    await expect(handle("finish_lumin_authorization", { authorization_session_id: started.authorization_session_id }))
+      .rejects.toMatchObject({ code: "LUMIN_OAUTH_PROVIDER_ERROR", message: expect.stringContaining("leave it disconnected") });
+    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.exchangeToken).not.toHaveBeenCalled();
+    await expect(handle("finish_lumin_authorization", { authorization_session_id: started.authorization_session_id }))
+      .rejects.toMatchObject({ code: "LUMIN_AUTHORIZATION_SESSION_INVALID" });
+    const fresh = await handle("start_lumin_authorization", {});
+    const connected = await handle("finish_lumin_authorization", { authorization_session_id: fresh.authorization_session_id });
+    expect(connected.status).toBe("connected");
+    expect(JSON.stringify(connected)).not.toContain(ACCESS_TOKEN);
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
+    expect(dependencies.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("explains reconnecting an expired token without resending an existing request", async () => {
+    let nowMs = NOW_MS;
+    const { dependencies, handle } = workflow({ now: () => nowMs });
+    await connect(handle);
+    nowMs += 3_600_000;
+    await expect(handle("check_lumin_status", { authority_sha256: "a".repeat(64), authorization_session_id: "authorization.session" }))
+      .rejects.toMatchObject({ code: "LUMIN_AUTHORIZATION_REQUIRED", message: expect.stringContaining("not send_lumin_request") });
+    expect(dependencies.pollStatus).not.toHaveBeenCalled();
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
+  });
+
+  it("closes the callback and gives safe recovery when a browser cannot be opened", async () => {
+    const { dependencies, handle } = workflow({ openExternal: vi.fn(async () => { throw new Error(ACCESS_TOKEN); }) });
+    await expect(handle("start_lumin_authorization", {})).rejects.toMatchObject({
+      code: "LUMIN_BROWSER_OPEN_FAILED", message: expect.stringContaining("Check your default browser"),
+    });
+    const session = await dependencies.createOAuthSession.mock.results[0].value;
+    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.exchangeToken).not.toHaveBeenCalled();
+    expect(dependencies.executeCreate).not.toHaveBeenCalled();
   });
 
   it("sanitizes authorization startup failures", async () => {

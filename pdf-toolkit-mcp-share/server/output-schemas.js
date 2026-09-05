@@ -1803,6 +1803,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   }),
   start_lumin_authorization: object({
     status: { const: "awaiting_user_authorization" },
+    next_step: string,
     provider: { const: "lumin_sign" },
     authorization_session_id: string,
     callback_expires_at: string,
@@ -1811,6 +1812,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   }),
   finish_lumin_authorization: object({
     status: { const: "connected" },
+    next_step: string,
     provider: { const: "lumin_sign" },
     authorization_session_id: string,
     token_expires_at: string,
