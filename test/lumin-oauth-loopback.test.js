@@ -96,6 +96,21 @@ describe("Lumin OAuth loopback PKCE", () => {
     await expect(fetch(session.redirectUri)).rejects.toThrow();
   });
 
+  it("accepts Lumin's exact granted scope callback without weakening scope binding", async () => {
+    const session = await createSession();
+    const { state } = callbackParameters(session);
+    const grantedScope = "openid profile.read sign:requests sign:requests.read";
+    const response = await request(
+      `${session.redirectUri}?code=authorization-code&scope=${encodeURIComponent(grantedScope)}&state=${state}`,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(session.waitForCallback()).resolves.toEqual({
+      code: "authorization-code",
+      redirectUri: session.redirectUri,
+    });
+  });
+
   it("does not consume the session on wrong path, method, host, state, or unknown parameters", async () => {
     const session = await createSession();
     const { state } = callbackParameters(session);
@@ -118,6 +133,13 @@ describe("Lumin OAuth loopback PKCE", () => {
       `?code=one&error=denied&state=${state}`,
       `?state=${state}`,
       `?code=${"x".repeat(4097)}&state=${state}`,
+      `?code=one&scope=&state=${state}`,
+      `?code=one&scope=openid&state=${state}`,
+      `?code=one&scope=${encodeURIComponent("openid profile.read sign:requests sign:requests.read extra")}&state=${state}`,
+      `?code=one&scope=${encodeURIComponent("openid profile.read sign:requests sign:requests")}&state=${state}`,
+      `?code=one&scope=${encodeURIComponent("openid profile.read sign:requests bad/scope")}&state=${state}`,
+      `?code=one&scope=openid&scope=openid&state=${state}`,
+      `?error=access_denied&scope=${encodeURIComponent("openid profile.read sign:requests sign:requests.read")}&state=${state}`,
     ];
     for (const query of attacks) {
       expect((await request(`${session.redirectUri}${query}`)).status).toBe(400);
@@ -180,7 +202,7 @@ describe("Lumin OAuth loopback PKCE", () => {
         expires_in: 3600,
         refresh_token: "refresh-token",
         scope: "sign:requests.read sign:requests profile.read openid",
-        token_type: "Bearer",
+        token_type: "bearer",
       }), { headers: { "content-type": "application/json" } });
     });
 

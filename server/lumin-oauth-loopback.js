@@ -85,7 +85,7 @@ function onlyValue(searchParams, name) {
 }
 
 function hasOnlyCallbackParameters(searchParams) {
-  const allowed = new Set(["code", "error", "error_description", "state"]);
+  const allowed = new Set(["code", "error", "error_description", "scope", "state"]);
   for (const key of searchParams.keys()) {
     if (!allowed.has(key)) return false;
   }
@@ -93,6 +93,22 @@ function hasOnlyCallbackParameters(searchParams) {
     if (searchParams.getAll(key).length > 1) return false;
   }
   return true;
+}
+
+function hasExactReturnedScopes(value, expectedScopes) {
+  if (
+    typeof value !== "string"
+    || value !== value.trim()
+    || value.length === 0
+    || Buffer.byteLength(value, "utf8") > 4096
+  ) return false;
+  const returnedScopes = value.split(/\s+/);
+  return (
+    returnedScopes.every(scope => SCOPE_PATTERN.test(scope))
+    && returnedScopes.length === expectedScopes.length
+    && new Set(returnedScopes).size === returnedScopes.length
+    && expectedScopes.every(scope => returnedScopes.includes(scope))
+  );
 }
 
 function respond(response, statusCode, message) {
@@ -191,7 +207,7 @@ function normalizeTokenResponse(value, expectedScopes) {
   } catch {
     throw oauthError("LUMIN_OAUTH_TOKEN_RESPONSE_INVALID", "Lumin returned an invalid token response.");
   }
-  if (value.token_type !== "Bearer") {
+  if (typeof value.token_type !== "string" || value.token_type.toLowerCase() !== "bearer") {
     throw oauthError("LUMIN_OAUTH_TOKEN_RESPONSE_INVALID", "Lumin returned an invalid token response.");
   }
   if (!Number.isSafeInteger(value.expires_in) || value.expires_in <= 0 || value.expires_in > 31_536_000) {
@@ -280,7 +296,13 @@ export async function createLuminOAuthLoopbackSession({
     }
     const code = onlyValue(callbackUrl.searchParams, "code");
     const providerError = onlyValue(callbackUrl.searchParams, "error");
+    const hasReturnedScope = callbackUrl.searchParams.has("scope");
+    const returnedScope = onlyValue(callbackUrl.searchParams, "scope");
     if ((code && providerError) || (!code && !providerError)) {
+      rejectRequest(400, "Authorization callback rejected.");
+      return;
+    }
+    if (hasReturnedScope && (!code || !hasExactReturnedScopes(returnedScope, validatedScopes))) {
       rejectRequest(400, "Authorization callback rejected.");
       return;
     }
