@@ -213,6 +213,25 @@ export const LUMIN_SIGNING_TOOL_DEFINITIONS = Object.freeze([
   },
 ]);
 
+// Keep connection guidance in text as well as structuredContent for clients
+// that primarily expose the text content of tool results to users/models.
+export function formatLuminSigningToolText(name, result) {
+  const summary = name === "start_lumin_authorization"
+    ? "Opened Lumin authorization in the browser."
+    : name === "finish_lumin_authorization"
+      ? "Connected the Lumin account for this PDF Tools session."
+      : name === "prepare_lumin_request"
+        ? "Prepared the Lumin signing request locally. Nothing was sent."
+        : name === "send_lumin_request"
+          ? `Created Lumin signing request ${result.signature_request_id}.`
+          : name === "check_lumin_status"
+            ? `Lumin signing status: ${result.provider_status}.`
+            : `Downloaded the Lumin ${result.file_type} PDF to ${result.pdf_path}.`;
+  return (name === "start_lumin_authorization" || name === "finish_lumin_authorization")
+    ? `${summary} ${result.next_step}`
+    : summary;
+}
+
 function toolError(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;

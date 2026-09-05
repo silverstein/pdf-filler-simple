@@ -4,6 +4,7 @@ import {
   LUMIN_SIGNING_DISCLOSURE,
   LUMIN_SIGNING_TOOL_DEFINITIONS,
   createLuminSigningToolHandler,
+  formatLuminSigningToolText,
 } from "../server/lumin-signing-tools.js";
 import { validateStructuredToolResult } from "../server/output-schemas.js";
 import { LUMIN_SIGN_V1_DIRECT_UPLOAD_CONFIRMATION } from "../server/lumin-sign-v1-transport.js";
@@ -233,6 +234,8 @@ describe("public Lumin signing workflow", () => {
     expect(JSON.stringify(started)).not.toContain("auth.luminpdf.com");
     expect(started.next_step).toContain("create one on Lumin's website");
     expect(started.next_step).toContain("Never paste passwords");
+    expect(formatLuminSigningToolText("start_lumin_authorization", started)).toContain(started.next_step);
+    expect(formatLuminSigningToolText("start_lumin_authorization", started)).not.toContain(started.authorization_session_id);
     expectValidStructuredOutput("start_lumin_authorization", started);
     const completed = await handle("finish_lumin_authorization", {
       authorization_session_id: started.authorization_session_id,
@@ -247,6 +250,8 @@ describe("public Lumin signing workflow", () => {
     expect(JSON.stringify(completed)).not.toContain("token-that-must-never-escape");
     expect(completed.next_step).toContain("no PDF or signing request has been sent");
     expect(completed.next_step).toContain("check_lumin_status");
+    expect(formatLuminSigningToolText("finish_lumin_authorization", completed)).toContain(completed.next_step);
+    expect(formatLuminSigningToolText("finish_lumin_authorization", completed)).not.toContain(ACCESS_TOKEN);
     expect(dependencies.executeCreate).not.toHaveBeenCalled();
     expect(dependencies.readPreparedPdf).not.toHaveBeenCalled();
     expectValidStructuredOutput("finish_lumin_authorization", completed);
@@ -272,6 +277,18 @@ describe("public Lumin signing workflow", () => {
     expect(dependencies.createOAuthSession).not.toHaveBeenCalled();
     expect(dependencies.openExternal).not.toHaveBeenCalled();
     expect(dependencies.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("preserves non-connection text without appending unrelated provider fields", () => {
+    const extra = { next_step: ACCESS_TOKEN };
+    expect(formatLuminSigningToolText("prepare_lumin_request", extra))
+      .toBe("Prepared the Lumin signing request locally. Nothing was sent.");
+    expect(formatLuminSigningToolText("send_lumin_request", { ...extra, signature_request_id: "request.1" }))
+      .toBe("Created Lumin signing request request.1.");
+    expect(formatLuminSigningToolText("check_lumin_status", { ...extra, provider_status: "APPROVED" }))
+      .toBe("Lumin signing status: APPROVED.");
+    expect(formatLuminSigningToolText("download_lumin_artifact", { ...extra, file_type: "agreement", pdf_path: "/synthetic/result.pdf" }))
+      .toBe("Downloaded the Lumin agreement PDF to /synthetic/result.pdf.");
   });
 
   it("closes an expired signup connection before advising a fresh browser attempt", async () => {

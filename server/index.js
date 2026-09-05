@@ -121,6 +121,7 @@ import {
   LUMIN_SIGNING_TOOL_DEFINITIONS,
   LUMIN_SIGNING_TOOL_NAMES,
   createLuminSigningToolHandler,
+  formatLuminSigningToolText,
 } from "./lumin-signing-tools.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
@@ -5033,17 +5034,7 @@ async function handleToolCall(request) {
   try {
     if (LUMIN_SIGNING_TOOL_NAME_SET.has(name)) {
       const structuredContent = await handleLuminSigningTool(name, args ?? {});
-      const summary = name === "start_lumin_authorization"
-        ? "Opened Lumin authorization in the browser."
-        : name === "finish_lumin_authorization"
-          ? "Connected the Lumin account for this PDF Tools session."
-          : name === "prepare_lumin_request"
-            ? "Prepared the Lumin signing request locally. Nothing was sent."
-            : name === "send_lumin_request"
-              ? `Created Lumin signing request ${structuredContent.signature_request_id}.`
-              : name === "check_lumin_status"
-                ? `Lumin signing status: ${structuredContent.provider_status}.`
-                : `Downloaded the Lumin ${structuredContent.file_type} PDF to ${structuredContent.pdf_path}.`;
+      const summary = formatLuminSigningToolText(name, structuredContent);
       return {
         content: [{ type: "text", text: summary }],
         structuredContent,
