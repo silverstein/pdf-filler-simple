@@ -53,7 +53,7 @@ export const LUMIN_SIGNING_TOOL_DEFINITIONS = Object.freeze([
   {
     name: "start_lumin_authorization",
     description:
-      "Start a secure browser login to Lumin using OAuth PKCE. This opens Lumin in the user's browser and returns an opaque local authorization session ID. It does not send a PDF or create a signing request. Call finish_lumin_authorization after the user finishes in the browser.",
+      "Connect a Lumin account through secure browser login using OAuth PKCE. Follow the returned next_step instructions. Account creation and passwords belong on Lumin's website, never in tool arguments or chat. If this installation is not configured, ask its maintainer to enable the integration rather than asking the user to create a developer app. This does not send a PDF or create a signing request. Call finish_lumin_authorization after the user finishes in the browser.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -429,7 +429,7 @@ export function createLuminSigningToolHandler({
     if (typeof clientId !== "string" || !clientId || clientId.includes("${")) {
       throw toolError(
         "LUMIN_OAUTH_NOT_CONFIGURED",
-        "Lumin signing is not configured. Add a public Lumin OAuth client ID to PDF Tools settings and restart PDF Tools.",
+        "Lumin signing is not enabled in this PDF Tools installation. Ask its maintainer to configure the public Lumin OAuth app. Creating a personal Lumin account will not fix this installation setting. Do not share a password, API key, or client secret in chat. Local PDF tools remain available.",
       );
     }
     if (typeof stateRoot !== "string" || !path.isAbsolute(stateRoot)) {
@@ -442,7 +442,7 @@ export function createLuminSigningToolHandler({
     const connection = connections.get(id);
     if (!connection || connection.expiresAtMs <= currentMs() + 30_000) {
       connections.delete(id);
-      throw toolError("LUMIN_AUTHORIZATION_REQUIRED", "Connect the Lumin account again before continuing.");
+      throw toolError("LUMIN_AUTHORIZATION_REQUIRED", "Connect the Lumin account again with start_lumin_authorization, then finish_lumin_authorization. This does not resend any signing request. Use check_lumin_status for an existing request, not send_lumin_request.");
     }
     return connection;
   }
@@ -482,7 +482,7 @@ export function createLuminSigningToolHandler({
       await openExternal(session.authorizationUrl);
     } catch {
       await session.close();
-      throw toolError("LUMIN_BROWSER_OPEN_FAILED", "PDF Tools could not open the Lumin authorization page.");
+      throw toolError("LUMIN_BROWSER_OPEN_FAILED", "PDF Tools could not open Lumin in your browser. Check your default browser, then try start_lumin_authorization again. No PDF or signing request was sent.");
     }
     pendingAuthorizations.set(id, {
       session,
@@ -495,6 +495,7 @@ export function createLuminSigningToolHandler({
       callback_expires_at: new Date(startedAtMs + AUTHORIZATION_TIMEOUT_MS).toISOString(),
       browser_opened: true,
       pdf_sent: false,
+      next_step: "Sign in on the Lumin page opened in your browser and review its access request. If you do not have an account, create one on Lumin's website, then return here. If signup does not return to this connection before it expires, run start_lumin_authorization again. Once you approve access in the browser, call finish_lumin_authorization with this session ID. Never paste passwords or browser callback URLs into chat.",
     };
   }
 
@@ -505,7 +506,8 @@ export function createLuminSigningToolHandler({
     const pending = pendingAuthorizations.get(id);
     if (!pending || pending.expiresAtMs <= currentMs()) {
       pendingAuthorizations.delete(id);
-      throw toolError("LUMIN_AUTHORIZATION_SESSION_INVALID", "The Lumin authorization session is missing or expired.");
+      if (pending) await pending.session.close().catch(() => {});
+      throw toolError("LUMIN_AUTHORIZATION_SESSION_INVALID", "This Lumin connection attempt is missing or expired. Run start_lumin_authorization again, finish in the browser, then call finish_lumin_authorization with the new session ID. No signing request was sent.");
     }
     if (pending.completionInProgress) {
       throw toolError("LUMIN_AUTHORIZATION_PENDING", "Lumin authorization is still waiting for the browser callback.");
@@ -542,7 +544,7 @@ export function createLuminSigningToolHandler({
       throw sanitizedDependencyError(
         error,
         "LUMIN_OAUTH_TOKEN_REQUEST_FAILED",
-        "Lumin authorization could not be completed safely.",
+        "Lumin authorization was not completed. You can leave it disconnected or run start_lumin_authorization again when ready. No PDF or signing request was sent. Do not paste passwords or browser callback URLs into chat.",
       );
     } finally {
       if (!pendingAuthorizations.has(id)) await pending.session.close().catch(() => {});
@@ -565,6 +567,7 @@ export function createLuminSigningToolHandler({
       access_token_persisted: false,
       refresh_token_persisted: false,
       pdf_sent: false,
+      next_step: "Lumin is connected, but no PDF or signing request has been sent. For a new request, prepare the PDF with prepare_signing_packet, preview it with prepare_lumin_request, and obtain the user's exact sending confirmation before send_lumin_request. For an existing request, use check_lumin_status or download_lumin_artifact without sending again.",
     };
   }
 
