@@ -184,7 +184,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // wire-visible coverage-semantics change. No tool name, description, input
 // schema, or read-only annotation changes. The prior current-master digest was
 // 7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae.
-const TOOL_CONTRACT_SHA256 = "fd4b388bf9f7e45a4cbffea05a15ecc99c739c1486bdfa2b7b91e7ec3bbc6216";
+// 2026-09-05: Lumin connection guidance distinguishes missing installation
+// configuration from account signup; start/finish return a next_step string.
+// Tool names, input schemas, send confirmation and transport remain unchanged.
+// Previously fd4b388bf9f7e45a4cbffea05a15ecc99c739c1486bdfa2b7b91e7ec3bbc6216.
+const TOOL_CONTRACT_SHA256 = "c3a5e232adbad9bc08060530fa800dfa11217df7231553f93d25561a3e5f5ad4";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
