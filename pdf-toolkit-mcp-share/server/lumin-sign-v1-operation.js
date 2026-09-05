@@ -38,6 +38,8 @@ const QUARANTINE_DIRECTORY = ".quarantine";
 const CLAIM_FILE = "claim.v1.json";
 const OUTCOME_FILE = "outcome.v1.json";
 const OBSERVATIONS_DIRECTORY = "observations";
+const MAX_RETAINED_POLL_OBSERVATIONS = 64;
+const POLL_OBSERVATION_FILE_PATTERN = /^poll-([a-f0-9]{64})\.v1\.json$/;
 const MAX_STATE_FILE_BYTES = 1024 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
@@ -423,7 +425,7 @@ async function writeExclusiveJson(filePath, value) {
   return bytes;
 }
 
-async function commitExclusiveJson(filePath, value, stagingRoot) {
+async function commitExclusiveJson(filePath, value, stagingRoot, { allowPrunedPoll = false } = {}) {
   await ensurePrivateDirectory(stagingRoot, { create: false });
   const stagedPath = path.join(
     stagingRoot,
@@ -435,7 +437,17 @@ async function commitExclusiveJson(filePath, value, stagingRoot) {
     staged = true;
     await fs.link(stagedPath, filePath);
     await syncDirectory(path.dirname(filePath));
-    const committed = await readPrivateJson(filePath);
+    let committed;
+    try {
+      committed = await readPrivateJson(filePath);
+    } catch (error) {
+      // A poll's exact staged bytes have already been atomically linked and
+      // the directory flushed. Another poll may now prune that older entry.
+      // Only disposable poll observations permit this race; claims, outcomes,
+      // artifacts, and webhooks still require the published-file readback.
+      if (allowPrunedPoll && error?.code === "ENOENT") return bytes;
+      throw error;
+    }
     if (
       committed.bytes.length !== bytes.length
       || !timingSafeEqual(committed.bytes, bytes)
@@ -468,7 +480,7 @@ async function readPrivateJson(filePath) {
     assertPrivateMode(stats, 0o600, "state file");
     const bytes = await handle.readFile();
     if (bytes.length !== stats.size || bytes[bytes.length - 1] !== 0x0a) throw new Error("invalid state bytes");
-    return { bytes, value: parseStrictJson(bytes, "state file") };
+    return { bytes, stats, value: parseStrictJson(bytes, "state file") };
   } finally {
     await handle?.close().catch(() => {});
   }
@@ -1022,15 +1034,144 @@ async function writeObservation(operationPath, prefix, observation) {
       filePath,
       observation,
       path.join(path.dirname(operationPath), STAGING_DIRECTORY),
+      { allowPrunedPoll: prefix === "poll" },
     );
   } catch (error) {
     if (error?.code !== "EEXIST") throw error;
-    const existing = await readPrivateJson(filePath);
+    let existing;
+    try {
+      existing = await readPrivateJson(filePath);
+    } catch (readError) {
+      // A duplicate older poll can disappear after EEXIST for the same
+      // reason as a newly published older poll: concurrent retention removed
+      // it. Other observation types still require exact collision readback.
+      if (prefix === "poll" && readError?.code === "ENOENT") return observation;
+      throw readError;
+    }
     if (`${canonicalJson(existing.value)}\n` !== existing.bytes.toString("utf8") || canonicalJson(existing.value) !== canonicalJson(observation)) {
       throw new Error("observation identity collision");
     }
   }
   return observation;
+}
+
+function validateStatusObservation(value, binding, expectedDigest) {
+  const observation = assertRecord(value, [
+    "schema_version",
+    "provider",
+    "observation_source",
+    "authority_sha256",
+    "claim_sha256",
+    "outcome_sha256",
+    "signature_request_id",
+    "status",
+    "observed_at",
+    "endpoint_path",
+    "provider_response_sha256",
+    "access_token_persisted",
+    "response_body_persisted",
+    "automatic_retry_performed",
+    "observation_sha256",
+  ]);
+  if (
+    observation.schema_version !== 1
+    || observation.provider !== "lumin_sign"
+    || observation.observation_source !== "authenticated_poll"
+    || observation.authority_sha256 !== binding.authority_sha256
+    || observation.claim_sha256 !== binding.claim_sha256
+    || observation.outcome_sha256 !== binding.outcome_sha256
+    || observation.signature_request_id !== binding.signature_request_id
+    || !STATUS_VALUES.has(observation.status)
+    || observation.endpoint_path !== "/signature_request/{signature_request_id}"
+    || observation.access_token_persisted !== false
+    || observation.response_body_persisted !== false
+    || observation.automatic_retry_performed !== false
+  ) throw new Error("invalid status observation");
+  const observedAtMs = assertIsoTimestamp(observation.observed_at);
+  assertSha256(observation.provider_response_sha256);
+  const digest = assertSha256(observation.observation_sha256);
+  const unsigned = { ...observation };
+  delete unsigned.observation_sha256;
+  if (
+    digest !== expectedDigest
+    || digest !== lifecycleDigest("pdf-tools.lumin-sign-v1-status-observation.v1", unsigned)
+  ) throw new Error("status observation digest mismatch");
+  return { observedAtMs };
+}
+
+async function readRetainedPollObservations(operationPath, binding) {
+  const observationsPath = path.join(operationPath, OBSERVATIONS_DIRECTORY);
+  await ensurePrivateDirectory(observationsPath, { create: true });
+  const directoryEntries = await fs.readdir(observationsPath, { withFileTypes: true });
+  const retained = [];
+  for (const directoryEntry of directoryEntries) {
+    if (!directoryEntry.name.startsWith("poll-")) continue;
+    const match = directoryEntry.name.match(POLL_OBSERVATION_FILE_PATTERN);
+    if (!match || !directoryEntry.isFile() || directoryEntry.isSymbolicLink()) {
+      throw new Error("invalid retained poll observation entry");
+    }
+    const filePath = path.join(observationsPath, directoryEntry.name);
+    let read;
+    try {
+      read = await readPrivateJson(filePath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    const { observedAtMs } = validateStatusObservation(read.value, binding, match[1]);
+    retained.push({
+      digest: match[1],
+      filePath,
+      observedAtMs,
+      stats: read.stats,
+    });
+  }
+  retained.sort((left, right) => left.observedAtMs - right.observedAtMs
+    || (left.digest < right.digest ? -1 : left.digest > right.digest ? 1 : 0));
+  return { observationsPath, retained };
+}
+
+async function unlinkRetainedPollObservation(observation) {
+  let currentStats;
+  try {
+    currentStats = await fs.lstat(observation.filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+  if (!currentStats.isFile() || currentStats.isSymbolicLink()) {
+    throw new Error("retained poll observation changed before cleanup");
+  }
+  assertPrivateMode(currentStats, 0o600, "state file");
+  if (!sameFileIdentity(currentStats, observation.stats)) {
+    throw new Error("retained poll observation identity changed before cleanup");
+  }
+  try {
+    await fs.unlink(observation.filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function prunePollObservations(operationPath, binding, retainedLimit) {
+  if (!Number.isSafeInteger(retainedLimit) || retainedLimit < 2 || retainedLimit > MAX_RETAINED_POLL_OBSERVATIONS) {
+    throw new Error("invalid poll observation retention limit");
+  }
+  const { observationsPath, retained } = await readRetainedPollObservations(operationPath, binding);
+  if (retained.length <= retainedLimit) return;
+  const keep = new Set([retained[0].filePath]);
+  for (const observation of retained.slice(-(retainedLimit - 1))) keep.add(observation.filePath);
+  let deleted = false;
+  try {
+    for (const observation of retained) {
+      if (keep.has(observation.filePath)) continue;
+      deleted = await unlinkRetainedPollObservation(observation) || deleted;
+    }
+  } finally {
+    if (deleted) await syncDirectory(observationsPath);
+  }
 }
 
 export async function pollAndRecordLuminSignV1Status(input, options = {}) {
@@ -1059,6 +1200,20 @@ export async function pollAndRecordLuminSignV1Status(input, options = {}) {
     const transportReceipt = validateTransportReceipt(loaded.outcome.transport_receipt, loaded.claim);
     const signatureRequestId = transportReceipt.response.signature_request_id;
     failureClass = "retryable";
+    const observationBinding = {
+      authority_sha256: loaded.claim.authority_sha256,
+      claim_sha256: loaded.claim.claim_sha256,
+      outcome_sha256: loaded.outcome.outcome_sha256,
+      signature_request_id: signatureRequestId,
+    };
+    // Compact before contacting the provider so invalid retained state cannot
+    // cause another network read or continue growing. Do not reserve a slot:
+    // failed or duplicate reads must not evict useful retained history.
+    await prunePollObservations(
+      loaded.operationPath,
+      observationBinding,
+      MAX_RETAINED_POLL_OBSERVATIONS,
+    );
     controller = new AbortController();
     timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await validatedOptions.fetchImpl(
@@ -1102,6 +1257,11 @@ export async function pollAndRecordLuminSignV1Status(input, options = {}) {
       observation_sha256: lifecycleDigest("pdf-tools.lumin-sign-v1-status-observation.v1", unsigned),
     }));
     await writeObservation(loaded.operationPath, "poll", observation);
+    await prunePollObservations(
+      loaded.operationPath,
+      observationBinding,
+      MAX_RETAINED_POLL_OBSERVATIONS,
+    );
     return observation;
   } catch {
     if (failureClass === "input") {

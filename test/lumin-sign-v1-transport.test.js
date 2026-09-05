@@ -204,6 +204,18 @@ function successResponse(overrides = {}) {
   });
 }
 
+function statusResponse(status = "APPROVED") {
+  return new Response(JSON.stringify({
+    signature_request: {
+      signature_request_id: "sigreq.synthetic-123",
+      status,
+    },
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 function durableClaimAcknowledgement(requestIdentity, startedAt = new Date(NOW_MS).toISOString()) {
   const claimUnsigned = {
     schema_version: 1,
@@ -1126,6 +1138,268 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
       expect(operationBytes).not.toContain(ACCESS_TOKEN);
       expect(operationBytes).not.toContain("private@example.com");
       expect(operationBytes).not.toContain("Private title");
+    });
+  });
+
+  it("retains the audit origin and newest 63 polls without removing artifact observations", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const artifact = await requestAndRecordLuminSignV1ArtifactAccess({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        file_type: "merged",
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 500,
+        fetchImpl: async () => new Response(JSON.stringify({
+          signed_url: "https://files.luminpdf.com/download/synthetic.pdf?token=private",
+          expires_at: Math.floor((NOW_MS + 500) / 1000) + 1_800,
+        }), { status: 200, headers: { "content-type": "application/json" } }),
+      });
+      const observations = [];
+      for (let index = 0; index < 70; index += 1) {
+        observations.push(await pollAndRecordLuminSignV1Status({
+          access_token: ACCESS_TOKEN,
+          authority_sha256: authorityDigest,
+          state_root: stateRoot,
+        }, {
+          nowMs: NOW_MS + 1_000 + index,
+          fetchImpl: async () => statusResponse(index % 2 === 0 ? "APPROVED" : "WAITING_FOR_OTHERS"),
+        }));
+      }
+      const observationsPath = path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+      );
+      const retainedNames = await fs.readdir(observationsPath);
+      const retainedPollNames = retainedNames.filter(name => name.startsWith("poll-")).sort();
+      const expectedPollNames = [observations[0], ...observations.slice(-63)]
+        .map(observation => `poll-${observation.observation_sha256}.v1.json`)
+        .sort();
+      expect(retainedPollNames).toEqual(expectedPollNames);
+      expect(retainedNames).toContain(
+        `artifact-merged-${artifact.observation.observation_sha256}.v1.json`,
+      );
+    });
+  });
+
+  it("concurrent polling converges on the same bounded history", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const observations = await Promise.all(Array.from({ length: 70 }, async (_value, index) => (
+        pollAndRecordLuminSignV1Status({
+          access_token: ACCESS_TOKEN,
+          authority_sha256: authorityDigest,
+          state_root: stateRoot,
+        }, {
+          nowMs: NOW_MS + 10_000 + index,
+          fetchImpl: async () => statusResponse(index % 2 === 0 ? "APPROVED" : "WAITING_FOR_OTHERS"),
+        })
+      )));
+      const retainedNames = (await fs.readdir(path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+      ))).filter(name => name.startsWith("poll-")).sort();
+      const expectedNames = [observations[0], ...observations.slice(-63)]
+        .map(observation => `poll-${observation.observation_sha256}.v1.json`)
+        .sort();
+      expect(retainedNames).toEqual(expectedNames);
+    });
+  });
+
+  it("keeps a full history intact when a provider read fails", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const request = {
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      };
+      for (let index = 0; index < 64; index += 1) {
+        await pollAndRecordLuminSignV1Status(request, {
+          nowMs: NOW_MS + 1_000 + index,
+          fetchImpl: async () => statusResponse(),
+        });
+      }
+      const observationsPath = path.join(stateRoot, "lumin-sign-v1-operations", authorityDigest, "observations");
+      const namesBefore = (await fs.readdir(observationsPath)).sort();
+      expect(namesBefore).toHaveLength(64);
+      await expect(pollAndRecordLuminSignV1Status(request, {
+        nowMs: NOW_MS + 2_000,
+        fetchImpl: async () => { throw new Error("synthetic outage"); },
+      })).rejects.toMatchObject({ code: "LUMIN_STATUS_OBSERVATION_RETRYABLE" });
+      expect((await fs.readdir(observationsPath)).sort()).toEqual(namesBefore);
+      // Repeating the same exact observation also needs no new history slot.
+      await pollAndRecordLuminSignV1Status(request, {
+        nowMs: NOW_MS + 1_063,
+        fetchImpl: async () => statusResponse(),
+      });
+      expect((await fs.readdir(observationsPath)).sort()).toEqual(namesBefore);
+    });
+  });
+
+  it("allows an older published poll to finish after concurrent checks prune its receipt", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const request = {
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      };
+      const origin = await pollAndRecordLuminSignV1Status(request, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: async () => statusResponse(),
+      });
+      const realLink = fs.link.bind(fs);
+      let releasePublication;
+      let markPublished;
+      const published = new Promise(resolve => { markPublished = resolve; });
+      const resume = new Promise(resolve => { releasePublication = resolve; });
+      let pausedPath;
+      const linkSpy = vi.spyOn(fs, "link").mockImplementation(async (source, destination) => {
+        await realLink(source, destination);
+        if (!pausedPath && path.basename(destination).startsWith("poll-")) {
+          pausedPath = destination;
+          markPublished();
+          await resume;
+        }
+      });
+      const delayed = pollAndRecordLuminSignV1Status(request, {
+        nowMs: NOW_MS + 2_000,
+        fetchImpl: async () => statusResponse("WAITING_FOR_OTHERS"),
+      });
+      // Attach a handler immediately so cleanup also settles a failing run.
+      const settled = delayed.then(value => ({ value }), error => ({ error }));
+      try {
+        await published;
+        for (let index = 0; index < 64; index += 1) {
+          await pollAndRecordLuminSignV1Status(request, {
+            nowMs: NOW_MS + 3_000 + index,
+            fetchImpl: async () => statusResponse(),
+          });
+        }
+        await expect(fs.lstat(pausedPath)).rejects.toMatchObject({ code: "ENOENT" });
+        releasePublication();
+        expect(await settled).toMatchObject({ value: { status: "WAITING_FOR_OTHERS" } });
+        const names = await fs.readdir(path.dirname(pausedPath));
+        expect(names).toHaveLength(64);
+        expect(names).toContain(`poll-${origin.observation_sha256}.v1.json`);
+      } finally {
+        releasePublication();
+        await settled;
+        linkSpy.mockRestore();
+      }
+    });
+  });
+
+  it("allows a duplicate poll to finish when cleanup wins its collision readback", async () => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const request = { access_token: ACCESS_TOKEN, authority_sha256: authorityDigest, state_root: stateRoot };
+      const observations = [];
+      for (let index = 0; index < 64; index += 1) {
+        observations.push(await pollAndRecordLuminSignV1Status(request, {
+          nowMs: NOW_MS + 1_000 + index,
+          fetchImpl: async () => statusResponse(),
+        }));
+      }
+      const duplicatePath = path.join(stateRoot, "lumin-sign-v1-operations", authorityDigest,
+        "observations", `poll-${observations[1].observation_sha256}.v1.json`);
+      const realLink = fs.link.bind(fs);
+      let markCollision;
+      let releaseCollision;
+      const collided = new Promise(resolve => { markCollision = resolve; });
+      const resume = new Promise(resolve => { releaseCollision = resolve; });
+      const linkSpy = vi.spyOn(fs, "link").mockImplementation(async (source, destination) => {
+        try {
+          await realLink(source, destination);
+        } catch (error) {
+          if (destination === duplicatePath && error.code === "EEXIST") {
+            markCollision();
+            await resume;
+          }
+          throw error;
+        }
+      });
+      const settled = pollAndRecordLuminSignV1Status(request, {
+        nowMs: NOW_MS + 1_001,
+        fetchImpl: async () => statusResponse(),
+      }).then(value => ({ value }), error => ({ error }));
+      try {
+        await collided;
+        await pollAndRecordLuminSignV1Status(request, {
+          nowMs: NOW_MS + 2_000,
+          fetchImpl: async () => statusResponse(),
+        });
+        await expect(fs.lstat(duplicatePath)).rejects.toMatchObject({ code: "ENOENT" });
+        releaseCollision();
+        expect(await settled).toMatchObject({ value: observations[1] });
+        expect(await fs.readdir(path.dirname(duplicatePath))).toHaveLength(64);
+      } finally {
+        releaseCollision();
+        await settled;
+        linkSpy.mockRestore();
+      }
+    });
+  });
+
+  it.each(["invalid content", "invalid name", "unsafe mode", "symlink"])(
+    "rejects retained poll history with %s before another provider read", async kind => {
+    await withLifecycleState(async ({ stateRoot }) => {
+      const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
+      const original = await pollAndRecordLuminSignV1Status({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 1_000,
+        fetchImpl: async () => statusResponse(),
+      });
+      const observationsPath = path.join(
+        stateRoot,
+        "lumin-sign-v1-operations",
+        authorityDigest,
+        "observations",
+      );
+      const corruptPath = path.join(observationsPath,
+        kind === "invalid name" ? "poll-invalid.json" : `poll-${"a".repeat(64)}.v1.json`);
+      if (kind === "symlink") {
+        await fs.symlink(path.join(observationsPath, `poll-${original.observation_sha256}.v1.json`), corruptPath);
+      } else {
+        await fs.writeFile(corruptPath, "{}\n", { mode: 0o600 });
+        if (kind === "unsafe mode") await fs.chmod(corruptPath, 0o644);
+      }
+      const namesBefore = (await fs.readdir(observationsPath)).sort();
+      let calls = 0;
+      await expect(pollAndRecordLuminSignV1Status({
+        access_token: ACCESS_TOKEN,
+        authority_sha256: authorityDigest,
+        state_root: stateRoot,
+      }, {
+        nowMs: NOW_MS + 2_000,
+        fetchImpl: async () => {
+          calls += 1;
+          return statusResponse();
+        },
+      })).rejects.toMatchObject({
+        code: "LUMIN_STATUS_OBSERVATION_RETRYABLE",
+        reconciliation_class: "retryable_read_failure",
+        read_retry_safe: true,
+        create_retry_allowed: false,
+      });
+      expect(calls).toBe(0);
+      expect((await fs.readdir(observationsPath)).sort()).toEqual(namesBefore);
+      await expect(inspectLuminSignV1Operation({
+        state_root: stateRoot,
+        authority_sha256: authorityDigest,
+      })).resolves.toMatchObject({
+        operation_status: "request_created",
+        create_retry_allowed: false,
+      });
     });
   });
 

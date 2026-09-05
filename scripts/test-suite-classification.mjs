@@ -349,6 +349,13 @@ export const SERIAL_RESOURCE_TEST_SUITES = Object.freeze([
       + "contention.",
   }),
   Object.freeze({
+    file: "test/lumin-sign-v1-transport.test.js",
+    reason: "Builds and validates full durable poll histories with repeated "
+      + "fsync and concurrent publication. Four existing five-second windows "
+      + "timed out under sibling-suite contention but passed unchanged with "
+      + "an exclusive worker.",
+  }),
+  Object.freeze({
     file: "test/mcp-contract.test.js",
     reason: "Loads and compares both committed runtimes and exercises their MCP "
       + "contracts; sibling-suite contention exhausted an existing five-second "

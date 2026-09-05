@@ -118,10 +118,19 @@ or was never retained is explicitly `outcome_not_retained`; the state cannot
 distinguish those cases, but re-reading is safe. Typed errors carry `reconciliation_class`,
 `read_retry_safe`, and the invariant `create_retry_allowed: false`. Retrying
 those read-only observations cannot submit a second signing request. Polling
-may append bounded status observations, and artifact access retains only the
-signed URL digest and expiry. The signed URL is returned only for immediate
-caller consumption and is never written. App webhooks are accepted only after a
-constant-time HMAC-SHA256 check over the exact raw body; the app signing secret
+keeps the earliest timestamped observation for the audit origin plus the newest
+63, using the digest to break timestamp ties. Cleanup runs before each provider
+read and again after publication. Completed cleanup retains at most 64 poll
+observations; concurrent or interrupted publication can temporarily exceed that
+cap until cleanup or the next poll. Damaged local poll history fails safely
+before contacting Lumin. A failed or duplicate read does not evict history that
+already fits the cap, and a delayed check can still return its verified response
+if newer checks have already pruned its older receipt. Artifact and webhook
+observations are not removed by this policy.
+Artifact access retains only the signed URL digest and expiry. The signed URL is
+returned only for immediate caller consumption and is never written. App
+webhooks are accepted only after a constant-time HMAC-SHA256 check over the
+exact raw body; the app signing secret
 and body are not persisted. Duplicate webhook delivery follows Lumin's published
 `signature_request_id` plus `event_type` idempotency rule, while conflicting
 bytes for the same pair fail closed.
