@@ -24,6 +24,7 @@ const STRUCTURED_TOOLS = [
   "apply_signature",
   "apply_text",
   "bulk_fill_from_csv",
+  "check_lumin_status",
   "compare_pdfs",
   "create_extraction_workspace",
   "create_signature",
@@ -31,10 +32,12 @@ const STRUCTURED_TOOLS = [
   "delete_extraction_workspace",
   "detect_signature_zones",
   "display_pdf",
+  "download_lumin_artifact",
   "extract_to_csv",
   "fetch_pdf_from_url",
   "fill_pdf",
   "fill_with_profile",
+  "finish_lumin_authorization",
   "get_active_document",
   "get_allowed_directories",
   "get_page_analysis",
@@ -47,6 +50,7 @@ const STRUCTURED_TOOLS = [
   "load_signature",
   "merge_pdfs",
   "prepare_signing_packet",
+  "prepare_lumin_request",
   "read_extraction_chunk",
   "read_extraction_workspace",
   "read_pdf_bytes",
@@ -61,8 +65,10 @@ const STRUCTURED_TOOLS = [
   "rotate_pdf_pages",
   "search_pdf_text",
   "set_active_document",
+  "send_lumin_request",
   "split_pdf",
   "submit_extraction_proposal",
+  "start_lumin_authorization",
   "validate_pdf",
   "verify_extraction_proposal",
   "verify_table_proposal",
@@ -154,12 +160,27 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 47 structured tools and no text-only tool", () => {
+  it("covers the exact 53 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(47);
+    expect(STRUCTURED_TOOLS).toHaveLength(53);
     expect(TEXT_ONLY_TOOLS).toHaveLength(4);
+  });
+
+  it("preserves stable Lumin failure codes in structured errors", () => {
+    const result = validateStructuredToolResult("start_lumin_authorization", {
+      content: [{ type: "text", text: "Lumin OAuth is not configured." }],
+      structuredContent: {
+        status: "failed",
+        error: {
+          error_schema_version: 1,
+          code: "LUMIN_OAUTH_NOT_CONFIGURED",
+        },
+      },
+      isError: true,
+    });
+    expect(result.structuredContent.error.code).toBe("LUMIN_OAUTH_NOT_CONFIGURED");
   });
 
   it("uses current-host-compatible object schemas that compile with the pinned SDK", () => {

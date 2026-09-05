@@ -109,7 +109,7 @@ Once installed, ask Claude in Cursor:
 - *"Rotate page 3 by 90 degrees"*
 
 ## Tools Available
-This page names a selection, not the whole surface: the server registers 50
+This page names a selection, not the whole surface: the server registers 56
 tools. The root `README.md` lists every one, and `docs/OUTPUT_SCHEMAS.md`
 carries their structured output contracts.
 
@@ -128,6 +128,11 @@ carries their structured output contracts.
 - **convert_pdf_to_markdown** - Convert supported PDF text to deterministic Markdown with explicit partial and unsupported-content gaps. Reconstructs a table only when every row fills every recurring column and the first row carries real header evidence, and emits a link only for a source-validated external http or https target. Unsupported table structures and link targets stay escaped text reported as a typed gap.
 - **render_pdf_page** - Render a source-bound PDF.js page view with distinct raw geometry, view geometry, renderer policy, and digest evidence
 - **render_pdf_region** - Render a bounded PDF.js viewport region; these inputs are not MediaBox-relative signing coordinates
+- **prepare_signing_packet** - Prepare an exact local PDF and provider-neutral handoff receipt
+- **start_lumin_authorization** / **finish_lumin_authorization** - Connect a Lumin account with browser-based PKCE and keep the token only in memory
+- **prepare_lumin_request** - Preview the exact document, recipients, disclosure, and confirmation locally
+- **send_lumin_request** - Send once only after fresh verbatim user confirmation, with no automatic retry
+- **check_lumin_status** / **download_lumin_artifact** - Poll an existing request and save an artifact without exposing its temporary signed URL
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
@@ -138,6 +143,17 @@ carries their structured output contracts.
 - **create_extraction_workspace** / **read_extraction_workspace** - Create and page through a private PDF-and-schema-bound extraction workspace
 - **read_extraction_chunk** - Rebuild one returned chunk from fresh source bytes
 - **submit_extraction_proposal** / **verify_extraction_proposal** - Retain an untrusted leaf proposal, then deterministically replay its exact citations without a model inside PDF Tools
+
+Lumin signing is optional and external. The prepared PDF plus listed names and
+email addresses leave the device only after the send confirmation. PDF Tools
+checks the exact text and time, while the host and agent remain responsible for
+passing only what the user actually confirmed. Configure a public OAuth client
+ID with `LUMIN_OAUTH_CLIENT_ID` or
+`luminOAuthClientId` in the plugin's private `config.json`, registered for
+`http://127.0.0.1/callback`. Access tokens stay only in the running process.
+Creation is one-shot with no automatic retry, status uses polling, and existing
+download files are never replaced. The public Lumin workflow currently supports
+macOS and Linux and fails closed on Windows before OAuth or signing state begins.
 
 ### Current Extraction Boundary
 

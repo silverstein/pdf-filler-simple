@@ -412,7 +412,7 @@ future local OCR engine is optional planned work, not a current capability.
 The signature tools implement a **two-tier model** agreed with Max Ferguson on 2026-04-09:
 
 - **Tier 1 (this repo, local, free)**: Visible stamp via pdf-lib. `apply_signature` stamps a saved signature + writes an audit trail to PDF metadata. NOT legally-binding. NOT cryptographic.
-- **Tier 2 (Lumin API handoff, future)**: Cryptographic signing with timestamp and certificate. `request_lumin_signature` will route prepared packets to Lumin.
+- **Tier 2 (optional Lumin API handoff)**: The six `*_lumin_*` workflow tools connect a public PKCE client, preview an exact prepared packet, send one confirmed request without automatic retry, poll status, and download a completed artifact. The PDF and listed recipient details leave the device only at the confirmed send step. Lumin, not PDF Tools, provides the remote signing service and its completion certificate.
 
 **Human-intent constraint** (critical): `apply_signature` requires `user_intent_statement` + `user_confirmed_at` (ISO-8601, within last 24h). This is a legal requirement per Max: *"there's gotta be intent. Having the agent just kind of go and stamp signatures on a document without someone telling it to is not really allowed."* Agents MUST obtain these from the user and never fabricate. The validation enforces length/recency sanity checks; the intent is stored in PDF Keywords metadata for audit.
 
@@ -420,7 +420,9 @@ The signature tools implement a **two-tier model** agreed with Max Ferguson on 2
 
 **Agent-safe vs human-gated split**:
 - Agent-safe (no intent check): `create_signature`, `list_signatures`, `add_signature_field`, `prepare_signing_packet`
-- Human-gated (requires intent): `apply_signature` only
+- Human-gated (requires intent): `apply_signature` and `send_lumin_request`. The
+  Lumin send tool validates exact recent confirmation values, but the host and
+  agent remain responsible for passing only values the user actually supplied.
 
 ## Code Standards
 

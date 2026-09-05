@@ -173,6 +173,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-09-02: add the provider-neutral signing-preparation receipt and align the
 // combined extraction/signing feature line to 0.13.0. Tool names remain stable;
 // the preparation input/output schemas and runtime server version change.
+// 2026-09-05: expose the consent-gated Lumin OAuth, request creation, polling,
+// and artifact-download workflow. Six public tools are added, each with an
+// exact schema and effect annotation. The longest new names retain the host's
+// fallback-title identifier headroom.
 // 2026-08-15: the compare_pdfs comparison engine/schema version published in
 // its output schema becomes 0.2.0/1.1, because coverage now degrades (rather
 // than claiming supported) for a compared page whose IR text layer or
@@ -180,7 +184,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // wire-visible coverage-semantics change. No tool name, description, input
 // schema, or read-only annotation changes. The prior current-master digest was
 // 7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae.
-const TOOL_CONTRACT_SHA256 = "bf26c415fee3b797c41acb3eb2e78d84066c6da10b41c0a8a44da8adf2680c34";
+const TOOL_CONTRACT_SHA256 = "fd4b388bf9f7e45a4cbffea05a15ecc99c739c1486bdfa2b7b91e7ec3bbc6216";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -212,8 +216,26 @@ const OPEN_NON_IDEMPOTENT_OVERWRITE = Object.freeze({
   idempotentHint: false,
   openWorldHint: true,
 });
+const OPEN_SESSION_ACTION = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+});
+const OPEN_IDEMPOTENT_SESSION_ACTION = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+});
 
 const TOOL_EFFECT_ANNOTATIONS = {
+  start_lumin_authorization: OPEN_SESSION_ACTION,
+  finish_lumin_authorization: OPEN_SESSION_ACTION,
+  prepare_lumin_request: CLOSED_READ,
+  send_lumin_request: OPEN_NON_IDEMPOTENT_OVERWRITE,
+  check_lumin_status: OPEN_IDEMPOTENT_SESSION_ACTION,
+  download_lumin_artifact: OPEN_SESSION_ACTION,
   create_extraction_workspace: CLOSED_SESSION_ACTION,
   inspect_extraction_state: CLOSED_READ,
   read_extraction_workspace: CLOSED_READ,
@@ -430,6 +452,7 @@ describe("MCPB static declarations", () => {
       "lumin-sign-v1-mapper.js",
       "lumin-sign-v1-operation.js",
       "lumin-sign-v1-transport.js",
+      "lumin-signing-tools.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
       "pdf-lib-subprocess.js",
@@ -450,7 +473,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(28);
+    expect(mirrored).toHaveLength(29);
     for (const relativePath of [
       "scripts/eval-strict-json.mjs",
       "scripts/verified-extraction-proposal.mjs",
@@ -499,7 +522,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(51);
+    expect(tools).toHaveLength(57);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))
@@ -533,6 +556,23 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     expect(sorted(names(tools.filter(tool => !appOnlyTools.includes(tool))))).toEqual(
       sorted(names(MCPB_MANIFEST.tools)),
     );
+  });
+
+  it("fails closed before opening Lumin OAuth when no client ID is configured", async () => {
+    const result = await client.callTool({
+      name: "start_lumin_authorization",
+      arguments: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "LUMIN_OAUTH_NOT_CONFIGURED",
+      },
+    });
+    await expect(fs.access(path.join(stateRoot, "profiles", "lumin-signing-state")))
+      .rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("exposes the app-intended byte tool to generic MCP clients as an advisory projection", async () => {

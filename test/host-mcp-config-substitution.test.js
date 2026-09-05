@@ -241,7 +241,15 @@ describe("what Claude Desktop 1.26832.0 hands the server", () => {
       DEFAULT_PDF_DIR: "${HOME}/Documents",
       DEFAULT_DOWNLOAD_DIR: "${HOME}/Downloads",
       ALLOWED_DIRECTORIES: "${user_config.allowed_directories}",
+      LUMIN_OAUTH_CLIENT_ID: "${user_config.lumin_oauth_client_id}",
     });
+  });
+
+  it("passes an optional Lumin public client ID through the host environment", () => {
+    const config = buildHostMcpConfig(PACKED_MANIFEST, {
+      userConfig: { lumin_oauth_client_id: "public-client-123" },
+    });
+    expect(config.env.LUMIN_OAUTH_CLIENT_ID).toBe("public-client-123");
   });
 
   it("spreads a configured folder list, one argument per folder", () => {

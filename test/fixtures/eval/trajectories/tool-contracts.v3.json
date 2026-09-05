@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.13.0"
   },
-  "tools_sha256": "03173a10a4d9a992595865a3b02c3e06c8d61dc14a2b72ee95b768c1ec60bae1",
+  "tools_sha256": "b8b47e9225d4b4f1ce46a3eada74a483b90b84b03d5f7d485ec74626f5e8cb26",
   "tools": [
     {
       "name": "add_signature_field",
@@ -459,6 +459,26 @@
       }
     },
     {
+      "name": "check_lumin_status",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "authority_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "authorization_session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority_sha256",
+          "authorization_session_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "compare_pdfs",
       "input_schema": {
         "type": "object",
@@ -748,6 +768,40 @@
       }
     },
     {
+      "name": "download_lumin_artifact",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "authority_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "authorization_session_id": {
+            "type": "string"
+          },
+          "file_type": {
+            "type": "string",
+            "enum": [
+              "agreement",
+              "coc",
+              "merged"
+            ]
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Preferred local PDF path. Existing files are never replaced."
+          }
+        },
+        "required": [
+          "authority_sha256",
+          "authorization_session_id",
+          "file_type",
+          "output_path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "extract_to_csv",
       "input_schema": {
         "type": "object",
@@ -954,6 +1008,22 @@
           "output_path",
           "profile_name"
         ]
+      }
+    },
+    {
+      "name": "finish_lumin_authorization",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "authorization_session_id": {
+            "type": "string",
+            "description": "Opaque session ID returned by start_lumin_authorization."
+          }
+        },
+        "required": [
+          "authorization_session_id"
+        ],
+        "additionalProperties": false
       }
     },
     {
@@ -1211,6 +1281,100 @@
           "input_paths",
           "output_path"
         ]
+      }
+    },
+    {
+      "name": "prepare_lumin_request",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Exact prepared PDF path returned by prepare_signing_packet."
+          },
+          "preparation_receipt": {
+            "type": "object",
+            "description": "Exact preparation_receipt returned by prepare_signing_packet."
+          },
+          "authorization_session_id": {
+            "type": "string",
+            "description": "Connected Lumin session returned by finish_lumin_authorization. The prepared confirmation is bound to this session."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Title recipients will see in Lumin."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO-8601 time after which the Lumin request expires."
+          },
+          "signers": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "participant_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "email_address": {
+                  "type": "string",
+                  "maxLength": 320
+                }
+              },
+              "required": [
+                "participant_id",
+                "name",
+                "email_address"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "viewers": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "participant_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "email_address": {
+                  "type": "string",
+                  "maxLength": 320
+                }
+              },
+              "required": [
+                "participant_id",
+                "name",
+                "email_address"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "pdf_path",
+          "preparation_receipt",
+          "authorization_session_id",
+          "title",
+          "expires_at",
+          "signers"
+        ],
+        "additionalProperties": false
       }
     },
     {
@@ -1858,6 +2022,44 @@
       }
     },
     {
+      "name": "send_lumin_request",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "request_preparation_id": {
+            "type": "string",
+            "description": "Opaque preparation ID returned by prepare_lumin_request."
+          },
+          "authorization_session_id": {
+            "type": "string",
+            "description": "Connected session ID returned by finish_lumin_authorization."
+          },
+          "confirmation_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Exact confirmation digest returned by prepare_lumin_request."
+          },
+          "confirmation_statement": {
+            "type": "string",
+            "description": "The user's verbatim confirmation_statement_required value. Never invent or paraphrase it."
+          },
+          "user_confirmed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the user personally confirmed, within the last 10 minutes."
+          }
+        },
+        "required": [
+          "request_preparation_id",
+          "authorization_session_id",
+          "confirmation_sha256",
+          "confirmation_statement",
+          "user_confirmed_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "set_active_document",
       "input_schema": {
         "type": "object",
@@ -1946,6 +2148,14 @@
           "page_ranges",
           "output_directory"
         ]
+      }
+    },
+    {
+      "name": "start_lumin_authorization",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
       }
     },
     {

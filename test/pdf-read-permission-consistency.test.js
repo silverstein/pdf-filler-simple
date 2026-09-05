@@ -198,6 +198,7 @@ const READ_CALL_RECIPES = Object.freeze({
   get_pdf_info: (doc, extras) => ({ pdf_path: doc, ...extras }),
   get_pdf_resource_uri: doc => ({ pdf_path: doc }),
   inspect_pdf_accessibility: doc => ({ pdf_path: doc }),
+  prepare_lumin_request: doc => ({ pdf_path: doc }),
   read_extraction_chunk: async (doc, extras) => {
     const prepared = await extractionWorkspace(doc, `chunk${extras.tag}`);
     return {

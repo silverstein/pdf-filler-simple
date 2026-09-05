@@ -82,6 +82,7 @@ export const SERVER_FILES = [
   "lumin-sign-v1-mapper.js",
   "lumin-sign-v1-operation.js",
   "lumin-sign-v1-transport.js",
+  "lumin-signing-tools.js",
   "markdown-conversion.js",
   "markdown-output-transaction.js",
   "output-schemas.js",

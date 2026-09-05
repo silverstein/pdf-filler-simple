@@ -56,7 +56,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 
 - **Interactive viewer:** page navigation, zoom, search, fullscreen, text selection, and form-field sidebar
 - **Form workflows:** `fill_pdf`, `read_pdf_fields`, `bulk_fill_from_csv`, and reusable profiles
-- **Sign mode:** signature/date zone detection, saved or drawn local signatures, text stamping, inspect-region, and preview-to-zone flows
+- **Sign mode:** signature/date zone detection, saved or drawn local signatures, text stamping, inspect-region, preview-to-zone flows, and optional consent-gated Lumin e-signing
 - **URL-to-PDF workflows:** fetch HTTP(S) PDF links to the local machine when sandboxed web fetches are blocked
 - **Page organization:** merge, split, rotate, reorder, and apply full page plans in one pass
 - **Extraction and analysis:** page-bounded reads, text search, page/region rendering, CSV export, page-level analysis, metadata, and validation
@@ -99,6 +99,37 @@ content, so the complete workflow is not necessarily zero egress.
 - Inspect a region, preview it, and turn it into a typed signing zone when automatic detection is not enough
 - Prepare a provider-neutral handoff receipt that binds the exact local input/output, typed zones, participant roles, page geometry, and unresolved inputs without contacting a signing provider
 - Keep signing edits local, with active-document tracking and backup behavior for same-file mutations
+- Optionally connect a Lumin account with browser-based PKCE, preview the exact recipients and disclosure locally, and send the prepared PDF only after the user confirms the exact sending statement
+- Check an existing Lumin request by polling and download an agreement or completion certificate without exposing the temporary signed URL or replacing an existing local file
+
+### Optional Lumin e-signing
+
+Lumin e-signing is an explicit external workflow. The rest of PDF Tools stays
+local-first. PDF Tools contacts Lumin only when a Lumin tool is called. Sending
+requires a provider-ready `prepare_signing_packet` receipt, a local preview, a
+connected Lumin session, and the user's fresh verbatim confirmation. The
+prepared PDF plus listed names and email addresses then leave the device and are
+handled by Lumin.
+
+PDF Tools can validate the exact confirmation text and its freshness, but it
+cannot independently prove who typed it. The MCP host must present the
+destructive tool action, and the agent must pass only the user's actual words
+and time. Agents must never fabricate either value.
+
+Configure a public OAuth client ID in the extension's **Lumin OAuth Client ID**
+setting. Other stdio hosts may set `LUMIN_OAUTH_CLIENT_ID`; Agent Plugin users
+may set `luminOAuthClientId` in the plugin's private `config.json`. Register the
+exact redirect URI `http://127.0.0.1/callback`. The OAuth access token stays only
+in the running PDF Tools process. It is not returned, logged, or written to
+disk, and a restart requires connecting again.
+
+The create call is one-shot and has no automatic retry. If the provider outcome
+is uncertain, PDF Tools preserves that uncertainty and will not create another
+request under the same authority. Status polling is the current desktop path.
+Lumin app webhooks require a private server app and are not part of this public
+PKCE workflow. The durable signing-operation store currently supports macOS and
+Linux. The public Lumin workflow fails closed on Windows until a reviewed
+ACL-aware state adapter exists.
 
 ### Page Organization Tools
 
@@ -229,6 +260,12 @@ the `.mcpb` manifest that ordinary model workflows discover.
 - `detect_signature_zones`
 - `add_signature_field`
 - `prepare_signing_packet`
+- `start_lumin_authorization`
+- `finish_lumin_authorization`
+- `prepare_lumin_request`
+- `send_lumin_request`
+- `check_lumin_status`
+- `download_lumin_artifact`
 - `create_signature`
 - `list_signatures`
 - `load_signature`
