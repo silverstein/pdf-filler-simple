@@ -104,6 +104,12 @@ duplicate zone geometry, malformed identifiers, unsupported types, unresolved
 pages, out-of-bounds geometry, and clipped provider-ready zones fail closed.
 Legacy calls may still prepare a local artifact with a clipped zone, but its
 receipt remains `incomplete` with a typed crop-visibility gap.
+`ready_for_provider_mapping` means only that a later provider adapter can
+consume the local intent; it does not establish signer identity, consent,
+enforceability, provider acceptance, or authorization to transmit or sign.
+Receipt preparation is capped at 1,000 pages and refuses a prepared output
+above the existing 250 MiB per-file bound before staging or commit. Every
+successful receipt says `provider_execution_status: not_requested`.
 
 ### Consent-gated Lumin workflow
 
@@ -116,13 +122,6 @@ consumes one durable authority with no automatic retry. Status polling and
 artifact access can safely repeat reads of an existing provider request but can
 never create it again. Artifact download returns only the local PDF identity and
 the retained observation digest.
-`ready_for_provider_mapping`
-means only that a later provider adapter can consume the local intent; it does
-not establish signer identity, consent, enforceability, provider acceptance,
-or authorization to transmit or sign. Receipt preparation is capped at 1,000
-pages and refuses a prepared output above the existing 250 MiB per-file bound
-before staging or commit. Every successful receipt says
-`provider_execution_status: not_requested`.
 Zone `evidence_source` values are explicitly marked `caller_declared`; this
 preparation receipt does not independently replay a detector or AcroForm
 evidence artifact.
@@ -197,7 +196,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete matrix of 47 structured tools and four text-only
+tests assert this complete matrix of 53 structured tools and four text-only
 tools, compile every schema through the pinned SDK validator, reject newer
 unsupported JSON Schema keywords, exercise live success and error branches, and
 require byte-identical source/share runtime files.
