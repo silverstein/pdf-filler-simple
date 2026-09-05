@@ -1292,10 +1292,12 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
     });
   });
 
-  it("records an artifact access identity without persisting the signed URL or token", async () => {
+  it.each(["seconds", "milliseconds", "live-milliseconds-with-download-url"])("records %s artifact access without persisting URLs or token", async (shape) => {
     await withLifecycleState(async ({ stateRoot }) => {
       const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);
       const signedUrl = "https://files.luminpdf.com/download/synthetic.pdf?token=private";
+      const downloadUrl = "https://files.luminpdf.com/download/synthetic.pdf?token=other-private";
+      const expiresAtSeconds = Math.floor((NOW_MS + 1_000) / 1000) + 1_800;
       const artifact = await requestAndRecordLuminSignV1ArtifactAccess({
         access_token: ACCESS_TOKEN,
         authority_sha256: authorityDigest,
@@ -1308,11 +1310,15 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
           expect(options.headers.authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
           return new Response(JSON.stringify({
             signed_url: signedUrl,
-            expires_at: Math.floor((NOW_MS + 1_000) / 1000) + 1_800,
+            expires_at: shape === "seconds" ? expiresAtSeconds : expiresAtSeconds * 1000 + 123,
+            ...(shape === "live-milliseconds-with-download-url" ? { download_url: downloadUrl } : {}),
           }), { status: 200, headers: { "content-type": "application/json" } });
         },
       });
       expect(artifact.signed_url).toBe(signedUrl);
+      expect(artifact.expires_at).toBe(expiresAtSeconds);
+      expect(artifact.observation.access_url_expires_at).toBe(expiresAtSeconds);
+      expect(artifact).not.toHaveProperty("download_url");
       expect(artifact.persistence_policy).toBe("ephemeral_caller_consumption_only");
       const observationPath = path.join(
         stateRoot,
@@ -1323,6 +1329,7 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
       );
       const retained = await fs.readFile(observationPath, "utf8");
       expect(retained).not.toContain(signedUrl);
+      expect(retained).not.toContain(downloadUrl);
       expect(retained).not.toContain(ACCESS_TOKEN);
       expect(retained).toContain(createHash("sha256").update(signedUrl).digest("hex"));
     });
@@ -1331,6 +1338,14 @@ describe("durable Lumin Sign v1 operation lifecycle", () => {
   it.each([
     ["non-HTTPS URL", { signed_url: "http://files.luminpdf.com/private", expires_at: Math.floor((NOW_MS + 1_000) / 1000) + 1_800 }],
     ["overlong expiry", { signed_url: "https://files.luminpdf.com/private", expires_at: Math.floor((NOW_MS + 1_000) / 1000) + 3_600 }],
+    ["overlong millisecond expiry", { signed_url: "https://files.luminpdf.com/private", expires_at: NOW_MS + 3_600_000 }],
+    ["expired millisecond expiry", { signed_url: "https://files.luminpdf.com/private", expires_at: NOW_MS }],
+    ["fractional millisecond expiry", { signed_url: "https://files.luminpdf.com/private", expires_at: NOW_MS + 900_000.5 }],
+    ["string expiry", { signed_url: "https://files.luminpdf.com/private", expires_at: String(NOW_MS + 900_000) }],
+    ["non-HTTPS alternate URL", { signed_url: "https://files.luminpdf.com/private", download_url: "http://files.luminpdf.com/private", expires_at: NOW_MS + 900_000 }],
+    ["malformed alternate URL", { signed_url: "https://files.luminpdf.com/private", download_url: 17, expires_at: NOW_MS + 900_000 }],
+    ["credential-bearing alternate URL", { signed_url: "https://files.luminpdf.com/private", download_url: "https://user:pass@files.luminpdf.com/private", expires_at: NOW_MS + 900_000 }],
+    ["extra envelope field", { signed_url: "https://files.luminpdf.com/private", extra: true, expires_at: NOW_MS + 900_000 }],
   ])("rejects %s artifact access without persisting it", async (_label, providerBody) => {
     await withLifecycleState(async ({ stateRoot }) => {
       const { authoritySha256: authorityDigest } = await createDurableOperation(stateRoot);

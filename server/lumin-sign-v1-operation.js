@@ -1184,7 +1184,15 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
       throw new Error("artifact request rejected");
     }
     const provider = await readBoundedProviderJson(response, "Lumin artifact response");
-    const envelope = assertRecord(provider.value, ["expires_at", "signed_url"]);
+    const envelope = assertRecord(provider.value, ["expires_at", "signed_url"], ["download_url"]);
+    // The live endpoint also supplies a download URL. Validate its shape but
+    // use only signed_url; neither URL may enter durable state or tool output.
+    if (Object.hasOwn(envelope, "download_url")) {
+      const downloadUrl = new URL(assertString(envelope.download_url, { max: 4096 }));
+      if (downloadUrl.protocol !== "https:" || downloadUrl.username || downloadUrl.password || downloadUrl.hash || !downloadUrl.hostname) {
+        throw new Error("invalid optional artifact download URL");
+      }
+    }
     accessUrl = assertString(envelope.signed_url, { max: 4096 });
     const parsedUrl = new URL(accessUrl);
     if (
@@ -1194,11 +1202,14 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
       || parsedUrl.hash
       || !parsedUrl.hostname
     ) throw new Error("invalid artifact access URL");
-    if (
-      !Number.isSafeInteger(envelope.expires_at)
-      || envelope.expires_at <= Math.floor(nowMs / 1000)
-      || envelope.expires_at > Math.ceil(nowMs / 1000) + (31 * 60)
-    ) throw new Error("invalid artifact expiry");
+    if (!Number.isSafeInteger(envelope.expires_at)) throw new Error("invalid artifact expiry");
+    // The documented epoch value historically used seconds; live responses
+    // use milliseconds. Admit only a uniquely valid interpretation within the
+    // same short lifetime, and retain seconds for existing observation readers.
+    const expiryCandidates = [envelope.expires_at, Math.floor(envelope.expires_at / 1000)]
+      .filter(value => value > Math.floor(nowMs / 1000) && value <= Math.ceil(nowMs / 1000) + (31 * 60));
+    if (expiryCandidates.length !== 1) throw new Error("invalid artifact expiry");
+    const expiresAt = expiryCandidates[0];
     const unsigned = {
       schema_version: 1,
       provider: "lumin_sign",
@@ -1212,7 +1223,7 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
       endpoint_path: "/signature_request/{signature_request_id}/file",
       provider_response_sha256: sha256(provider.bytes),
       access_url_sha256: sha256(Buffer.from(accessUrl, "utf8")),
-      access_url_expires_at: envelope.expires_at,
+      access_url_expires_at: expiresAt,
       access_token_persisted: false,
       access_url_persisted: false,
       response_body_persisted: false,
@@ -1227,7 +1238,7 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
       schema_version: 1,
       file_type: fileType,
       signed_url: accessUrl,
-      expires_at: envelope.expires_at,
+      expires_at: expiresAt,
       observation,
       persistence_policy: "ephemeral_caller_consumption_only",
     }));
