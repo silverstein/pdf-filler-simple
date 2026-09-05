@@ -34,6 +34,7 @@ const WEBHOOK_EVENT_TYPES = new Set([
 ]);
 const OPERATION_DIRECTORY = "lumin-sign-v1-operations";
 const STAGING_DIRECTORY = ".staging";
+const QUARANTINE_DIRECTORY = ".quarantine";
 const CLAIM_FILE = "claim.v1.json";
 const OUTCOME_FILE = "outcome.v1.json";
 const OBSERVATIONS_DIRECTORY = "observations";
@@ -41,6 +42,37 @@ const MAX_STATE_FILE_BYTES = 1024 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 60_000;
+const STAGING_QUARANTINE_AFTER_MS = 5 * 60 * 1000;
+const STAGING_FUTURE_MTIME_TOLERANCE_MS = 60_000;
+const STAGING_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,220}-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+const TERMINAL_STATE_ERROR_DETAILS = Object.freeze({
+  reconciliation_class: "terminal_state_invalid",
+  read_retry_safe: false,
+  create_retry_allowed: false,
+});
+const TERMINAL_UNRECONCILABLE_ERROR_DETAILS = Object.freeze({
+  reconciliation_class: "terminal_unreconcilable",
+  read_retry_safe: false,
+  create_retry_allowed: false,
+});
+const RETRYABLE_READ_ERROR_DETAILS = Object.freeze({
+  reconciliation_class: "retryable_read_failure",
+  read_retry_safe: true,
+  create_retry_allowed: false,
+});
+// A committed claim with no outcome file is either a create still in flight or
+// a process that stopped between claim and outcome. The retained state cannot
+// tell those apart, so the class names only what was observed: nothing has been
+// retained. Re-reading is safe; creating again never is.
+const OUTCOME_NOT_RETAINED_ERROR_DETAILS = Object.freeze({
+  reconciliation_class: "outcome_not_retained",
+  read_retry_safe: true,
+  create_retry_allowed: false,
+});
+const OUTCOME_NOT_RETAINED_MESSAGE =
+  "This Lumin operation consumed its authority, but no create outcome has been retained. "
+  + "The create may still be in flight, or the process may have stopped before retaining its outcome; "
+  + "the retained state cannot distinguish them. Re-reading is safe and never creates a second signing request.";
 
 export const LUMIN_SIGN_V1_OPERATION_REFERENCES = deepFreeze({
   observed_at: "2026-09-04",
@@ -86,7 +118,7 @@ function lifecycleDigest(domain, value) {
   return sha256(Buffer.from(`${domain}\0${canonicalJson(value)}`, "utf8"));
 }
 
-function operationError(code, message) {
+function operationError(code, message, details = null) {
   const error = new Error(`${code}: ${message}`);
   Object.defineProperty(error, "code", {
     value: code,
@@ -94,6 +126,16 @@ function operationError(code, message) {
     writable: false,
     configurable: false,
   });
+  if (details !== null) {
+    for (const [key, value] of Object.entries(details)) {
+      Object.defineProperty(error, key, {
+        value,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
+  }
   return error;
 }
 
@@ -317,6 +359,16 @@ function assertPrivateMode(stats, expected, label) {
   if (process.platform !== "win32" && (stats.mode & 0o777) !== expected) {
     throw new Error(`${label} has unsafe permissions`);
   }
+  if (process.platform !== "win32") {
+    const userId = typeof process.geteuid === "function"
+      ? process.geteuid()
+      : typeof process.getuid === "function"
+        ? process.getuid()
+        : null;
+    if (userId === null || stats.uid !== userId) {
+      throw new Error(`${label} is owned by another user`);
+    }
+  }
 }
 
 async function ensurePrivateDirectory(directoryPath, { create }) {
@@ -422,15 +474,134 @@ async function readPrivateJson(filePath) {
   }
 }
 
+async function validateStagingEntry(filePath) {
+  const stats = await fs.lstat(filePath);
+  if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("invalid staging entry");
+  assertPrivateMode(stats, 0o600, "staging file");
+  if (!Number.isSafeInteger(stats.nlink) || stats.nlink < 1 || stats.nlink > 2) {
+    throw new Error("invalid staging link count");
+  }
+  if (!Number.isFinite(stats.mtimeMs)) throw new Error("invalid staging timestamp");
+  return stats;
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function unlinkMatchingStagingEntry(filePath, expectedStats) {
+  let currentStats;
+  try {
+    currentStats = await validateStagingEntry(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+  if (!sameFileIdentity(currentStats, expectedStats)) {
+    throw new Error("staging entry identity changed before cleanup");
+  }
+  try {
+    await fs.unlink(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function reconcileStagingRoot(stagingRoot) {
+  const entries = await fs.readdir(stagingRoot, { withFileTypes: true });
+  const quarantineEntry = entries.find(entry => entry.name === QUARANTINE_DIRECTORY);
+  if (quarantineEntry) {
+    if (!quarantineEntry.isDirectory() || quarantineEntry.isSymbolicLink()) {
+      throw new Error("invalid staging quarantine");
+    }
+    const quarantinePath = path.join(stagingRoot, QUARANTINE_DIRECTORY);
+    await ensurePrivateDirectory(quarantinePath, { create: false });
+  }
+  const observedAt = Date.now();
+  for (const entry of entries) {
+    if (entry.name === QUARANTINE_DIRECTORY) continue;
+    if (!STAGING_FILE_PATTERN.test(entry.name) || !entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error("invalid staging entry");
+    }
+    const stagedPath = path.join(stagingRoot, entry.name);
+    let stats;
+    try {
+      stats = await validateStagingEntry(stagedPath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    if (stats.nlink === 2) {
+      if (await unlinkMatchingStagingEntry(stagedPath, stats)) {
+        await syncDirectory(stagingRoot);
+      }
+      continue;
+    }
+    if (stats.mtimeMs > observedAt + STAGING_FUTURE_MTIME_TOLERANCE_MS) {
+      throw new Error("staging timestamp is in the future");
+    }
+    if (observedAt - stats.mtimeMs < STAGING_QUARANTINE_AFTER_MS) continue;
+    const quarantinePath = path.join(stagingRoot, QUARANTINE_DIRECTORY);
+    await ensurePrivateDirectory(quarantinePath, { create: true });
+    const quarantinedPath = path.join(quarantinePath, entry.name);
+    try {
+      await fs.link(stagedPath, quarantinedPath);
+    } catch (error) {
+      if (!new Set(["EEXIST", "ENOENT"]).has(error?.code)) throw error;
+      // Something already occupies the quarantine name. Only the same inode
+      // (a concurrent reconciler's link) may proceed; a symlink, a foreign
+      // file, or an unsafe entry at that exact name fails this create closed
+      // and is left in place for operator review.
+      const quarantinedStats = await validateStagingEntry(quarantinedPath);
+      if (!sameFileIdentity(quarantinedStats, stats)) {
+        throw new Error("staging quarantine identity collision");
+      }
+    }
+    await unlinkMatchingStagingEntry(stagedPath, stats);
+    await syncDirectory(quarantinePath);
+    await syncDirectory(stagingRoot);
+  }
+}
+
 async function prepareStateRoot(stateRoot) {
   await ensurePrivateDirectory(stateRoot, { create: true });
   const operationsRoot = path.join(stateRoot, OPERATION_DIRECTORY);
   await ensurePrivateDirectory(operationsRoot, { create: true });
   const stagingRoot = path.join(operationsRoot, STAGING_DIRECTORY);
   await ensurePrivateDirectory(stagingRoot, { create: true });
+  await reconcileStagingRoot(stagingRoot);
   await syncDirectory(stateRoot);
   await syncDirectory(operationsRoot);
   return { operationsRoot, stagingRoot };
+}
+
+function buildDurableClaimAcknowledgement(identity, claim, claimBytes) {
+  const unsigned = {
+    schema_version: 1,
+    provider: "lumin_sign",
+    action: "create_signature_request",
+    commit_status: "durable_claim_committed",
+    authority_sha256: identity.authority_sha256,
+    preparation_receipt_sha256: identity.preparation_receipt_sha256,
+    mapper_contract_sha256: identity.mapper_contract_sha256,
+    request_mapping_sha256: identity.request_mapping_sha256,
+    prepared_document_sha256: identity.prepared_document_sha256,
+    prepared_document_size_bytes: identity.prepared_document_size_bytes,
+    participant_ids: [...identity.participant_ids],
+    claim_started_at: claim.started_at,
+    claim_sha256: claim.claim_sha256,
+    claim_file_sha256: sha256(claimBytes),
+    claim_file_size_bytes: claimBytes.length,
+  };
+  return deepFreeze(isolateOutput({
+    ...unsigned,
+    acknowledgement_sha256: lifecycleDigest(
+      "pdf-tools.lumin-sign-v1-durable-claim-acknowledgement.v1",
+      unsigned,
+    ),
+  }));
 }
 
 function validateRequestIdentity(value) {
@@ -505,7 +676,14 @@ async function acquireOperationClaim(stateRoot, rawIdentity, startedAt) {
     claim_sha256: lifecycleDigest("pdf-tools.lumin-sign-v1-operation-claim.v1", unsigned),
   };
   try {
-    await commitExclusiveJson(path.join(operationPath, CLAIM_FILE), claim, stagingRoot);
+    const claimBytes = await commitExclusiveJson(path.join(operationPath, CLAIM_FILE), claim, stagingRoot);
+    const acknowledgement = buildDurableClaimAcknowledgement(identity, claim, claimBytes);
+    return {
+      acknowledgement,
+      claim: deepFreeze(isolateOutput(claim)),
+      operationPath,
+      stagingRoot,
+    };
   } catch (error) {
     if (error?.code === "EEXIST") {
       throw operationError(
@@ -515,7 +693,6 @@ async function acquireOperationClaim(stateRoot, rawIdentity, startedAt) {
     }
     throw error;
   }
-  return { claim: deepFreeze(isolateOutput(claim)), operationPath, stagingRoot };
 }
 
 function buildOutcome({ claim, completedAt, result, failureCode }) {
@@ -601,8 +778,10 @@ function validateTransportReceipt(receipt, claim) {
     || value.automatic_retry_performed !== false
   ) throw new Error("invalid transport receipt");
   const request = assertJsonRecord(value.request);
+  assertSha256(request.durable_claim_acknowledgement_sha256);
   if (
     request.execution_authority_sha256 !== claim.authority_sha256
+    || request.durable_claim_sha256 !== claim.claim_sha256
     || request.preparation_receipt_sha256 !== claim.preparation_receipt_sha256
     || request.mapper_contract_sha256 !== claim.mapper_contract_sha256
     || request.request_mapping_sha256 !== claim.request_mapping_sha256
@@ -696,13 +875,17 @@ export async function executeDurableLuminSignV1DirectUpload(input, options = {})
   } catch {
     throw operationError("LUMIN_OPERATION_INPUT_INVALID", "The Lumin operation configuration is invalid.");
   }
+  // One clock instant for the whole create. The claim's started_at and the
+  // transport's acknowledgement check must read the same millisecond; letting
+  // the transport sample Date.now() again would commit the claim and then
+  // refuse provider entry whenever the two reads straddled a tick.
   const startedMs = validatedOptions.nowMs === undefined ? Date.now() : validatedOptions.nowMs;
   let claimed = null;
   let claimError = null;
   try {
     const result = await executeAuthorizedLuminSignV1DirectUpload(input, {
       fetchImpl: validatedOptions.fetchImpl,
-      ...(validatedOptions.nowMs === undefined ? {} : { nowMs: validatedOptions.nowMs }),
+      nowMs: startedMs,
       ...(validatedOptions.timeoutMs === undefined ? {} : { timeoutMs: validatedOptions.timeoutMs }),
       beforeRequest: async requestIdentity => {
         try {
@@ -716,6 +899,7 @@ export async function executeDurableLuminSignV1DirectUpload(input, options = {})
               );
           throw claimError;
         }
+        return claimed.acknowledgement;
       },
     });
     if (!claimed) throw new Error("provider result exists without durable claim");
@@ -761,20 +945,32 @@ export async function executeDurableLuminSignV1DirectUpload(input, options = {})
   }
 }
 
+function classifyRetainedOutcome(outcome) {
+  if (outcome === null) return OUTCOME_NOT_RETAINED_ERROR_DETAILS.reconciliation_class;
+  if (outcome.operation_status === "request_created") return "reconcilable_by_request_id";
+  return TERMINAL_UNRECONCILABLE_ERROR_DETAILS.reconciliation_class;
+}
+
 export async function inspectLuminSignV1Operation(input) {
   let request;
   try {
     request = assertRecord(input, ["state_root", "authority_sha256"]);
     const loaded = await loadOperation(request.state_root, request.authority_sha256);
+    // "outcome_unknown" is a retained, terminal verdict written by the wrapper.
+    // A claim with no outcome file is not that: it is the claim's own status,
+    // authority_consumed, with nothing retained yet or ever.
     return deepFreeze(isolateOutput({
       schema_version: 1,
       provider: "lumin_sign",
       authority_sha256: loaded.claim.authority_sha256,
       claim_sha256: loaded.claim.claim_sha256,
-      operation_status: loaded.outcome?.operation_status ?? "outcome_unknown",
+      operation_status: loaded.outcome ? loaded.outcome.operation_status : loaded.claim.operation_status,
+      outcome_status: loaded.outcome ? "retained" : "not_retained",
+      reconciliation_class: classifyRetainedOutcome(loaded.outcome),
       outcome_sha256: loaded.outcome?.outcome_sha256 ?? null,
       transport_receipt: loaded.outcome?.transport_receipt ?? null,
       automatic_retry_allowed: false,
+      create_retry_allowed: false,
     }));
   } catch (error) {
     if (error?.code?.startsWith?.("LUMIN_")) throw error;
@@ -840,6 +1036,7 @@ async function writeObservation(operationPath, prefix, observation) {
 export async function pollAndRecordLuminSignV1Status(input, options = {}) {
   let accessToken;
   let controller;
+  let failureClass = "input";
   let timer;
   try {
     const request = assertRecord(input, ["access_token", "authority_sha256", "state_root"]);
@@ -851,10 +1048,17 @@ export async function pollAndRecordLuminSignV1Status(input, options = {}) {
       throw new Error("invalid polling timeout");
     }
     accessToken = assertString(request.access_token, { max: 8192, pattern: TOKEN_PATTERN });
+    failureClass = "state";
     const loaded = await loadOperation(request.state_root, request.authority_sha256);
-    if (loaded.outcome?.operation_status !== "request_created") throw new Error("operation is not reconcilable by ID");
+    if (loaded.outcome === null) {
+      failureClass = "not_retained";
+      throw new Error("operation outcome is not retained");
+    }
+    failureClass = "unreconcilable";
+    if (loaded.outcome.operation_status !== "request_created") throw new Error("operation is not reconcilable by ID");
     const transportReceipt = validateTransportReceipt(loaded.outcome.transport_receipt, loaded.claim);
     const signatureRequestId = transportReceipt.response.signature_request_id;
+    failureClass = "retryable";
     controller = new AbortController();
     timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await validatedOptions.fetchImpl(
@@ -900,9 +1104,34 @@ export async function pollAndRecordLuminSignV1Status(input, options = {}) {
     await writeObservation(loaded.operationPath, "poll", observation);
     return observation;
   } catch {
+    if (failureClass === "input") {
+      throw operationError("LUMIN_STATUS_INPUT_INVALID", "The Lumin status request is invalid.");
+    }
+    if (failureClass === "state") {
+      throw operationError(
+        "LUMIN_OPERATION_STATE_INVALID",
+        "The retained Lumin operation state is missing or invalid and cannot be reconciled.",
+        TERMINAL_STATE_ERROR_DETAILS,
+      );
+    }
+    if (failureClass === "unreconcilable") {
+      throw operationError(
+        "LUMIN_OPERATION_UNRECONCILABLE",
+        "This operation has no verified Lumin request identity and cannot be reconciled by polling.",
+        TERMINAL_UNRECONCILABLE_ERROR_DETAILS,
+      );
+    }
+    if (failureClass === "not_retained") {
+      throw operationError(
+        "LUMIN_OPERATION_OUTCOME_NOT_RETAINED",
+        OUTCOME_NOT_RETAINED_MESSAGE,
+        OUTCOME_NOT_RETAINED_ERROR_DETAILS,
+      );
+    }
     throw operationError(
-      "LUMIN_STATUS_OBSERVATION_FAILED",
-      "The Lumin signing status could not be verified or retained.",
+      "LUMIN_STATUS_OBSERVATION_RETRYABLE",
+      "The existing Lumin request status could not be verified or retained. Retrying this read will not create a new signing request.",
+      RETRYABLE_READ_ERROR_DETAILS,
     );
   } finally {
     if (timer) clearTimeout(timer);
@@ -914,6 +1143,7 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
   let accessToken;
   let accessUrl;
   let controller;
+  let failureClass = "input";
   let timer;
   try {
     const request = assertRecord(input, ["access_token", "authority_sha256", "file_type", "state_root"]);
@@ -927,10 +1157,17 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
     const fileType = assertString(request.file_type, { max: 16 });
     if (!ARTIFACT_FILE_TYPES.has(fileType)) throw new Error("invalid artifact type");
     accessToken = assertString(request.access_token, { max: 8192, pattern: TOKEN_PATTERN });
+    failureClass = "state";
     const loaded = await loadOperation(request.state_root, request.authority_sha256);
-    if (loaded.outcome?.operation_status !== "request_created") throw new Error("operation has no provider identity");
+    if (loaded.outcome === null) {
+      failureClass = "not_retained";
+      throw new Error("operation outcome is not retained");
+    }
+    failureClass = "unreconcilable";
+    if (loaded.outcome.operation_status !== "request_created") throw new Error("operation has no provider identity");
     const transportReceipt = validateTransportReceipt(loaded.outcome.transport_receipt, loaded.claim);
     const signatureRequestId = transportReceipt.response.signature_request_id;
+    failureClass = "retryable";
     controller = new AbortController();
     timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await validatedOptions.fetchImpl(
@@ -995,9 +1232,34 @@ export async function requestAndRecordLuminSignV1ArtifactAccess(input, options =
       persistence_policy: "ephemeral_caller_consumption_only",
     }));
   } catch {
+    if (failureClass === "input") {
+      throw operationError("LUMIN_ARTIFACT_INPUT_INVALID", "The Lumin artifact request is invalid.");
+    }
+    if (failureClass === "state") {
+      throw operationError(
+        "LUMIN_OPERATION_STATE_INVALID",
+        "The retained Lumin operation state is missing or invalid and cannot be reconciled.",
+        TERMINAL_STATE_ERROR_DETAILS,
+      );
+    }
+    if (failureClass === "unreconcilable") {
+      throw operationError(
+        "LUMIN_OPERATION_UNRECONCILABLE",
+        "This operation has no verified Lumin request identity and cannot provide signed artifacts.",
+        TERMINAL_UNRECONCILABLE_ERROR_DETAILS,
+      );
+    }
+    if (failureClass === "not_retained") {
+      throw operationError(
+        "LUMIN_OPERATION_OUTCOME_NOT_RETAINED",
+        OUTCOME_NOT_RETAINED_MESSAGE,
+        OUTCOME_NOT_RETAINED_ERROR_DETAILS,
+      );
+    }
     throw operationError(
-      "LUMIN_ARTIFACT_OBSERVATION_FAILED",
-      "The Lumin artifact access response could not be verified or safely retained.",
+      "LUMIN_ARTIFACT_OBSERVATION_RETRYABLE",
+      "The existing Lumin request artifact could not be verified or safely retained. Retrying this read will not create a new signing request.",
+      RETRYABLE_READ_ERROR_DETAILS,
     );
   } finally {
     if (timer) clearTimeout(timer);
