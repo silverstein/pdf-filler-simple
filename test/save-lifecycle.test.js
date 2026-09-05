@@ -20,11 +20,11 @@ let PROFILE_DIR;
 let client;
 let transport;
 
-async function connectClient(name = "pdf-tools-save-lifecycle-test-client") {
+async function connectClient(name = "pdf-tools-save-lifecycle-test-client", nodeArguments = []) {
   client = new Client({ name, version: "1.0.0" });
   transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(REPO_ROOT, "server", "index.js")],
+    args: [...nodeArguments, path.join(REPO_ROOT, "server", "index.js")],
     cwd: REPO_ROOT,
     env: {
       ALLOWED_DIRECTORIES: TMP_DIR,
@@ -35,11 +35,11 @@ async function connectClient(name = "pdf-tools-save-lifecycle-test-client") {
   await client.connect(transport);
 }
 
-async function restartServer(name) {
+async function restartServer(name, nodeArguments = []) {
   await transport.close();
   client = undefined;
   transport = undefined;
-  await connectClient(name);
+  await connectClient(name, nodeArguments);
 }
 
 async function sha256(filePath) {
@@ -815,6 +815,56 @@ describe("canonical save lifecycle", () => {
     expect(result.content?.[0]?.text).toContain("CONCURRENT_MODIFICATION");
     await expect(fs.stat(lockPath)).resolves.toBeTruthy();
     await fs.unlink(lockPath);
+  }, 30_000);
+
+  it.each([
+    ["ENOENT", "CONCURRENT_MODIFICATION"],
+    ["ELOOP", "CONCURRENT_MODIFICATION"],
+    ["ENOTDIR", "CONCURRENT_MODIFICATION"],
+    ["ESTALE", "CONCURRENT_MODIFICATION"],
+    ["EACCES", "injected-input-EACCES"],
+    ["path_policy_denied", "injected-input-path_policy_denied"],
+  ])("preserves the exact input-canonicalization refusal for %s", async (code, expected) => {
+    const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
+    const originalHash = await sha256(pdfPath);
+    const backupState = await snapshotBackupState();
+    const markerPath = path.join(TMP_DIR, "input-fault-observed.json");
+    const preloadPath = path.join(TMP_DIR, "input-path-fault.mjs");
+    // Patch only the child process, after its isolated mutation has returned.
+    // Earlier source reads and policy checks retain their real implementation.
+    await fs.writeFile(preloadPath, `
+import fs from "node:fs/promises";
+const realpath = fs.realpath;
+fs.realpath = async function (filename, ...args) {
+  if (filename === ${JSON.stringify(pdfPath)}
+      && new Error().stack.includes("persistPdfMutation")) {
+    await fs.writeFile(${JSON.stringify(markerPath)}, JSON.stringify({ code: ${JSON.stringify(code)} }),
+      { flag: "wx", mode: 0o600 });
+    throw Object.assign(new Error(${JSON.stringify(`injected-input-${code}`)}),
+      { code: ${JSON.stringify(code)} });
+  }
+  return realpath.call(this, filename, ...args);
+};
+`, { flag: "wx", mode: 0o600 });
+    await restartServer("pdf-tools-input-canonicalization-fault", ["--import", preloadPath]);
+    const result = await client.callTool({
+      name: "fill_pdf",
+      arguments: {
+        pdf_path: pdfPath,
+        output_path: pdfPath,
+        force_xfa: true,
+        field_data: { [NAME_FIELD]: "Must not commit after input failure" },
+      },
+    });
+    expect(JSON.parse(await fs.readFile(markerPath, "utf8"))).toEqual({ code });
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toContain(expected);
+    if (expected !== "CONCURRENT_MODIFICATION") {
+      expect(result.content?.[0]?.text).not.toContain("CONCURRENT_MODIFICATION");
+    }
+    expect(await sha256(pdfPath)).toBe(originalHash);
+    expect(await snapshotBackupState()).toEqual(backupState);
+    expect((await fs.readdir(TMP_DIR)).filter(name => name.startsWith(".pdf-tools-"))).toEqual([]);
   }, 30_000);
 
   /**

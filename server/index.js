@@ -2643,6 +2643,11 @@ async function buildSigningPreparationReceipt({
   };
 }
 
+// The errno shapes a path can take while another writer replaces the file
+// under it. Mirrors PATH_RACE_ERROR_CODES in bounded-pdf-file.js, which maps
+// the same set to PDF_CHANGED_DURING_READ on the read side.
+const PDF_INPUT_PATH_RACE_CODES = new Set(["ELOOP", "ENOENT", "ENOTDIR", "ESTALE"]);
+
 function backupIdentityError(code, message, cause) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -3184,9 +3189,33 @@ async function persistPdfMutation({
   initialPage = 1,
   extraPayload = {},
 }) {
-  const resolvedInputPath = resolvePath(inputPath);
+  // The input was read, bound and revalidated before this function is
+  // reached, so a path that no longer resolves here is a document that changed
+  // under this mutation, not a missing file. The ordering that produces it is
+  // a second writer between the two steps of its activation: writePdfOutputAtomic
+  // moves the existing output to its rollback name and then links the staged
+  // bytes in under a no-clobber link, and the document path does not exist in
+  // between. A loser whose commit begins inside that window used to surface the
+  // raw ENOENT from realpath, which is a third answer to the race the
+  // revalidateSources and commit-time identity detectors already report as
+  // CONCURRENT_MODIFICATION. Report it in the same shape, and keep the errno
+  // as the cause so the boundary suites can still say which check fired.
+  let resolvedInputPath;
+  let inputCanonical;
+  try {
+    resolvedInputPath = resolvePath(inputPath);
+    inputCanonical = await fs.realpath(resolvedInputPath);
+  } catch (error) {
+    if (PDF_INPUT_PATH_RACE_CODES.has(error?.code)) {
+      throw backupIdentityError(
+        "CONCURRENT_MODIFICATION",
+        "The PDF changed after this mutation loaded its input. Reload the current document and retry.",
+        error,
+      );
+    }
+    throw error;
+  }
   const resolvedOutputPath = resolvePath(outputPath);
-  const inputCanonical = await fs.realpath(resolvedInputPath);
   let outputCanonical = null;
   try { outputCanonical = await fs.realpath(resolvedOutputPath); } catch {}
   const sameDocument = inputCanonical === outputCanonical;
